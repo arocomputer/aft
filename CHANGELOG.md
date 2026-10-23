@@ -12,6 +12,9 @@ stays on your machine, and typing feels local.
 - Sessions hold an application in a pseudo-terminal on the server, survive a
   lost connection, repaint on reattach, and answer terminal queries while
   detached. No tmux is needed or used.
+- Sending is asynchronous: the input loop queues keystrokes to a writer
+  goroutine and never waits on the network, so backpressure or a slow link
+  cannot delay your typing or its prediction.
 - The client predicts typed characters and Backspace locally and reconciles them
   with the server's echo, so typing has no network latency. Everything else is
   passed through byte for byte.

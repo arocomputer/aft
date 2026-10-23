@@ -44,32 +44,10 @@ case "$task" in
     exec ./bin/aft selftest
     ;;
   bench)
-    # Run the microbenchmarks and the end-to-end latency sweep, writing a
-    # timestamped report to benchmarks/.
+    # Run the benchmarks (microbenchmarks and the end-to-end typing-latency
+    # benchmark) and print the results.
     [ "$#" -eq 0 ] || usage
-    ./x build >/dev/null
-    out="benchmarks/report-$(date +%Y%m%d-%H%M%S).md"
-    {
-      echo "# aft benchmark report"
-      echo
-      echo "- date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      echo "- $(go version)"
-      echo "- target: $(go env GOOS)/$(go env GOARCH)"
-      echo
-      echo "## Microbenchmarks"
-      echo
-      echo '```'
-      go test -run '''^$''' -bench . -benchmem ./internal/client/ ./internal/vt/ ./internal/proto/
-      echo '```'
-      echo
-      echo "## End-to-end typing latency"
-      echo
-      echo "Prediction keeps the echo flat as the delay grows; raw tracks the round trip."
-      echo
-      go run ./benchmarks/latency ./bin/aft
-    } | tee "$out"
-    echo >&2
-    echo "wrote $out" >&2
+    exec go test -run '^$' -bench . -benchmem ./...
     ;;
   docs)
     [ "$#" -eq 0 ] || usage

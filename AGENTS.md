@@ -48,6 +48,8 @@ binary itself as the helper and drive the client under a real pseudo-terminal.
 - Server output passes through to the terminal byte for byte. Predictions are
   drawn only between escape sequences and are reconciled or repainted.
 - Enter, control keys, pastes and escape sequences are never predicted.
+- The input loop never writes to the network; sends are queued to a writer
+  goroutine, so prediction and typing are never gated by a slow link.
 - The prefix key (default Ctrl-], configurable, disableable) is the only key
   aft takes from the application, and only while enabled; prefix then [ opens
   copy mode, prefix then d detaches. Copy mode works on a snapshot and never
