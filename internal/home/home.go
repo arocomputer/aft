@@ -45,7 +45,7 @@ func Bridge() string { return filepath.Join(Dir(), "bridge") }
 var BridgeShims = []string{"open", "xdg-open", "pbpaste", "wl-paste", "xclip", "xsel"}
 
 // InstallBridge points every bridge shim at self, creating the directory. self
-// must be a binary that handles these names as shims (aft or aft-helper).
+// must be a binary that handles these names as shims (aft or helper).
 func InstallBridge(self string) error {
 	if err := os.MkdirAll(Bridge(), 0o700); err != nil {
 		return err

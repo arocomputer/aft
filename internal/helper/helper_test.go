@@ -205,7 +205,7 @@ func TestSecondClientTakesOver(t *testing.T) {
 func TestShimPassthroughOutsideSession(t *testing.T) {
 	isolate(t)
 	t.Setenv("AFT_BRIDGE", "")
-	if !IsShim("/x/.aft/shims/xdg-open") || IsShim("/usr/bin/aft-helper") {
+	if !IsShim("/x/.aft/shims/xdg-open") || IsShim("/usr/bin/helper") {
 		t.Fatal("shim detection")
 	}
 }

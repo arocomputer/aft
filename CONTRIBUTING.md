@@ -23,7 +23,7 @@ shell on Linux or macOS.
 | `./x bench` | Run the benchmarks (microbenchmarks and the end-to-end typing-latency benchmark) |
 | `./x docs` | Check guide metadata and local Markdown links |
 | `./x helpers` | Cross-compile the server helper for every platform into the embed directory |
-| `./x build` | Build helpers, then `bin/aft` and `bin/aft-helper` |
+| `./x build` | Build helpers, then `bin/aft` and `bin/helper` |
 | `./x check` | Formatting, vet, tests, docs and build |
 | `./x release-check [vX.Y.Z]` | Build and inspect all archives in a temporary directory |
 | `./x dist vX.Y.Z` | Write archives, checksums and notes to `dist/vX.Y.Z`; never publish |

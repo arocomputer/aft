@@ -61,7 +61,7 @@ func RemoteHome() string {
 }
 
 // RemoteHelper is the helper path on a server.
-func RemoteHelper() string { return RemoteHome() + "/bin/aft-helper" }
+func RemoteHelper() string { return RemoteHome() + "/bin/helper" }
 
 // RemotePrefix sets AFT_HOME for the helper when the remote home is overridden.
 func RemotePrefix() string {

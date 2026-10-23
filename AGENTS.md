@@ -15,7 +15,7 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 ## Code map
 
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
-  invoked under an agent's name. `cmd/aft-helper` is the server binary.
+  invoked under an agent's name. `cmd/helper` is the server binary.
 - `internal/vt` is the terminal emulator both sides use: the client's shadow
   screen and the berth's detached screen. It renders a screen back to escape
   sequences and answers terminal queries.

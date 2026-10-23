@@ -39,7 +39,7 @@ func NewID(command string) string {
 
 // Start launches a detached berth process for o and waits until its socket
 // accepts connections. helper is the argv prefix that runs helper
-// subcommands: the aft-helper binary alone, or the aft binary plus "helper".
+// subcommands: the helper binary alone, or the aft binary plus "helper".
 func Start(helper []string, o Options) error {
 	if len(helper) == 0 {
 		return fmt.Errorf("no helper command")

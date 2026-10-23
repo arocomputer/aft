@@ -1,7 +1,7 @@
 // Package helper is the server side of Aft: the commands the client runs over
 // SSH to start, attach to and manage sessions, plus the bridge shims that give
 // an application on the server access to the user's machine. It is built into
-// both the full aft binary (for local sessions) and the small aft-helper binary
+// both the full aft binary (for local sessions) and the small helper binary
 // that Aft installs on servers.
 package helper
 
@@ -23,7 +23,7 @@ import (
 	"github.com/arocomputer/aft/internal/proto"
 )
 
-// Info is what `aft-helper info` prints for doctor and version checks.
+// Info is what `helper info` prints for doctor and version checks.
 type Info struct {
 	OS      string            `json:"os"`
 	Arch    string            `json:"arch"`
@@ -39,11 +39,11 @@ type Info struct {
 var Version = "dev"
 
 // Main runs a helper subcommand with stdio attached to the caller. prefix is
-// how to invoke helper subcommands again from a child process: the aft-helper
+// how to invoke helper subcommands again from a child process: the helper
 // binary by itself, or the aft binary followed by "helper".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: aft-helper new|attach|serve|ls|end|kick|setup|info|listeners")
+		fmt.Fprintln(stderr, "usage: helper new|attach|serve|ls|end|kick|setup|info|listeners")
 		return 2
 	}
 	self, err := os.Executable()
@@ -75,7 +75,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return relay(o.ID, stdin, stdout, stderr)
 	case "attach":
 		if len(args) != 2 || !berth.ValidID(args[1]) {
-			fmt.Fprintln(stderr, "usage: aft-helper attach ID")
+			fmt.Fprintln(stderr, "usage: helper attach ID")
 			return 2
 		}
 		return relay(args[1], stdin, stdout, stderr)
@@ -92,7 +92,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "end", "kick":
 		if len(args) != 2 {
-			fmt.Fprintf(stderr, "usage: aft-helper %s ID|--all\n", args[0])
+			fmt.Fprintf(stderr, "usage: helper %s ID|--all\n", args[0])
 			return 2
 		}
 		var ids []string
@@ -135,7 +135,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "sharepath":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "usage: aft-helper sharepath SHARE")
+			fmt.Fprintln(stderr, "usage: helper sharepath SHARE")
 			return 2
 		}
 		path, err := SharePath(args[1])
@@ -234,7 +234,7 @@ func Setup(self, sha string) error {
 		return err
 	}
 	if sha != "" {
-		if err := os.WriteFile(filepath.Join(home.Bin(), "aft-helper.sha256"), []byte(sha+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(home.Bin(), "helper.sha256"), []byte(sha+"\n"), 0o600); err != nil {
 			return err
 		}
 	}
@@ -244,7 +244,7 @@ func Setup(self, sha string) error {
 // GatherInfo inspects this machine for doctor and the version check.
 func GatherInfo() Info {
 	info := Info{OS: runtime.GOOS, Arch: runtime.GOARCH, Version: Version, Home: home.Dir(), Shell: os.Getenv("SHELL"), Agents: map[string]string{}}
-	if b, err := os.ReadFile(filepath.Join(home.Bin(), "aft-helper.sha256")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(home.Bin(), "helper.sha256")); err == nil {
 		info.SHA = strings.TrimSpace(string(b))
 	}
 	if _, err := os.Lstat(filepath.Join(home.Bridge(), "open")); err == nil {
