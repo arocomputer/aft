@@ -407,23 +407,27 @@ func cmdLs(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "HOST\tSESSION\tCOMMAND\tDIRECTORY\tSTARTED")
-	any := false
+	type row struct{ host, id, cmd, dir, started string }
+	var rows []row
 	for _, hs := range allSessions(cfg) {
 		if hs.err != nil {
-			fmt.Fprintf(w, "%s\t(%s)\t\t\t\n", hs.host.Name, hs.err)
+			rows = append(rows, row{hs.host.Name, "(" + hs.err.Error() + ")", "", "", ""})
 			continue
 		}
 		for _, r := range hs.list {
-			any = true
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", hs.host.Name, r.ID, strings.Join(r.Command, " "), r.Dir, r.Started)
+			rows = append(rows, row{hs.host.Name, r.ID, strings.Join(r.Command, " "), r.Dir, r.Started})
 		}
 	}
-	w.Flush()
-	if !any {
+	if len(rows) == 0 {
 		fmt.Println("No sessions.")
+		return 0
 	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "HOST\tSESSION\tCOMMAND\tDIRECTORY\tSTARTED")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.host, r.id, r.cmd, r.dir, r.started)
+	}
+	w.Flush()
 	return 0
 }
 
@@ -488,12 +492,10 @@ func cmdAttach(args []string) int {
 			return fail(err)
 		}
 	}
-	st, _ := config.LoadState()
 	opts, err := launcher.SessionOptions(cfg, h.Name, "", config.Project{})
 	if err != nil {
 		return fail(err)
 	}
-	_ = st
 	opts.Host = h
 	opts.SessionID = id
 	return client.Run(opts)
@@ -597,8 +599,8 @@ func cmdDoctor(args []string) int {
 		fmt.Println()
 	}
 	_, err = exec.LookPath("ssh")
-	report(err == nil, "ssh is installed", "install OpenSSH")
-	report(launcher.OnPath(), "Aft launchers are first on PATH", "open a new terminal, or run aft setup")
+	report(err == nil, "ssh present", "install OpenSSH")
+	report(launcher.OnPath(), "launchers on PATH", "open a new terminal, or run aft setup")
 	for _, a := range cfg.Agents {
 		if launcher.Installed(a) {
 			if _, err := launcher.RealBinary(a); err == nil {
@@ -609,7 +611,7 @@ func cmdDoctor(args []string) int {
 		}
 	}
 	if len(cfg.Hosts) == 0 {
-		report(false, "a server is configured", "run aft setup")
+		report(false, "server configured", "run aft setup")
 	}
 	for _, n := range cfg.HostNames() {
 		h, _ := cfg.Host(n)
@@ -630,15 +632,17 @@ func cmdDoctor(args []string) int {
 	}
 	if cfg.EditDotfiles() {
 		if len(st.ShellBlocks) == 0 {
-			report(false, "shell PATH line installed", "run aft setup")
+			report(false, "shell PATH line", "run aft setup")
 		}
 	} else if !launcher.OnPath() {
-		report(false, "shell PATH line added by you (manual mode)", "add $HOME/.aft/shims to PATH in your dotfiles")
+		report(false, "PATH set in your dotfiles (manual mode)", "add $HOME/.aft/shims to PATH")
 	}
+	fmt.Println()
 	if problems == 0 {
 		fmt.Println("Everything looks good.")
 		return 0
 	}
+	fmt.Printf("%d thing(s) to fix above.\n", problems)
 	return 1
 }
 

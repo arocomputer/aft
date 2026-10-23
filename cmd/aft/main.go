@@ -22,7 +22,7 @@ const usage = `aft — your agents on your server, your terminal on your machine
   aft attach [ID]               reattach to a session
   aft detach ID                 detach whoever is attached
   aft end ID                    stop a session
-  aft status                    hosts, connections, sessions, mirrors
+  aft status                    where you are, hosts, sessions, projects
   aft doctor                    check SSH, helper, agents, launchers, shell block
   aft exec [--host H] -- CMD    run one command on the server
   aft ports                     mirrored ports

@@ -32,6 +32,7 @@ The user documentation lives in [docs/guides](docs/guides/start/README.md):
 
 - [Installation](docs/guides/start/install.md) and [setup](docs/guides/start/setup.md)
 - [Sessions](docs/guides/usage/sessions.md), [launchers](docs/guides/usage/launchers.md) and [ports](docs/guides/usage/ports.md)
+- [Configuration](docs/guides/usage/config.md) and [mounted projects](docs/guides/usage/mounts.md)
 - [Uninstall](docs/guides/usage/uninstall.md)
 
 See [Contributing](CONTRIBUTING.md), the [design](docs/contributing/plan.md),

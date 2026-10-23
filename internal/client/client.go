@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/home"
 	"github.com/fschrhunt/aft/internal/ports"
 	"github.com/fschrhunt/aft/internal/proto"
 	"github.com/fschrhunt/aft/internal/remote"
@@ -64,6 +66,7 @@ func Run(o Options) int {
 	c.mirror = ports.New(o.Host, o.Ports)
 	c.pred = NewPredictor(cols, rows, out, o.Predict)
 	defer c.mirror.Close()
+	defer c.clearMirrors()
 
 	proc, err := c.open(true)
 	if err != nil {
@@ -314,7 +317,7 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 			}()
 		}
 	case proto.Listeners:
-		go c.mirror.Update(proto.DecodePorts(f.Payload))
+		go func() { c.mirror.Update(proto.DecodePorts(f.Payload)); c.writeMirrors() }()
 	case proto.Pong:
 	}
 	return 0, false
@@ -353,5 +356,29 @@ func (c *session) reconnect(keys <-chan []byte) (*transport.Proc, []byte, error)
 		if attempt%4 == 0 {
 			c.title(fmt.Sprintf("aft · reconnecting (%d)", attempt))
 		}
+	}
+}
+
+// writeMirrors records the currently mirrored ports so `aft ports` can report
+// them. It is keyed by session id and removed when the client exits.
+func (c *session) writeMirrors() {
+	if c.id == "" {
+		return
+	}
+	active := c.mirror.Active()
+	path := filepath.Join(home.Run(), "mirrors-"+c.id+".json")
+	if len(active) == 0 {
+		os.Remove(path)
+		return
+	}
+	if b, err := json.Marshal(active); err == nil {
+		os.WriteFile(path, b, 0o600)
+	}
+}
+
+// clearMirrors removes this session's mirror record.
+func (c *session) clearMirrors() {
+	if c.id != "" {
+		os.Remove(filepath.Join(home.Run(), "mirrors-"+c.id+".json"))
 	}
 }
