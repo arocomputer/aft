@@ -15,11 +15,11 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 ## Code map
 
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
-  invoked under an agent's name. `cmd/helper` is the server binary.
+  invoked under an agent's name. `cmd/helper` is the server binary, cross-compiled per platform into `internal/remote/embed` and carried inside aft for install (there is no standalone helper binary).
 - `internal/vt` is the terminal emulator both sides use: the client's shadow
-  screen and the berth's detached screen. It renders a screen back to escape
+  screen and the session's detached screen. It renders a screen back to escape
   sequences and answers terminal queries.
-- `internal/berth` runs one application in a pseudo-terminal on the server,
+- `internal/session` runs one application in a pseudo-terminal on the server,
   attaches one client at a time, repaints on reattach, and relays bridge
   requests. `internal/helper` is the server CLI around it plus the bridge shims.
 - `internal/client` is the terminal client: input tokenizer, prediction,
@@ -38,7 +38,7 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 - `internal/config` resolves settings as project over host over global, and
   carries the launch wrapper that lets a user run the agent inside any
   environment (a container, a nix or mise shell).
-- `internal/proto` is the framed protocol between client and berth.
+- `internal/proto` is the framed protocol between client and session.
 
 Tests live beside the code. The helper and end-to-end tests spawn the test
 binary itself as the helper and drive the client under a real pseudo-terminal.

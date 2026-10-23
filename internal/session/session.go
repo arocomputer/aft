@@ -1,9 +1,9 @@
-// Package berth keeps one application running on the server inside a
+// Package session keeps one application running on the server inside a
 // pseudo-terminal, tracks its screen, and lets one client at a time attach to
 // it. It is Aft's replacement for tmux: it has no appearance of its own, passes
 // bytes through untouched while a client is attached, answers the terminal's
 // queries while nobody is, and repaints the screen when a client returns.
-package berth
+package session
 
 import (
 	"bufio"
@@ -47,7 +47,7 @@ type Record struct {
 	Command []string `json:"command"`
 	Dir     string   `json:"dir"`
 	PID     int      `json:"pid"`     // the application's process id
-	Berth   int      `json:"berth"`   // the berth's process id
+	Server  int      `json:"server"`  // the session server's process id
 	Started string   `json:"started"` // RFC 3339
 	Cols    int      `json:"cols"`
 	Rows    int      `json:"rows"`
@@ -133,7 +133,7 @@ func (c *client) close() {
 	c.once.Do(func() { close(c.quit) })
 }
 
-// Session is a running berth.
+// Session is a running session.
 type Session struct {
 	opts   Options
 	ptmx   *os.File
@@ -154,7 +154,7 @@ type Session struct {
 }
 
 // Serve runs the session until the application exits. It is the body of the
-// detached berth process.
+// detached session process.
 func Serve(o Options) error {
 	if err := home.Ensure(); err != nil {
 		return err
@@ -176,7 +176,7 @@ func Serve(o Options) error {
 		return fmt.Errorf("start %s: %w", o.Command[0], err)
 	}
 	s.ptmx, s.cmd = ptmx, cmd
-	s.record = Record{ID: o.ID, Command: o.Command, Dir: o.Dir, PID: cmd.Process.Pid, Berth: os.Getpid(), Started: time.Now().UTC().Format(time.RFC3339), Cols: o.Cols, Rows: o.Rows}
+	s.record = Record{ID: o.ID, Command: o.Command, Dir: o.Dir, PID: cmd.Process.Pid, Server: os.Getpid(), Started: time.Now().UTC().Format(time.RFC3339), Cols: o.Cols, Rows: o.Rows}
 	if err := writeJSON(RecordPath(o.ID), s.record); err != nil {
 		return err
 	}
@@ -560,7 +560,7 @@ func writeJSON(path string, v any) error {
 	return os.Rename(tmp, path)
 }
 
-// List returns live sessions, pruning records whose berth is gone.
+// List returns live sessions, pruning records whose session is gone.
 func List() ([]Record, error) {
 	entries, err := os.ReadDir(home.Sessions())
 	if os.IsNotExist(err) {
@@ -579,7 +579,7 @@ func List() ([]Record, error) {
 		if err != nil || json.Unmarshal(b, &r) != nil {
 			continue
 		}
-		if syscall.Kill(r.Berth, 0) != nil {
+		if syscall.Kill(r.Server, 0) != nil {
 			os.Remove(filepath.Join(home.Sessions(), e.Name()))
 			os.Remove(SocketPath(r.ID))
 			os.Remove(BridgePath(r.ID))

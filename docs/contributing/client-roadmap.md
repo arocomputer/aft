@@ -1,6 +1,6 @@
-# Client and berth roadmap
+# Client and session roadmap
 
-Where the feature-rich terminal client and berth go next, and why.
+Where the feature-rich terminal client and session go next, and why.
 This is a design note, not a promise. It starts from what a power user expects
 from a remote terminal and names what aft has, what it just gained, and what is
 worth building, in priority order.
@@ -14,12 +14,12 @@ Two processes do the work, and it matters which one owns what.
   localhost, opening URLs, and reconnection. It passes the server's output to
   the terminal byte for byte, so the terminal's own abilities, color, mouse,
   selection, hyperlinks, images, keep working.
-- **The berth, on the server, owns the application:** a pseudo-terminal
+- **The session, on the server, owns the application:** a pseudo-terminal
   running the agent, the screen while nobody is attached, the answers to
   terminal queries, and a scrollback buffer it can replay on reattach.
 
-So copy and paste belong to the client and the local terminal, not the berth.
-The berth only relays what the application emits. This is the opposite of
+So copy and paste belong to the client and the local terminal, not the session.
+The session only relays what the application emits. This is the opposite of
 SSH-plus-tmux, where the remote tmux owns selection and cannot reach the local
 clipboard without OSC 52.
 
@@ -39,7 +39,7 @@ clipboard without OSC 52.
 
 ### Copy mode (scrollback)
 
-The berth holds the session's scrollback and sends a snapshot when the client
+The session holds the session's scrollback and sends a snapshot when the client
 asks. Copy mode, opened with the prefix then `[`, renders that snapshot as a
 frozen pager in the client, with keyboard scroll, search and line selection that
 copies to the local clipboard, and native drag-select because it does not
@@ -67,7 +67,7 @@ bytes both ways. Start with `aft cp`.
 
 ### 3. Activity and completion signals (medium, small)
 
-A long agent run finishes while the user is in another window. The berth sees
+A long agent run finishes while the user is in another window. The session sees
 the bell (OSC 7 already passes through) and can see the pane go idle. A desktop
 notification on bell, and optionally when a detached session's agent exits or
 goes quiet, through the existing URL/clipboard bridge pattern, is a small, loved
@@ -77,9 +77,9 @@ feature. Ties into the next item for detached sessions.
 
 `aft ls` lists sessions, but a user with several agents running wants to know
 which need attention: which are waiting for input, which finished, which hit an
-error. The berth can watch for the bell and for the screen going idle and
+error. The session can watch for the bell and for the screen going idle and
 record a per-session status that `aft ls` and `aft status` show, and that a
-notification can fire on. No new transport, just state in the berth.
+notification can fire on. No new transport, just state in the session.
 
 ### 5. SSH power features the user already has, surfaced (low, mostly docs)
 

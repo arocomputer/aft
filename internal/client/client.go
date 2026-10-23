@@ -49,7 +49,7 @@ type Options struct {
 // Run attaches the terminal to a session and returns the process exit code.
 // saneSize defaults a terminal size to 80x24 when the terminal reports an error
 // or a zero dimension. A 0x0 size would otherwise be sent as a resize the
-// berth reads as a control connection, so the session would never attach.
+// session reads as a control connection, so the session would never attach.
 func saneSize(cols, rows int, err error) (int, int) {
 	if err != nil || cols <= 0 || rows <= 0 {
 		return 80, 24

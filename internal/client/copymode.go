@@ -8,7 +8,7 @@ import (
 )
 
 // copyMode is aft's scrollback viewer: a frozen pager over a snapshot of the
-// berth's scrollback and screen, navigated and searched with the keyboard and
+// session's scrollback and screen, navigated and searched with the keyboard and
 // copied to the local clipboard. It runs entirely on the client, so scrolling
 // and searching are instant, and because it never captures the mouse the
 // terminal's own drag-select and Cmd+C still work on the drawn text.

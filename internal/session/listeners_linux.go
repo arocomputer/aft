@@ -1,4 +1,4 @@
-package berth
+package session
 
 import (
 	"bufio"

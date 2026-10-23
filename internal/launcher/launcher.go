@@ -14,11 +14,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/arocomputer/aft/internal/berth"
 	"github.com/arocomputer/aft/internal/client"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/ports"
+	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/transport"
 )
 
@@ -74,7 +74,7 @@ func existingSession(h transport.Host, name, dir string) string {
 	if err != nil {
 		return ""
 	}
-	var recs []berth.Record
+	var recs []session.Record
 	if json.Unmarshal(out, &recs) != nil {
 		return ""
 	}

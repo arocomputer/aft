@@ -28,8 +28,7 @@ stays on your machine, and typing feels local.
   clipboard, including images, is readable from the server through shims.
 - Copy mode: the prefix (Ctrl-] by default) then `[` opens a scrollback pager in
   the client over a snapshot from the server, with keyboard scroll, search and
-  selection that copies to the local clipboard, and native drag-select. The
-  server-side session component is now called the berth.
+  selection that copies to the local clipboard, and native drag-select.
 - Predictions emit the fewest bytes: a bare character in steady typing, exactly
   like native echo, with no cursor-move or style reset, so there is no flicker.
   The prediction itself costs about 12 microseconds; felt latency is the
