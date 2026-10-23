@@ -2,4 +2,4 @@
 /dist/
 __pycache__/
 *.pyc
-/internal/remote/bin/aft-helper-*
+/internal/remote/bin/helper-*

@@ -16,14 +16,14 @@ import (
 	"github.com/arocomputer/aft/internal/transport"
 )
 
-// Helper binaries are placed here by ./x build as aft-helper-<os>-<arch>.
+// Helper binaries are placed here by ./x build as helper-<os>-<arch>.
 //
 //go:embed bin
 var bins embed.FS
 
 // Blob returns the embedded helper for a platform.
 func Blob(goos, goarch string) ([]byte, error) {
-	b, err := bins.ReadFile("bin/aft-helper-" + goos + "-" + goarch)
+	b, err := bins.ReadFile("bin/helper-" + goos + "-" + goarch)
 	if err != nil || len(b) == 0 {
 		return nil, fmt.Errorf("this aft build has no helper for %s/%s; run ./x build", goos, goarch)
 	}
@@ -93,7 +93,7 @@ func Ensure(h transport.Host) (helper.Info, error) {
 		return info, nil
 	}
 	bin := transport.RemoteHome() + "/bin"
-	script := "mkdir -p " + bin + " && cat > " + bin + "/aft-helper.new && chmod 700 " + bin + "/aft-helper.new && mv -f " + bin + "/aft-helper.new " + bin + "/aft-helper && " + transport.RemotePrefix() + bin + "/aft-helper setup --sha " + want
+	script := "mkdir -p " + bin + " && cat > " + bin + "/helper.new && chmod 700 " + bin + "/helper.new && mv -f " + bin + "/helper.new " + bin + "/helper && " + transport.RemotePrefix() + bin + "/helper setup --sha " + want
 	if _, err := transport.RunRaw(h, bytes.NewReader(blob), script); err != nil {
 		return helper.Info{}, fmt.Errorf("install helper on %s: %w", h.Dest(), err)
 	}

@@ -1,4 +1,4 @@
-// aft-helper is the small binary Aft installs on a server. It starts and
+// helper is the small binary Aft installs on a server. It starts and
 // attaches sessions, answers doctor, and, when invoked through one of the shim
 // symlinks, bridges a remote application to the user's machine.
 package main
