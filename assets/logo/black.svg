@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="100.38" height="72.38" viewBox="0 0 100.38 72.38" fill="#1f2328" role="img" aria-labelledby="aft-logo-title">
+  <title id="aft-logo-title">aft logo</title>
+  <desc>Two equal spaces inside a softly rounded rectangular frame, joined by a central vertical divider.</desc>
+  <!-- Geometric outlines; no fonts or raster images. -->
+  <path xmlns="http://www.w3.org/2000/svg" fill-rule="evenodd" d="M14 0H86.38C94.112 0 100.38 6.26801 100.38 14V58.38C100.38 66.112 94.112 72.38 86.38 72.38H14C6.26801 72.38 0 66.112 0 58.38V14C0 6.26801 6.26801 0 14 0Z M14 9.048H43.986C44.9138 9.048 45.666 9.80016 45.666 10.728V61.652C45.666 62.5798 44.9138 63.332 43.986 63.332H14C11.2651 63.332 9.048 61.1149 9.048 58.38V14C9.048 11.2651 11.2651 9.048 14 9.048Z M56.394 9.048H86.38C89.1149 9.048 91.332 11.2651 91.332 14V58.38C91.332 61.1149 89.1149 63.332 86.38 63.332H56.394C55.4662 63.332 54.714 62.5798 54.714 61.652V10.728C54.714 9.80016 55.4662 9.048 56.394 9.048Z" />
+
+</svg>
