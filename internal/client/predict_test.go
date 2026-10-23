@@ -141,3 +141,21 @@ func TestNoPredictionWhenDisabled(t *testing.T) {
 		t.Fatalf("passthrough changed output: %q", out.String())
 	}
 }
+
+// TestPredictionIsSynchronous pins item 2's core claim: a predicted character
+// is written before Key returns, with no wait on the network, so typing is
+// drawn at local speed regardless of round-trip time.
+func TestPredictionIsSynchronous(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	start := time.Now()
+	p.Key(Token{Kind: TokText, Rune: 'x', Bytes: []byte("x")})
+	elapsed := time.Since(start)
+	if out.Len() == 0 {
+		t.Fatal("Key produced no output; prediction was not drawn synchronously")
+	}
+	if elapsed > 2*time.Millisecond {
+		t.Fatalf("Key took %v; prediction must be local-speed", elapsed)
+	}
+}

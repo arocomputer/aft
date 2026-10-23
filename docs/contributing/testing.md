@@ -30,6 +30,12 @@ a build. Tests need no server and no credentials.
   pseudo-terminal on the local host; the relay is killed as a dropped
   connection would be; the client reconnects, the screen is intact and the
   shell is alive. Detach from another terminal and reattach with `aft attach`.
+- **Prediction timing** (`internal/client`): a predicted character is written
+  before `Key` returns, so typing is drawn at local speed with no wait on the
+  network.
+- **Bridges** (`internal/bridge`, `internal/helper`): the open-url bridge
+  rejects non-web schemes; the clipboard reader runs the local tool; and the
+  `open` shim turns a URL into an open-url request on the session bridge socket.
 
 ## Manual checks before a release
 
@@ -42,6 +48,12 @@ a build. Tests need no server and no credentials.
    `localhost`.
 4. `aft off` and confirm the local agent runs; `aft uninstall` and confirm
    both machines are as they were apart from your code.
+
+The real OpenSSH path has been exercised against a local sshd: installing the
+embedded helper, `aft on`, a full interactive session, listener discovery from
+`/proc/net/tcp`, the `ssh -O forward` primitive mirroring uses, and
+`aft uninstall` removing the server home. A test against a second physical
+machine over the network is still the remaining check.
 
 Record OS and tool versions, source commit and outcomes in the review; never
 commit private hosts, logs or machine-specific paths.
