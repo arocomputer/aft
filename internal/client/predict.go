@@ -84,7 +84,7 @@ func (p *Predictor) Resize(cols, rows int) {
 	p.posKnown, p.penKnown = false, false
 }
 
-// Reset forgets everything, for a fresh attach where the berth repaints.
+// Reset forgets everything, for a fresh attach where the session repaints.
 func (p *Predictor) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()

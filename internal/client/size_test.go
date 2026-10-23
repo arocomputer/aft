@@ -6,7 +6,7 @@ import (
 )
 
 // TestSaneSize guards the fallback that stops a 0x0 terminal from sending a
-// resize the berth treats as a control connection (so the session never
+// resize the session treats as a control connection (so the session never
 // attaches).
 func TestSaneSize(t *testing.T) {
 	cases := []struct {

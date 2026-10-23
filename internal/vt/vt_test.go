@@ -85,7 +85,7 @@ func TestAltScreenAndModes(t *testing.T) {
 	}
 }
 
-// TestQueriesAnswered checks the responses the berth gives while detached.
+// TestQueriesAnswered checks the responses the session gives while detached.
 func TestQueriesAnswered(t *testing.T) {
 	term := New(80, 24)
 	var replies []string

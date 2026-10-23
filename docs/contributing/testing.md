@@ -22,7 +22,7 @@ a build. Tests need no server and no credentials.
   confirms is repainted and lowers confidence; Backspace undoes a prediction;
   the drawn caret used by pi moves correctly; passthrough is exact when
   prediction is off.
-- **Berth** (`internal/helper`): a real detached session is started, typed
+- **session** (`internal/helper`): a real detached session is started, typed
   into, dropped, reattached at a new size with a repaint carrying earlier
   output, and ended with an Exit frame. A detached application's cursor-position
   query is answered. A second client takes over and the first is told.

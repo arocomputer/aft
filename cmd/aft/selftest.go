@@ -5,12 +5,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/berth"
 	"github.com/arocomputer/aft/internal/bridge"
 	"github.com/arocomputer/aft/internal/client"
 	"github.com/arocomputer/aft/internal/helper"
 	"github.com/arocomputer/aft/internal/ports"
 	"github.com/arocomputer/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/transport"
 )
 
@@ -165,7 +165,7 @@ Then press  Ctrl-]  then  d  to detach. The session keeps running.
 `)
 	pause()
 	runShell("", true, 0, prefix)
-	list, _ := berth.List()
+	list, _ := session.List()
 	if len(list) == 0 {
 		fmt.Println("\nNo running session found (did you exit instead of detaching?).")
 		pause()
@@ -253,8 +253,8 @@ func selftestAgent(prefix byte) {
 
 // endAllSessions stops every session in the throwaway home.
 func endAllSessions() {
-	list, _ := berth.List()
+	list, _ := session.List()
 	for _, r := range list {
-		berth.Control(r.ID, proto.End)
+		session.Control(r.ID, proto.End)
 	}
 }

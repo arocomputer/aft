@@ -13,12 +13,12 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/arocomputer/aft/internal/berth"
 	"github.com/arocomputer/aft/internal/client"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
 	"github.com/arocomputer/aft/internal/remote"
+	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/transport"
 	"github.com/arocomputer/aft/internal/ui"
 )
@@ -222,7 +222,7 @@ func cmdOn(args []string) int {
 	}
 	if !mounted {
 		// Resolve a home-relative mapping to an absolute server path, since the
-		// Mac and the server have different home directories and the berth uses
+		// Mac and the server have different home directories and the session uses
 		// the path as a real working directory, not a shell word.
 		resolved, err := resolveRemoteDir(h, *dir)
 		if err != nil {
@@ -369,14 +369,14 @@ func cmdShell(args []string) int {
 
 type hostSessions struct {
 	host transport.Host
-	list []berth.Record
+	list []session.Record
 	err  error
 }
 
 func allSessions(cfg config.Config) []hostSessions {
 	var out []hostSessions
 	names := cfg.HostNames()
-	if list, _ := berth.List(); len(list) > 0 {
+	if list, _ := session.List(); len(list) > 0 {
 		out = append(out, hostSessions{host: transport.Local, list: list})
 	}
 	for _, n := range names {
@@ -460,13 +460,13 @@ func cmdAttach(args []string) int {
 		all := allSessions(cfg)
 		var found []struct {
 			h transport.Host
-			r berth.Record
+			r session.Record
 		}
 		for _, hs := range all {
 			for _, r := range hs.list {
 				found = append(found, struct {
 					h transport.Host
-					r berth.Record
+					r session.Record
 				}{hs.host, r})
 			}
 		}
@@ -808,9 +808,9 @@ func cmdUninstall(args []string) int {
 		}
 		transport.CloseMaster(h)
 	}
-	if list, _ := berth.List(); len(list) > 0 {
+	if list, _ := session.List(); len(list) > 0 {
 		for _, r := range list {
-			berth.Control(r.ID, 0x06)
+			session.Control(r.ID, 0x06)
 		}
 	}
 	removed, kept := launcher.RemoveShellBlocks(&st)
@@ -881,7 +881,7 @@ func remoteDirExists(h transport.Host, dir string) (bool, error) {
 
 // resolveRemoteDir expands a leading ~ in a server path to the server's real
 // home directory, so the stored path is absolute. The Mac and the server have
-// different home directories, and the session berth uses the path as a real
+// different home directories, and the session uses the path as a real
 // working directory, not a shell word, so a literal ~ would never expand.
 func resolveRemoteDir(h transport.Host, dir string) (string, error) {
 	if dir != "~" && !strings.HasPrefix(dir, "~/") {

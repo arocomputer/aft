@@ -6,7 +6,7 @@ import (
 )
 
 // BenchmarkFeed measures emulator parse throughput on recorded agent output,
-// the work both the client shadow and the berth do per byte of server output.
+// the work both the client shadow and the session do per byte of server output.
 func BenchmarkFeed(b *testing.B) {
 	data, err := os.ReadFile("testdata/opencode.bin")
 	if err != nil {

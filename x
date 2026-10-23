@@ -60,7 +60,7 @@ case "$task" in
     for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
       os=${target%/*}; arch=${target#*/}
       CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" \
-        -o "internal/remote/bin/helper-$os-$arch" ./cmd/helper
+        -o "internal/remote/embed/helper-$os-$arch" ./cmd/helper
     done
     ;;
   build)
@@ -68,7 +68,6 @@ case "$task" in
     ./x helpers
     mkdir -p bin
     go build -trimpath -ldflags "$ldflags" -o bin/aft ./cmd/aft
-    go build -trimpath -ldflags "$ldflags" -o bin/helper ./cmd/helper
     ;;
   release-check)
     [ "$#" -le 1 ] || usage

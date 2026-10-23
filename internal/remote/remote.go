@@ -16,14 +16,15 @@ import (
 	"github.com/arocomputer/aft/internal/transport"
 )
 
-// Helper binaries are placed here by ./x build as helper-<os>-<arch>.
+// Helper binaries are placed here by ./x build as helper-<os>-<arch> and are
+// embedded into aft for installation on servers.
 //
-//go:embed bin
+//go:embed embed
 var bins embed.FS
 
 // Blob returns the embedded helper for a platform.
 func Blob(goos, goarch string) ([]byte, error) {
-	b, err := bins.ReadFile("bin/helper-" + goos + "-" + goarch)
+	b, err := bins.ReadFile("embed/helper-" + goos + "-" + goarch)
 	if err != nil || len(b) == 0 {
 		return nil, fmt.Errorf("this aft build has no helper for %s/%s; run ./x build", goos, goarch)
 	}

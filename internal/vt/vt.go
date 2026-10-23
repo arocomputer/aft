@@ -1,7 +1,7 @@
 // Package vt is a terminal emulator that tracks screen contents, cursor and
 // terminal modes from a byte stream. Aft uses it twice: the client keeps a
 // shadow of what the server has drawn so it can predict typed characters, and
-// the session berth keeps the agent's screen while nobody is attached so it
+// the session keeps the agent's screen while nobody is attached so it
 // can repaint on reattach and answer the terminal queries an agent sends.
 //
 // The emulator never renders on its own. Callers read cells, cursor and modes,
@@ -129,7 +129,7 @@ type Terminal struct {
 	Reply func([]byte)
 
 	// Clipboard, when set, is called for an OSC 52 clipboard write with the
-	// selection letters and the decoded bytes. The berth leaves it nil; the
+	// selection letters and the decoded bytes. The session leaves it nil; the
 	// client sets the local clipboard from it, so a copy made on the server
 	// reaches the laptop even when the terminal blocks OSC 52.
 	Clipboard func(sel string, data []byte)
@@ -199,7 +199,7 @@ func (t *Terminal) Line(row int) string {
 func (t *Terminal) Scrollback() [][]Cell { return t.scrollback }
 
 // SnapshotData is a terminal's scrollback and visible screen as rows of cells,
-// with the cursor's position within that combined buffer. The berth sends it to
+// with the cursor's position within that combined buffer. The session sends it to
 // the client for copy mode, which renders and navigates it locally.
 type SnapshotData struct {
 	Cols, Rows int
