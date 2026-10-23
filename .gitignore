@@ -3,4 +3,3 @@
 __pycache__/
 *.pyc
 /internal/remote/bin/aft-helper-*
-/benchmarks/report-*.md

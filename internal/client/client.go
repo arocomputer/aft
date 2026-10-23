@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -86,6 +85,10 @@ func Run(o Options) int {
 	cols, rows := saneSize(term.GetSize(int(out.Fd())))
 
 	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID}
+	c.outbound = make(chan []byte, 4096)
+	c.sendDone = make(chan struct{})
+	defer close(c.sendDone)
+	go c.writer()
 	c.mirror = ports.New(o.Host, o.Ports)
 	c.pred = NewPredictor(cols, rows, out, o.Predict)
 	// A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
@@ -140,6 +143,9 @@ type session struct {
 	z     Tokenizer        // input tokenizer, kept across the loop
 	flush <-chan time.Time // fires to release a lone Escape held by the tokenizer
 
+	outbound chan []byte   // frames queued for the writer goroutine
+	sendDone chan struct{} // closed on exit to stop the writer
+
 	copy          *copyMode // non-nil while the scrollback pager is open
 	prefixPending bool      // the prefix key was pressed; the next key is a command
 	awaitSnap     bool      // a snapshot was requested to open copy mode
@@ -180,13 +186,38 @@ func (c *session) open(first bool) (*transport.Proc, error) {
 	return proc, nil
 }
 
+// send queues a frame for the writer goroutine. It never writes to the network
+// itself, so a slow or congested link cannot delay the input loop or the local
+// prediction. Frames keep their order through the single queue and writer.
 func (c *session) send(t proto.Type, payload []byte) error {
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	if c.wr == nil {
-		return errors.New("not connected")
+	var buf bytes.Buffer
+	if err := proto.Write(&buf, t, payload); err != nil {
+		return err
 	}
-	return proto.Write(c.wr, t, payload)
+	select {
+	case c.outbound <- buf.Bytes():
+	case <-c.sendDone:
+	}
+	return nil
+}
+
+// writer drains the outbound queue to the current connection. It is the only
+// goroutine that writes to the network, so a blocking write (backpressure,
+// the simulated latency) stalls only the queue, never typing.
+func (c *session) writer() {
+	for {
+		select {
+		case b := <-c.outbound:
+			c.wmu.Lock()
+			w := c.wr
+			c.wmu.Unlock()
+			if w != nil {
+				w.Write(b)
+			}
+		case <-c.sendDone:
+			return
+		}
+	}
 }
 
 func (c *session) title(s string) {

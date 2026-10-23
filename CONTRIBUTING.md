@@ -20,7 +20,7 @@ shell on Linux or macOS.
 | `./x fmt --check` | Check formatting without editing |
 | `./x test` | Run Go tests with the race detector and the Python script tests |
 | `./x try` | Open the interactive test command center (builds aft, runs the guided self-test) |
-| `./x bench` | Run microbenchmarks and the latency sweep; writes a report to `benchmarks/` |
+| `./x bench` | Run the benchmarks (microbenchmarks and the end-to-end typing-latency benchmark) |
 | `./x docs` | Check guide metadata and local Markdown links |
 | `./x helpers` | Cross-compile the server helper for every platform into the embed directory |
 | `./x build` | Build helpers, then `bin/aft` and `bin/aft-helper` |
