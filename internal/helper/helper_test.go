@@ -25,8 +25,13 @@ func TestMain(m *testing.M) {
 
 func isolate(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	// Unix socket paths are short-lived and length-limited.
+	// Unix socket paths are length-limited (~104 bytes on macOS), and the OS
+	// temp dir is deep there, so use a short home under /tmp.
+	dir, err := os.MkdirTemp("/tmp", "aft-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("AFT_HOME", dir)
 	t.Setenv("AFT_TEST_AS_HELPER", "1")
 	t.Setenv("SHELL", "/bin/sh")

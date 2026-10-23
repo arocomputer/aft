@@ -3,6 +3,7 @@ package bridge
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"encoding/json"
@@ -30,8 +31,12 @@ func TestClipboardReadsLocalTool(t *testing.T) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		t.Setenv("WAYLAND_DISPLAY", "")
 	}
+	name := "xclip"
+	if runtime.GOOS == "darwin" {
+		name = "pbpaste"
+	}
 	dir := t.TempDir()
-	fake := filepath.Join(dir, "xclip")
+	fake := filepath.Join(dir, name)
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf 'clip-contents'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,17 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// shortHome returns a short temp dir for AFT_HOME, since Unix socket paths are
+// length-limited and the macOS temp dir is too deep.
+func shortHome(t *testing.T) string {
+	dir, err := os.MkdirTemp("/tmp", "aft-e2e-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 // screen drives the aft client under a pseudo-terminal and emulates what the
 // user would see.
 type screen struct {
@@ -153,7 +164,7 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 	if _, err := exec.LookPath("pgrep"); err != nil {
 		t.Skip("pgrep required")
 	}
-	t.Setenv("AFT_HOME", t.TempDir())
+	t.Setenv("AFT_HOME", shortHome(t))
 	s := start(t, "shell", "--host", "local")
 	defer s.cmd.Process.Kill()
 	s.typeKeys("echo marker-$((20+22))\r")
@@ -187,7 +198,7 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 // TestDetachAndReattach detaches with aft detach and reattaches with aft attach,
 // checking the application kept running in between.
 func TestDetachAndReattach(t *testing.T) {
-	t.Setenv("AFT_HOME", t.TempDir())
+	t.Setenv("AFT_HOME", shortHome(t))
 	s := start(t, "shell", "--host", "local")
 	defer s.cmd.Process.Kill()
 	s.typeKeys("echo first-$((1+1))\r")
