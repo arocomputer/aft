@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/helper"
 	"github.com/arocomputer/aft/internal/launcher"
+	"github.com/arocomputer/aft/internal/server"
 )
 
 const usage = `aft — your agents on your server, your terminal on your machine
@@ -23,7 +23,7 @@ const usage = `aft — your agents on your server, your terminal on your machine
   aft detach ID                 detach whoever is attached
   aft end ID                    stop a session
   aft status                    where you are, hosts, sessions, projects
-  aft doctor                    check SSH, helper, agents, launchers, shell block
+  aft doctor                    check SSH, server, agents, launchers, shell block
   aft exec [--host H] -- CMD    run one command on the server
   aft ports                     mirrored ports
   aft mount list | add ... | remove LOCAL   map a network-mounted folder
@@ -39,10 +39,10 @@ In a project that is on, run claude, codex, opencode or pi exactly as before.
 var version = "dev"
 
 func main() {
-	helper.Version = version
+	server.Version = version
 	base := filepath.Base(os.Args[0])
-	if helper.IsShim(base) {
-		os.Exit(helper.RunShim(os.Args[0], os.Args[1:]))
+	if server.IsShim(base) {
+		os.Exit(server.RunShim(os.Args[0], os.Args[1:]))
 	}
 	// Invoked under an agent's name (via a launcher symlink), run that agent
 	// on the server; invoked as aft (or a dev build whose name starts with
@@ -65,12 +65,12 @@ func run(cmd string, args []string) int {
 	case "version", "--version":
 		fmt.Println("aft", version)
 		return 0
-	case "helper":
+	case "server":
 		self, err := os.Executable()
 		if err != nil {
 			return fail(err)
 		}
-		return helper.Main([]string{self, "helper"}, args, os.Stdin, os.Stdout, os.Stderr)
+		return server.Main([]string{self, "server"}, args, os.Stdin, os.Stdout, os.Stderr)
 	case "setup":
 		return cmdSetup(args)
 	case "on":

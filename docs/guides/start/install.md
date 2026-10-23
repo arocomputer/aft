@@ -6,7 +6,7 @@ order: 1
 
 # Installation
 
-Aft is one binary on your laptop. It carries a small helper for each server
+Aft is one binary on your laptop. It carries a small server for each host
 platform and installs the right one over SSH the first time you connect, so
 there is nothing to install on the server by hand.
 

@@ -22,7 +22,7 @@ a build. Tests need no server and no credentials.
   confirms is repainted and lowers confidence; Backspace undoes a prediction;
   the drawn caret used by pi moves correctly; passthrough is exact when
   prediction is off.
-- **session** (`internal/helper`): a real detached session is started, typed
+- **session** (`internal/server`): a real detached session is started, typed
   into, dropped, reattached at a new size with a repaint carrying earlier
   output, and ended with an Exit frame. A detached application's cursor-position
   query is answered. A second client takes over and the first is told.
@@ -35,7 +35,7 @@ a build. Tests need no server and no credentials.
 - **Prediction timing** (`internal/client`): a predicted character is written
   before `Key` returns, so typing is drawn at local speed with no wait on the
   network.
-- **Bridges** (`internal/bridge`, `internal/helper`): the open-url bridge
+- **Bridges** (`internal/bridge`, `internal/server`): the open-url bridge
   rejects non-web schemes; the clipboard reader runs the local tool; and the
   `open` shim turns a URL into an open-url request on the session bridge socket.
 
@@ -64,7 +64,7 @@ a real agent. Run it with `./x try`.
    both machines are as they were apart from your code.
 
 The real OpenSSH path has been exercised against a local sshd: installing the
-embedded helper, `aft on`, a full interactive session, listener discovery from
+embedded server, `aft on`, a full interactive session, listener discovery from
 `/proc/net/tcp`, the `ssh -O forward` primitive mirroring uses, and
 `aft uninstall` removing the server home. A test against a second physical
 machine over the network is still the remaining check.

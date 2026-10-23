@@ -38,11 +38,11 @@ func NewID(command string) string {
 }
 
 // Start launches a detached session process for o and waits until its socket
-// accepts connections. helper is the argv prefix that runs helper
-// subcommands: the helper binary alone, or the aft binary plus "helper".
-func Start(helper []string, o Options) error {
-	if len(helper) == 0 {
-		return fmt.Errorf("no helper command")
+// accepts connections. server is the argv prefix that runs server
+// subcommands: the server binary alone, or the aft binary plus "server".
+func Start(server []string, o Options) error {
+	if len(server) == 0 {
+		return fmt.Errorf("no server command")
 	}
 	if !ValidID(o.ID) {
 		return fmt.Errorf("invalid session id %q", o.ID)
@@ -50,12 +50,12 @@ func Start(helper []string, o Options) error {
 	if err := home.Ensure(); err != nil {
 		return err
 	}
-	logf, err := os.OpenFile(filepath.Join(home.Log(), o.ID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logf, err := os.OpenFile(filepath.Join(home.Logs(), o.ID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer logf.Close()
-	args := append(append([]string{}, helper[1:]...), "serve", "--id", o.ID, "--dir", o.Dir, "--cols", strconv.Itoa(o.Cols), "--rows", strconv.Itoa(o.Rows))
+	args := append(append([]string{}, server[1:]...), "serve", "--id", o.ID, "--dir", o.Dir, "--cols", strconv.Itoa(o.Cols), "--rows", strconv.Itoa(o.Rows))
 	for _, kv := range o.Env {
 		args = append(args, "--env", kv)
 	}
@@ -64,7 +64,7 @@ func Start(helper []string, o Options) error {
 	}
 	args = append(args, "--")
 	args = append(args, o.Command...)
-	cmd := exec.Command(helper[0], args...)
+	cmd := exec.Command(server[0], args...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -86,7 +86,7 @@ func Start(helper []string, o Options) error {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	tail, _ := os.ReadFile(filepath.Join(home.Log(), o.ID+".log"))
+	tail, _ := os.ReadFile(filepath.Join(home.Logs(), o.ID+".log"))
 	msg := strings.TrimSpace(string(tail))
 	if len(msg) > 500 {
 		msg = msg[len(msg)-500:]

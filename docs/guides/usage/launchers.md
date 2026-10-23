@@ -6,7 +6,7 @@ order: 2
 
 # Launchers
 
-`~/.aft/shims` holds one symlink per agent name, each pointing at `aft`. When
+`~/.aft/launchers` holds one symlink per agent name, each pointing at `aft`. When
 `aft` is invoked as `claude`, it checks whether the current directory is inside
 a project that is on. If so, it starts `claude` on that project's server, in
 the matching directory, passing your arguments through literally. If not, it
@@ -31,5 +31,5 @@ the agent's normal login flow; the login URL opens in your local browser and
 any callback port is mirrored to your machine.
 
 `aft doctor` checks that the launchers are first on `PATH`, that each server
-has the helper and the agents you expect, and that the shell block is in
+has the server and the agents you expect, and that the shell block is in
 place.

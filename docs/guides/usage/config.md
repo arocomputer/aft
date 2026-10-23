@@ -41,7 +41,7 @@ A host entry can override the global defaults for that server:
 ```toml
 [hosts.box]
 ssh     = "-p 2222 fschr@box"   # destination, with ssh options if needed
-home    = "~/.aft"                 # helper home on the server
+home    = "~/.aft"                 # server home on the host
 wrapper = ["nix", "develop", "-c"] # command wrapper
 predict = true                     # typing prediction for this host
 ports   = "3000-3999"              # mirror range

@@ -6,7 +6,7 @@ order: 3
 
 # Ports
 
-While a client is attached, the helper reports TCP ports listening on the
+While a client is attached, the server reports TCP ports listening on the
 server and the client mirrors the ones in range to the same port on your
 machine's loopback interface, through the shared SSH connection. A dev server
 started remotely opens at `localhost:3000` in your local browser, and a login

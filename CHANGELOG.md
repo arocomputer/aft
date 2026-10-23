@@ -21,7 +21,7 @@ stays on your machine, and typing feels local.
 - Launchers: `aft on` in a project makes `claude`, `codex`, `opencode`, `pi` and
   any other configured program run on the server; `aft off` makes them local
   again. Agents are not configured or wrapped.
-- `aft setup` installs Aft's helper on a server over SSH, creates launchers, and
+- `aft setup` installs Aft's server on a host over SSH, creates launchers, and
   adds a marked PATH block to the shell config. `aft uninstall` removes all of
   it, on every machine, and leaves edited blocks alone.
 - Bridges: URLs opened on the server open in the local browser; the local
@@ -46,8 +46,12 @@ stays on your machine, and typing feels local.
   attached.
 - `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,
   `aft exec`, `aft status`, `aft doctor`, `aft ports` and `aft agents add`.
-- macOS and Linux servers are supported; the helper is embedded for both on
-  amd64 and arm64.
+- `aft doctor` groups its checks by machine and ends each problem with the exact
+  command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
+  stale or missing server, re-add the PATH line), `--json` prints findings for
+  scripts, and `--host` limits the checks to one host.
+- macOS and Linux hosts are supported; the server is embedded (gzipped) for both
+  on amd64 and arm64.
 - Configure per host and per project, with project over host over global. A
   launch wrapper runs the agent inside any environment you name (a container, a
   nix or mise shell, a custom shell); per-host home, prediction, port range,

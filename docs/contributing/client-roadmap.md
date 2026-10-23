@@ -61,7 +61,7 @@ cancel them. Small, because the plumbing exists.
 
 Getting a file to or from the server without leaving aft. Two shapes: `aft cp`
 over the existing connection, and, richer, dragging a file into the terminal
-uploads it and pastes the server path, and an OSC 52-style or helper path for
+uploads it and pastes the server path, and an OSC 52-style or server path for
 the reverse. The clipboard-image bridge already proves the transport can carry
 bytes both ways. Start with `aft cp`.
 

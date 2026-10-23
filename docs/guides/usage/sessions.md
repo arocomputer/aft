@@ -8,7 +8,7 @@ order: 1
 
 When you start an agent in a project that is on, Aft starts it on the server
 inside a session and attaches your terminal to it. A session is a
-pseudo-terminal held open by Aft's helper. It keeps the application running
+pseudo-terminal held open by Aft's server. It keeps the application running
 whether or not anyone is attached, remembers its screen, and answers the
 terminal queries an application sends while nobody is there, so the agent
 never blocks waiting for a terminal.
@@ -38,7 +38,7 @@ model time anyway. `predict = false` in the config turns prediction off.
 
 If the connection drops, the terminal title shows "aft · reconnecting" and the
 client reconnects with backoff. The session is untouched. On reattach the
-helper repaints the screen, restores terminal modes, and asks the application
+server repaints the screen, restores terminal modes, and asks the application
 to redraw. Ctrl-C while disconnected leaves the client; the session keeps
 running and `aft attach` returns to it. Closing the terminal window detaches.
 
@@ -102,7 +102,7 @@ Ctrl-] then `d` leaves the session running.
 
 ## Bridges
 
-Inside a session, `~/.aft/shims` on the server comes first on `PATH` and
+Inside a session, `~/.aft/shims` on the host comes first on `PATH` and
 provides `open`, `xdg-open`, `pbpaste`, `wl-paste`, `xclip` and `xsel`. When
 the application opens an `http` or `https` URL, such as a login page, it opens
 in your local browser. When it reads the clipboard, for example to paste an

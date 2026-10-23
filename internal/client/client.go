@@ -167,7 +167,7 @@ func (c *session) open(first bool) (*transport.Proc, error) {
 	} else {
 		args = []string{"attach", c.id}
 	}
-	proc, err := transport.Helper(c.o.Host, args...)
+	proc, err := transport.Server(c.o.Host, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +551,7 @@ func (c *session) writeMirrors() {
 		return
 	}
 	active := c.mirror.Active()
-	path := filepath.Join(home.Run(), "mirrors-"+c.id+".json")
+	path := filepath.Join(home.Sockets(), "mirrors-"+c.id+".json")
 	if len(active) == 0 {
 		os.Remove(path)
 		return
@@ -564,6 +564,6 @@ func (c *session) writeMirrors() {
 // clearMirrors removes this session's mirror record.
 func (c *session) clearMirrors() {
 	if c.id != "" {
-		os.Remove(filepath.Join(home.Run(), "mirrors-"+c.id+".json"))
+		os.Remove(filepath.Join(home.Sockets(), "mirrors-"+c.id+".json"))
 	}
 }

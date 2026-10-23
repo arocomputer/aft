@@ -146,13 +146,13 @@ func execReal(name string, args []string) int {
 
 // RealBinary finds name on PATH, skipping Aft's shim directory.
 func RealBinary(name string) (string, error) {
-	shims, _ := filepath.EvalSymlinks(home.Shims())
+	shims, _ := filepath.EvalSymlinks(home.Launchers())
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			continue
 		}
 		real, _ := filepath.EvalSymlinks(dir)
-		if real == shims || filepath.Clean(dir) == home.Shims() {
+		if real == shims || filepath.Clean(dir) == home.Launchers() {
 			continue
 		}
 		p := filepath.Join(dir, name)
@@ -164,8 +164,8 @@ func RealBinary(name string) (string, error) {
 	return "", exec.ErrNotFound
 }
 
-// InstallShims creates a launcher symlink for each agent that points at self.
-func InstallShims(self string, agents []string, st *config.State) error {
+// InstallLaunchers creates a launcher symlink for each agent that points at self.
+func InstallLaunchers(self string, agents []string, st *config.State) error {
 	if err := home.Ensure(); err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func InstallShims(self string, agents []string, st *config.State) error {
 		if a == "" || a == "aft" || strings.ContainsAny(a, "/ \t") {
 			continue
 		}
-		link := filepath.Join(home.Shims(), a)
+		link := filepath.Join(home.Launchers(), a)
 		os.Remove(link)
 		if err := os.Symlink(self, link); err != nil {
 			return err
@@ -191,10 +191,10 @@ func InstallShims(self string, agents []string, st *config.State) error {
 	return nil
 }
 
-// RemoveShims deletes every launcher symlink Aft created.
-func RemoveShims(st *config.State) {
+// RemoveLaunchers deletes every launcher symlink Aft created.
+func RemoveLaunchers(st *config.State) {
 	for _, a := range st.Shims {
-		os.Remove(filepath.Join(home.Shims(), a))
+		os.Remove(filepath.Join(home.Launchers(), a))
 	}
 	st.Shims = nil
 }
@@ -204,12 +204,12 @@ const blockEnd = "# <<< aft <<<"
 
 // Block returns the lines added to a POSIX shell config.
 func Block() string {
-	return blockStart + "\nexport PATH=\"$HOME/.aft/shims:$PATH\"\n" + blockEnd + "\n"
+	return blockStart + "\nexport PATH=\"$HOME/.aft/launchers:$PATH\"\n" + blockEnd + "\n"
 }
 
 // FishBlock is the content of the fish drop-in file.
 func FishBlock() string {
-	return blockStart + "\nfish_add_path --prepend --move $HOME/.aft/shims\n" + blockEnd + "\n"
+	return blockStart + "\nfish_add_path --prepend --move $HOME/.aft/launchers\n" + blockEnd + "\n"
 }
 
 // ShellFiles returns the config files Aft should put the block in, based on
@@ -347,7 +347,7 @@ func RemoveShellBlocks(st *config.State) (removed, kept []string) {
 
 // Installed reports whether name has a launcher shim.
 func Installed(name string) bool {
-	_, err := os.Lstat(filepath.Join(home.Shims(), name))
+	_, err := os.Lstat(filepath.Join(home.Launchers(), name))
 	return err == nil
 }
 
@@ -358,8 +358,8 @@ func OnPath() bool {
 		return false
 	}
 	real, _ := filepath.EvalSymlinks(dirs[0])
-	shims, _ := filepath.EvalSymlinks(home.Shims())
-	return dirs[0] == home.Shims() || (real != "" && real == shims)
+	shims, _ := filepath.EvalSymlinks(home.Launchers())
+	return dirs[0] == home.Launchers() || (real != "" && real == shims)
 }
 
 // DotfilesManaged guesses whether the user manages their shell config with a

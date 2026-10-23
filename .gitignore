@@ -2,4 +2,4 @@
 /dist/
 __pycache__/
 *.pyc
-/internal/remote/embed/helper-*
+/internal/remote/embed/server-*

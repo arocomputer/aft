@@ -54,10 +54,10 @@ type Record struct {
 }
 
 // SocketPath is where clients attach to a session.
-func SocketPath(id string) string { return filepath.Join(home.Run(), id+".sock") }
+func SocketPath(id string) string { return filepath.Join(home.Sockets(), id+".sock") }
 
 // BridgePath is where shims running inside the session reach the client.
-func BridgePath(id string) string { return filepath.Join(home.Run(), id+".bridge.sock") }
+func BridgePath(id string) string { return filepath.Join(home.Sockets(), id+".bridge.sock") }
 
 // RecordPath is the session's JSON record.
 func RecordPath(id string) string { return filepath.Join(home.Sessions(), id+".json") }
@@ -163,7 +163,7 @@ func Serve(o Options) error {
 		o.Cols, o.Rows = 80, 24
 	}
 	if self, err := os.Executable(); err == nil {
-		home.InstallBridge(self)
+		home.InstallShims(self)
 	}
 	s := &Session{opts: o, term: vt.New(o.Cols, o.Rows), waiting: map[uint32]chan proto.BridgeResponse{}, exited: make(chan struct{})}
 	s.term.Reply = s.replyWhenDetached
@@ -249,7 +249,7 @@ func (s *Session) environment() []string {
 		}
 	}
 	out = append(out, s.opts.Env...)
-	out = append(out, "AFT_SESSION="+s.opts.ID, "AFT_BRIDGE="+BridgePath(s.opts.ID), "AFT_SHIMS="+home.Bridge())
+	out = append(out, "AFT_SESSION="+s.opts.ID, "AFT_BRIDGE="+BridgePath(s.opts.ID), "AFT_SHIMS="+home.Shims())
 	return out
 }
 

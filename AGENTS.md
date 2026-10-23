@@ -15,21 +15,21 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 ## Code map
 
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
-  invoked under an agent's name. `cmd/helper` is the server binary, cross-compiled per platform into `internal/remote/embed` and carried inside aft for install (there is no standalone helper binary).
+  invoked under an agent's name. `cmd/server` is the server binary, cross-compiled per platform into `internal/remote/embed` (gzipped) and carried inside aft for install (there is no standalone server binary).
 - `internal/vt` is the terminal emulator both sides use: the client's shadow
   screen and the session's detached screen. It renders a screen back to escape
   sequences and answers terminal queries.
-- `internal/session` runs one application in a pseudo-terminal on the server,
+- `internal/session` runs one application in a pseudo-terminal on the host,
   attaches one client at a time, repaints on reattach, and relays bridge
-  requests. `internal/helper` is the server CLI around it plus the bridge shims.
+  requests. `internal/server` is the server CLI around it plus the bridge shims.
 - `internal/client` is the terminal client: input tokenizer, prediction,
   passthrough, reconnect, bridges, port mirroring, and copy mode (the
   scrollback pager, in copymode.go). `cmd/aft/selftest.go` is the guided
   hands-on harness, isolated in a throwaway home.
 - `internal/transport` reaches a host through the user's OpenSSH with a shared
-  master connection, or runs the helper locally for the reserved host `local`.
-- `internal/remote` embeds and installs the helper. `internal/launcher` owns
-  shims, the on/off decision and the shell PATH block. `internal/config` reads
+  master connection, or runs the server locally for the reserved host `local`.
+- `internal/remote` embeds and installs the server. `internal/launcher` owns
+  launchers, the on/off decision and the shell PATH block. `internal/config` reads
   settings and state. `internal/bridge` and `internal/ports` are the local
   sides of URL opening, clipboard and port mirroring.
 - `internal/ui` holds raw-mode interactive prompts for setup and config. It
@@ -40,8 +40,8 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
   environment (a container, a nix or mise shell).
 - `internal/proto` is the framed protocol between client and session.
 
-Tests live beside the code. The helper and end-to-end tests spawn the test
-binary itself as the helper and drive the client under a real pseudo-terminal.
+Tests live beside the code. The server and end-to-end tests spawn the test
+binary itself as the server and drive the client under a real pseudo-terminal.
 
 ## Contracts
 
@@ -58,7 +58,7 @@ binary itself as the helper and drive the client under a real pseudo-terminal.
 - Only allowlisted environment variables cross to the server.
 - Everything Aft writes lives under `~/.aft` on each machine plus the recorded
   shell block, and `aft uninstall` removes exactly that.
-- Aft installs nothing but its own helper, edits nothing but the shell block,
+- Aft installs nothing but its own server, edits nothing but the shell block,
   and never runs sudo. Setup asks before editing dotfiles and can print the
   line instead.
 - Nothing on the client path may write to the terminal at startup. Interactive

@@ -18,8 +18,8 @@ then create a `release` environment with required reviewers.
    [CHANGELOG.md](../../CHANGELOG.md) into an exact `## X.Y.Z` section with a
    date, keeping a fresh Unreleased section.
 2. Run `./x check` and `./x release-check vX.Y.Z`. The latter cross-compiles the
-   helper for every platform, builds `aft` for Linux and macOS on amd64 and
-   arm64 with those helpers embedded, and inspects each archive.
+   server for every platform, builds `aft` for Linux and macOS on amd64 and
+   arm64 with those servers embedded, and inspects each archive.
 3. Complete the [manual checks](testing.md#manual-checks-before-a-release).
 4. Merge, enable `RELEASE_ENABLED=true`, and push an annotated `vX.Y.Z` tag, or
    dispatch the workflow manually with an existing tag.
@@ -31,7 +31,7 @@ uploads the archives, then, behind the `release` environment, verifies hashes
 and the tag and creates a **draft** release. Nothing is published
 automatically.
 
-Each archive contains `aft`, which embeds the helpers, plus the license,
+Each archive contains `aft`, which embeds the servers, plus the license,
 README and documentation. Archives are unsigned; macOS binaries are not
 notarized. `aft version` prints the build version.
 

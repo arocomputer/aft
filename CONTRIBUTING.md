@@ -22,15 +22,15 @@ shell on Linux or macOS.
 | `./x try` | Open the interactive test command center (builds aft, runs the guided self-test) |
 | `./x bench` | Run the benchmarks (microbenchmarks and the end-to-end typing-latency benchmark) |
 | `./x docs` | Check guide metadata and local Markdown links |
-| `./x helpers` | Cross-compile the server helper for every platform into the embed directory |
-| `./x build` | Cross-compile the embedded server helpers, then build `bin/aft` |
+| `./x servers` | Cross-compile and gzip the server for every host platform into the embed directory |
+| `./x build` | Cross-compile the embedded servers, then build `bin/aft` |
 | `./x check` | Formatting, vet, tests, docs and build |
 | `./x release-check [vX.Y.Z]` | Build and inspect all archives in a temporary directory |
 | `./x dist vX.Y.Z` | Write archives, checksums and notes to `dist/vX.Y.Z`; never publish |
 
-A plain `go build ./cmd/aft` works for development but embeds no helpers, so it
+A plain `go build ./cmd/aft` works for development but embeds no servers, so it
 can only use the host `local`. Run `./x build` for a binary that can install
-itself on servers.
+itself on remote hosts.
 
 Third-party dependencies are allowed when they earn their place; each new one
 is justified in review.

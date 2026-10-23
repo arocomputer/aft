@@ -13,15 +13,15 @@ first, then:
 aft setup --host box
 ```
 
-Setup connects, installs Aft's helper under `~/.aft` on the server, reports
+Setup connects, installs Aft's server under `~/.aft` on the host, reports
 which agents it finds there, creates launchers for your agents under
-`~/.aft/shims`, and asks how to put that directory first on your `PATH`. If you
+`~/.aft/launchers`, and asks how to put that directory first on your `PATH`. If you
 manage your dotfiles, choose the option that prints the line for you to add;
 otherwise aft adds a marked block to your shell config:
 
 ```sh
 # >>> aft >>>
-export PATH="$HOME/.aft/shims:$PATH"
+export PATH="$HOME/.aft/launchers:$PATH"
 # <<< aft <<<
 ```
 
@@ -37,17 +37,17 @@ cd ~/code/app
 aft on
 ```
 
-The project maps to the same path relative to home on the server, here
+The project maps to the same path relative to home, on the host, here
 `~/code/app`. If that directory does not exist there and your project is a git
-repository, `aft on` offers to clone it on the server from the same remote.
+repository, `aft on` offers to clone it, on the host from the same remote.
 Pass `--dir` for a different server path, or `--host` for a different server.
 
 From then on, starting `claude`, `codex`, `opencode`, `pi` or any program with a
-launcher from inside that directory runs it on the server. `aft off` turns it
+launcher from inside that directory runs it, on the host. `aft off` turns it
 back off. Nothing else changes.
 
 To start from a repository that only exists remotely, `aft clone URL` clones
-it on the server, creates an empty local directory to stand for it, and turns
+it, on the host, creates an empty local directory to stand for it, and turns
 it on.
 
 ## Settings

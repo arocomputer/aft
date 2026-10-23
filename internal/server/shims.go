@@ -1,4 +1,4 @@
-package helper
+package server
 
 import (
 	"encoding/json"
@@ -18,7 +18,7 @@ import (
 // IsShim reports whether argv0 names a bridge shim.
 func IsShim(argv0 string) bool {
 	base := filepath.Base(argv0)
-	for _, n := range home.BridgeShims {
+	for _, n := range home.ShimNames {
 		if n == base {
 			return true
 		}
@@ -137,7 +137,7 @@ func bridge(kind string, args any) (proto.BridgeResponse, error) {
 
 // passthrough runs the real command of the same name, skipping the shim dir.
 func passthrough(name string, args []string) int {
-	bridge := home.Bridge()
+	bridge := home.Shims()
 	for _, dir := range strings.Split(os.Getenv("PATH"), string(os.PathListSeparator)) {
 		if dir == "" || sameDir(dir, bridge) {
 			continue
