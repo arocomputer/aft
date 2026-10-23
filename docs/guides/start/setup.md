@@ -1,0 +1,76 @@
+---
+title: Setup
+description: Add a server and turn a project on
+order: 2
+---
+
+# Setup
+
+Aft uses the SSH configuration you already have. Make sure `ssh devbox` works
+first, then:
+
+```sh
+aft setup --host devbox
+```
+
+Setup connects, installs Aft's helper under `~/.aft` on the server, reports
+which agents it finds there, creates launchers for your agents under
+`~/.aft/shims`, and adds a marked block to your shell config that puts that
+directory first on `PATH`:
+
+```sh
+# >>> aft >>>
+export PATH="$HOME/.aft/shims:$PATH"
+# <<< aft <<<
+```
+
+For fish the block goes in `~/.config/fish/conf.d/aft.fish`. Aft backs up any
+file before editing it and records exactly what it added, so
+[uninstall](../usage/uninstall.md) can remove it. Open a new terminal
+afterwards.
+
+## Turn a project on
+
+```sh
+cd ~/code/app
+aft on
+```
+
+The project maps to the same path relative to home on the server, here
+`~/code/app`. If that directory does not exist there and your project is a git
+repository, `aft on` offers to clone it on the server from the same remote.
+Pass `--dir` for a different server path, or `--host` for a different server.
+
+From then on, starting `claude`, `codex`, `opencode`, `pi` or any program with a
+launcher from inside that directory runs it on the server. `aft off` turns it
+back off. Nothing else changes.
+
+To start from a repository that only exists remotely, `aft clone URL` clones
+it on the server, creates an empty local directory to stand for it, and turns
+it on.
+
+## Settings
+
+`~/.aft/config.toml` holds your hosts and preferences:
+
+```toml
+default_host = "devbox"
+agents = ["claude", "codex", "opencode", "pi"]
+predict = true
+detach_key = ""              # for example "ctrl-]"; off by default
+
+[hosts.devbox]
+ssh = "devbox"               # the destination given to ssh
+
+[env]
+pass = []                    # extra variables allowed to cross to the server
+
+[ports]
+mirror = "3000-9999"
+```
+
+A repository may commit an optional `aft.toml` with `host`, `dir` and
+`ports.mirror` so a team shares the same mapping. Each person maps the host
+name to their own SSH destination in their config.
+
+Next: [sessions](../usage/sessions.md).

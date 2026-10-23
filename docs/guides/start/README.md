@@ -1,10 +1,10 @@
 ---
 title: Start
-description: Build Aft and register a workspace
+description: Install Aft and connect a server
 order: 1
 ---
 
 # Start
 
 - [Installation](install.md)
-- [Workspaces](workspaces.md)
+- [Setup](setup.md)

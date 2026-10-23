@@ -1,0 +1,92 @@
+package holder
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/fschrhunt/aft/internal/home"
+)
+
+var idOK = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
+// ValidID reports whether a session id is safe to use in paths.
+func ValidID(id string) bool { return idOK.MatchString(id) }
+
+// NewID derives a readable session id from the command name.
+func NewID(command string) string {
+	base := filepath.Base(command)
+	base = regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(base, "-")
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = "session"
+	}
+	if len(base) > 20 {
+		base = base[:20]
+	}
+	var b [2]byte
+	rand.Read(b[:])
+	return base + "-" + hex.EncodeToString(b[:])
+}
+
+// Start launches a detached holder process for o and waits until its socket
+// accepts connections. helper is the argv prefix that runs helper
+// subcommands: the aft-helper binary alone, or the aft binary plus "helper".
+func Start(helper []string, o Options) error {
+	if len(helper) == 0 {
+		return fmt.Errorf("no helper command")
+	}
+	if !ValidID(o.ID) {
+		return fmt.Errorf("invalid session id %q", o.ID)
+	}
+	if err := home.Ensure(); err != nil {
+		return err
+	}
+	logf, err := os.OpenFile(filepath.Join(home.Log(), o.ID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
+	args := append(append([]string{}, helper[1:]...), "serve", "--id", o.ID, "--dir", o.Dir, "--cols", strconv.Itoa(o.Cols), "--rows", strconv.Itoa(o.Rows))
+	for _, kv := range o.Env {
+		args = append(args, "--env", kv)
+	}
+	args = append(args, "--")
+	args = append(args, o.Command...)
+	cmd := exec.Command(helper[0], args...)
+	cmd.Stdout, cmd.Stderr = logf, logf
+	cmd.Stdin = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Env = os.Environ()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap the holder if it exits; otherwise it outlives us by design.
+	exited := make(chan struct{})
+	go func() { cmd.Wait(); close(exited) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(SocketPath(o.ID)); err == nil {
+			return nil
+		}
+		select {
+		case <-exited:
+			deadline = time.Time{}
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	tail, _ := os.ReadFile(filepath.Join(home.Log(), o.ID+".log"))
+	msg := strings.TrimSpace(string(tail))
+	if len(msg) > 500 {
+		msg = msg[len(msg)-500:]
+	}
+	return fmt.Errorf("session %s did not start: %s", o.ID, msg)
+}
