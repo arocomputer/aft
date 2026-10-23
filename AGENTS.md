@@ -1,36 +1,61 @@
 # Working on Aft
 
-Aft is a small Go CLI around system OpenSSH and remote tmux. Keep it small.
+Aft runs agents on a server while the terminal stays on the user's machine.
+Read [the design](docs/contributing/plan.md) before changing architecture.
 
 - Preserve unrelated changes. Never revert or reformat code outside the task.
-- Never expose secrets or add real credentials, host inventories or machine paths.
+- Never add real credentials, host names or machine paths.
 - Prefer simple, direct implementations. Add abstractions only when needed.
-- Comment functions, classes and modules with a concise purpose and contract.
+- Comment functions, types and packages with a concise purpose and contract.
   Update affected comments and docs with each behavior change.
 - Add focused tests for meaningful behavior; avoid redundant smoke tests.
-- Do not publish, push, tag, run releases or change user configuration without
+- Do not publish, push, tag, run releases or change the user's machine without
   explicit authorization. Local checks and builds do not publish.
 
 ## Code map
 
-`cmd/aft/main.go` and `cli.go` dispatch commands and construct SSH invocations.
-`workspace.go` and `projects.go` manage local metadata and remote containment.
-`ports.go` owns forwarding processes; `service.go` integrates user service managers.
-`doctor.go` and `diagnostics.go` inspect connectivity and listeners.
-Tests live beside the code and use temporary homes and fake executables.
+- `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
+  invoked under an agent's name. `cmd/aft-helper` is the server binary.
+- `internal/vt` is the terminal emulator both sides use: the client's shadow
+  screen and the holder's detached screen. It renders a screen back to escape
+  sequences and answers terminal queries.
+- `internal/holder` runs one application in a pseudo-terminal on the server,
+  attaches one client at a time, repaints on reattach, and relays bridge
+  requests. `internal/helper` is the server CLI around it plus the bridge shims.
+- `internal/client` is the terminal client: input tokenizer, prediction,
+  passthrough, reconnect, bridges and port mirroring.
+- `internal/transport` reaches a host through the user's OpenSSH with a shared
+  master connection, or runs the helper locally for the reserved host `local`.
+- `internal/remote` embeds and installs the helper. `internal/launcher` owns
+  shims, the on/off decision and the shell PATH block. `internal/config` reads
+  settings and state. `internal/bridge` and `internal/ports` are the local
+  sides of URL opening, clipboard and port mirroring.
+- `internal/ui` holds raw-mode interactive prompts for setup and config. It
+  never uses a TUI framework, because Bubble Tea probes the terminal on import,
+  which would corrupt the session client that shares it.
+- `internal/config` resolves settings as project over host over global, and
+  carries the launch wrapper that lets a user run the agent inside any
+  environment (a container, a nix or mise shell).
+- `internal/proto` is the framed protocol between client and holder.
 
-`docs/guides/` is canonical user documentation. `docs/contributing/` holds testing,
-roadmap and release practices. No website or embedded docs are implemented.
-`x` is the developer entry point; `scripts/` contains standard-library Python
-checks and archive packaging. `.github/workflows/` calls the same commands.
+Tests live beside the code. The helper and end-to-end tests spawn the test
+binary itself as the helper and drive the client under a real pseudo-terminal.
 
-## Contracts and checks
+## Contracts
 
-Preserve literal remote arguments, private atomic metadata, no-overwrite behavior,
-workspace path validation, loopback-only tunnels and owned child cleanup. Remote
-files are never removed as rollback. Uninstall is dry-run only. Treat service
-manager uncertainty as an error, not proof that a service has stopped.
+- Server output passes through to the terminal byte for byte. Predictions are
+  drawn only between escape sequences and are reconciled or repainted.
+- Enter, control keys, pastes and escape sequences are never predicted.
+- Sessions survive a lost client. Aft never stops a session on its own.
+- Only allowlisted environment variables cross to the server.
+- Everything Aft writes lives under `~/.aft` on each machine plus the recorded
+  shell block, and `aft uninstall` removes exactly that.
+- Aft installs nothing but its own helper, edits nothing but the shell block,
+  and never runs sudo. Setup asks before editing dotfiles and can print the
+  line instead.
+- Nothing on the client path may write to the terminal at startup. Interactive
+  prompts live in internal/ui and run only when called; no imported package may
+  probe the terminal, or it corrupts the passthrough client.
 
 Run `./x check` for changes and `./x release-check` for distribution work.
 Cross-build success is not runtime verification; report limits honestly.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for review and task commands.

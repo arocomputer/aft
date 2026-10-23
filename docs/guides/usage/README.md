@@ -1,11 +1,14 @@
 ---
 title: Usage
-description: Projects, sessions, forwarding and local metadata
+description: Sessions, launchers, ports and removal
 order: 2
 ---
 
 # Usage
 
-- [Projects and sessions](projects.md)
-- [Ports and services](ports.md)
-- [Metadata and cleanup](metadata.md)
+- [Sessions](sessions.md)
+- [Launchers](launchers.md)
+- [Ports](ports.md)
+- [Configuration](config.md)
+- [Mounted projects](mounts.md)
+- [Uninstall](uninstall.md)

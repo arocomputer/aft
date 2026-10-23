@@ -1,52 +1,59 @@
 # Testing
 
-Run `./x check` for formatting, vet, race-enabled tests, infrastructure tests,
-documentation checks and a native build. Run `./x release-check` to compile and
-inspect Linux/macOS amd64/arm64 archives and their checksums without publishing.
-Tests use temporary homes and fake SSH/service executables; they do not need
-credentials or access to real development machines.
+Run `./x check` for formatting, vet, race-enabled tests, documentation checks and
+a build. Tests need no server and no credentials.
 
-The Go tests cover literal arguments, exit codes, path containment, collisions,
-metadata permissions and symlinks, migration, service state handling, local-only
-completion and uninstall, and tunnel child-process cleanup. CI repeats the suite
-on Linux and macOS. Cross-compilation does not establish target runtime behavior.
+## What the automated tests cover
 
-## Manual integration checklist
+- **Emulator** (`internal/vt`): basic operations, wrapping, scrollback, erase,
+  attributes, alternate screen, modes, wide characters, the drawn caret, and
+  query answers. A render round trip replays `Render` output into a fresh
+  emulator and expects an identical screen, cursor and modes. A differential
+  test compares screen text and cursor against pyte, an independent emulator,
+  on output recorded from Claude Code, Codex, opencode, pi and a shell.
+  Recordings live in `internal/vt/testdata`; regenerate them with a pseudo-
+  terminal harness when agents change materially.
+- **Input tokenizer** (`internal/client`): escape sequences, bracketed paste,
+  multibyte characters and split sequences are never mistaken for typed text,
+  and every byte is forwarded in order.
+- **Prediction** (`internal/client`): a typed character is visible before the
+  echo and the echo leaves the screen as if nothing had been predicted; the
+  cursor is restored before server output; a prediction the server never
+  confirms is repainted and lowers confidence; Backspace undoes a prediction;
+  the drawn caret used by pi moves correctly; passthrough is exact when
+  prediction is off.
+- **Holder** (`internal/helper`): a real detached session is started, typed
+  into, dropped, reattached at a new size with a repaint carrying earlier
+  output, and ended with an Exit frame. A detached application's cursor-position
+  query is answered. A second client takes over and the first is told.
+- **End to end** (`cmd/aft`): the real client runs a shell session under a
+  pseudo-terminal on the local host; the relay is killed as a dropped
+  connection would be; the client reconnects, the screen is intact and the
+  shell is alive. Detach from another terminal and reattach with `aft attach`.
+- **Prediction timing** (`internal/client`): a predicted character is written
+  before `Key` returns, so typing is drawn at local speed with no wait on the
+  network.
+- **Bridges** (`internal/bridge`, `internal/helper`): the open-url bridge
+  rejects non-web schemes; the clipboard reader runs the local tool; and the
+  `open` shim turns a URL into an open-url request on the session bridge socket.
 
-Use disposable local metadata and a disposable remote workspace with existing
-SSH authentication and trusted host keys. Do not overwrite your normal config.
-Only enable services deliberately, with a stable test binary path; service files
-live outside Aft metadata and must be removed explicitly after the exercise.
+## Manual checks before a release
 
-1. Exercise interactive setup and picker, workspace defaults/removal, and paths
-   with spaces and apostrophes. Confirm unknown host keys fail validation.
-2. Create and register projects; check duplicate, traversal, symlink and unknown
-   project rejection. Confirm record removal retains remote files.
-3. Run literal arguments and nonzero exit codes; attach/detach/reopen tmux, verify
-   retained shell state, and reject duplicate detached session names.
-4. Load bash/zsh completions and exercise actual completion keys.
-5. Forward a disposable HTTP listener. Check responses, occupied-port recovery,
-   listener stop/restart, and SIGINT/SIGTERM child/listener cleanup.
-6. Inspect doctor/status; distinguish listener observations from forwarding health.
-7. On each platform, activate and remove a disposable user service; inspect log
-   paths, failed activation, inactive/unloaded states, and unavailable managers.
-8. Migrate disposable legacy records; confirm originals remain and repeats fail.
-   Confirm uninstall dry-run changes nothing.
-9. Exercise network loss, sleep/wake, reboot and extended unattended operation.
+1. On a Mac with a Linux server and a macOS server: `aft setup`, `aft on`,
+   launch Claude Code, Codex, opencode and pi. Type at a 100 ms or worse round
+   trip and judge whether typing feels local.
+2. Close the laptop lid mid-session, reopen, confirm the reattach.
+3. Browser login from a fresh server account; image paste; copying text from
+   the agent to the local clipboard; a dev server reachable on local
+   `localhost`.
+4. `aft off` and confirm the local agent runs; `aft uninstall` and confirm
+   both machines are as they were apart from your code.
 
-Remove test services, sessions, listeners and disposable directories explicitly.
-Record OS/tool versions, source commit, checks and outcomes in the review; do not
-commit private hosts, logs or machine-specific artifact paths.
+The real OpenSSH path has been exercised against a local sshd: installing the
+embedded helper, `aft on`, a full interactive session, listener discovery from
+`/proc/net/tcp`, the `ssh -O forward` primitive mirroring uses, and
+`aft uninstall` removing the server home. A test against a second physical
+machine over the network is still the remaining check.
 
-## Prior evidence and limits
-
-Development notes from 2026-10-21 report a macOS ARM64 client against Linux passing
-28 manual checks, including tmux, forwarding and launchd cleanup. They also report
-finding and fixing an explicit-tunnel SIGTERM child leak, now covered by a focused
-subprocess regression test. The manual harness is not part of this repository;
-these notes are historical evidence, not a reproducible automated suite.
-
-That review did not establish Linux systemd runtime behavior, interactive setup,
-actual completion key presses, sleep/wake or network partition recovery, reboot
-behavior, hostile concurrent directory replacement, or long-duration operation.
-Restarting a listener is not a network-loss test. None of this is a security audit.
+Record OS and tool versions, source commit and outcomes in the review; never
+commit private hosts, logs or machine-specific paths.

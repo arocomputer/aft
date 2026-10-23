@@ -2,10 +2,10 @@
   <img src="assets/lockup/white.svg#gh-dark-mode-only" alt="aft" height="52">
   <img src="assets/lockup/black.svg#gh-light-mode-only" alt="aft" height="52">
 
-  <h3>Local tools. Remote workspaces.</h3>
+  <h3>Your agents on your server. Your terminal stays local.</h3>
 
-  <p>Connect to development directories on your own machines,<br>
-  with system OpenSSH and remote tmux. Your code stays remote.</p>
+  <p>Run Claude, Codex, opencode or any terminal agent on your own machine,<br>
+  while you type on your laptop with no network lag. Your code stays remote.</p>
 
   <p>
     <a href="https://github.com/fschrhunt/aft/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/fschrhunt/aft/ci.yml?branch=main&style=flat-square&color=111111&label=ci" alt="CI"></a>
@@ -15,94 +15,54 @@
 
 <br>
 
+Aft runs your coding agents on your server while the terminal stays on your
+laptop. Typing feels local because Aft predicts and draws each keystroke on your
+machine, then reconciles it with the server. Everything else, the agent, its
+tools, builds, tests and git, runs where your code lives.
+
+```sh
+aft setup          # once: add a server
+cd ~/code/app
+aft on             # agents started here now run on the server
+claude             # same command as always; also codex, opencode, pi, any program
+aft off            # back to fully local
+```
+
+Close the laptop and the agent keeps working. Open it again and you are
+reattached, screen intact. Aft adds no hooks, plugins or settings to any agent,
+installs nothing but its own small helper on the server, and `aft uninstall`
+removes every file and line it added.
+
 ## Start
 
-From a source checkout, build with Go 1.24 or newer:
+Build from source with Go 1.26 or newer, then copy `bin/aft` to a directory on
+your `PATH`:
 
 ```sh
 ./x build
 ./bin/aft help
 ```
 
-Linux and macOS are the target client platforms. No public binary release or
-installer is available yet. Copy `bin/aft` to a directory on your `PATH` to use
-`aft` from anywhere. See [Installation](docs/guides/start/install.md).
-
-Configure your SSH authentication and host trust first. The remote machine needs
-a POSIX shell and tmux. Then register an existing remote directory and project:
-
-```sh
-aft setup                         # choose an SSH alias and existing remote root
-aft add myapp                     # register myapp beneath that root
-aft open myapp                    # create or attach to its tmux session
-```
-
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <b>Code stays remote</b><br>
-      Work in directories on your own machines. Aft does not upload repositories
-      or install remote packages.
-    </td>
-    <td width="33%" valign="top">
-      <b>Sessions keep running</b><br>
-      Disconnect and return to the same tmux session with <code>aft open myapp</code>.
-      Sessions last until they exit or the remote machine reboots.
-    </td>
-    <td width="33%" valign="top">
-      <b>Your existing SSH</b><br>
-      Use system OpenSSH and your configured hosts. Aft does not copy credentials
-      or edit shell startup files.
-    </td>
-  </tr>
-</table>
-
-## Work on a project
-
-Run a command over SSH, or start one in a detached tmux session:
-
-```sh
-aft exec myapp -- go test ./...
-aft run --session myapp-build myapp -- go build ./...
-aft project list
-```
-
-`exec` returns the remote command's exit status. `run` returns after launching
-the session; it does not wait for the command's result. Use `aft new NAME` to
-create a new directory beneath your workspace instead of registering an existing
-one. More in [Projects and sessions](docs/guides/usage/projects.md).
-
-## Bring a port home
-
-Forward a remote development server to your machine:
-
-```sh
-aft ports --project myapp 3000     # localhost:3000, until Ctrl+C
-```
-
-Tunnels bind to IPv4 loopback. Port discovery and watching require Linux `ss`
-on the remote machine. `aft doctor` checks connectivity and remote tools;
-`aft status` inspects sessions and listeners. See
-[Ports and services](docs/guides/usage/ports.md) for forwarding, discovery, and
-optional background services.
+macOS and Linux are supported as both the laptop and the server. Windows users
+run Aft inside WSL.
 
 ## Docs
 
 Quick reference: `aft help`. The canonical guides live in
-[docs/guides](docs/guides/start/README.md); there is no documentation website or
-embedded `aft docs` command yet.
+[docs/guides](docs/guides/start/README.md).
 
 | | |
 | --- | --- |
-| [Installation](docs/guides/start/install.md) · [Workspaces](docs/guides/start/workspaces.md) | Building aft and connecting an existing remote root |
-| [Projects and sessions](docs/guides/usage/projects.md) | Registering projects, opening sessions, and running commands |
-| [Ports and services](docs/guides/usage/ports.md) | Forwarding ports, diagnostics, and background services |
-| [Metadata](docs/guides/usage/metadata.md) | Local records, migration, and cleanup |
+| [Installation](docs/guides/start/install.md) · [Setup](docs/guides/start/setup.md) | Building aft and connecting a server |
+| [Sessions](docs/guides/usage/sessions.md) · [Launchers](docs/guides/usage/launchers.md) | How a remote agent runs, and how `aft on` routes it |
+| [Ports](docs/guides/usage/ports.md) · [Mounted projects](docs/guides/usage/mounts.md) | Previews on localhost, and SMB/NFS code mounts |
+| [Configuration](docs/guides/usage/config.md) · [Uninstall](docs/guides/usage/uninstall.md) | Per-host settings and the launch wrapper; clean removal |
 
-For development, see [Contributing](CONTRIBUTING.md),
-[testing](docs/contributing/testing.md), [roadmap](docs/contributing/roadmap.md),
-and [changelog](CHANGELOG.md). Report vulnerabilities through the
-[security policy](SECURITY.md). Brand files are in [assets](assets/README.md).
+For development, see [Contributing](CONTRIBUTING.md), the
+[design](docs/contributing/plan.md), [testing](docs/contributing/testing.md),
+[roadmap](docs/contributing/roadmap.md) and [changelog](CHANGELOG.md). Report
+vulnerabilities through the [security policy](SECURITY.md). Brand files are in
+[assets](assets/README.md).
 
 <br>
 
