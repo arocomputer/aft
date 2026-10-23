@@ -7,7 +7,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/fschrhunt/aft/internal/vt"
+	"github.com/arocomputer/aft/internal/vt"
 )
 
 // Predictor sits between the session and the user's terminal. Server output

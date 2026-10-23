@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fschrhunt/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/proto"
 )
 
 // Handle performs one request and returns the response to send back.

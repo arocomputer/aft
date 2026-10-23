@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fschrhunt/aft/internal/home"
-	"github.com/fschrhunt/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/home"
+	"github.com/arocomputer/aft/internal/proto"
 )
 
 // IsShim reports whether argv0 names a bridge shim.

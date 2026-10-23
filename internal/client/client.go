@@ -20,12 +20,12 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/fschrhunt/aft/internal/bridge"
-	"github.com/fschrhunt/aft/internal/home"
-	"github.com/fschrhunt/aft/internal/ports"
-	"github.com/fschrhunt/aft/internal/proto"
-	"github.com/fschrhunt/aft/internal/remote"
-	"github.com/fschrhunt/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/bridge"
+	"github.com/arocomputer/aft/internal/home"
+	"github.com/arocomputer/aft/internal/ports"
+	"github.com/arocomputer/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/remote"
+	"github.com/arocomputer/aft/internal/transport"
 )
 
 // Options describe what to run or attach to.

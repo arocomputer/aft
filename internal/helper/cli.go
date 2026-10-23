@@ -18,9 +18,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/fschrhunt/aft/internal/holder"
-	"github.com/fschrhunt/aft/internal/home"
-	"github.com/fschrhunt/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/holder"
+	"github.com/arocomputer/aft/internal/home"
+	"github.com/arocomputer/aft/internal/proto"
 )
 
 // Info is what `aft-helper info` prints for doctor and version checks.

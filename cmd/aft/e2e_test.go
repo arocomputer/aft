@@ -11,7 +11,7 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/fschrhunt/aft/internal/vt"
+	"github.com/arocomputer/aft/internal/vt"
 )
 
 // TestMain lets this test binary act as the aft executable, including as the

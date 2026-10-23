@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fschrhunt/aft/internal/home"
+	"github.com/arocomputer/aft/internal/home"
 )
 
 var idOK = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)

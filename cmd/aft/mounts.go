@@ -11,10 +11,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fschrhunt/aft/internal/config"
-	"github.com/fschrhunt/aft/internal/remote"
-	"github.com/fschrhunt/aft/internal/transport"
-	"github.com/fschrhunt/aft/internal/ui"
+	"github.com/arocomputer/aft/internal/config"
+	"github.com/arocomputer/aft/internal/remote"
+	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/ui"
 )
 
 // detected describes a network mount discovered under a path.

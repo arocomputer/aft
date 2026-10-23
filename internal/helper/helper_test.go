@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fschrhunt/aft/internal/holder"
-	"github.com/fschrhunt/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/holder"
+	"github.com/arocomputer/aft/internal/proto"
 )
 
 // TestMain lets the test binary act as the helper executable, so holder.Start

@@ -13,14 +13,14 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/fschrhunt/aft/internal/client"
-	"github.com/fschrhunt/aft/internal/config"
-	"github.com/fschrhunt/aft/internal/holder"
-	"github.com/fschrhunt/aft/internal/home"
-	"github.com/fschrhunt/aft/internal/launcher"
-	"github.com/fschrhunt/aft/internal/remote"
-	"github.com/fschrhunt/aft/internal/transport"
-	"github.com/fschrhunt/aft/internal/ui"
+	"github.com/arocomputer/aft/internal/client"
+	"github.com/arocomputer/aft/internal/config"
+	"github.com/arocomputer/aft/internal/holder"
+	"github.com/arocomputer/aft/internal/home"
+	"github.com/arocomputer/aft/internal/launcher"
+	"github.com/arocomputer/aft/internal/remote"
+	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/ui"
 )
 
 func flags(name string) *flag.FlagSet {

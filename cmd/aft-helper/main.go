@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"github.com/fschrhunt/aft/internal/helper"
+	"github.com/arocomputer/aft/internal/helper"
 )
 
 func main() {

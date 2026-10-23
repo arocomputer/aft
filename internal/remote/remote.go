@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fschrhunt/aft/internal/helper"
-	"github.com/fschrhunt/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/helper"
+	"github.com/arocomputer/aft/internal/transport"
 )
 
 // Helper binaries are placed here by ./x build as aft-helper-<os>-<arch>.

@@ -9,7 +9,7 @@ usage() {
 }
 
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
-ldflags="-s -w -X main.version=$version -X github.com/fschrhunt/aft/internal/helper.Version=$version"
+ldflags="-s -w -X main.version=$version -X github.com/arocomputer/aft/internal/helper.Version=$version"
 
 task=${1:-check}
 if [ "$#" -gt 0 ]; then shift; fi
