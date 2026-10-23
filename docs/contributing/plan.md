@@ -48,9 +48,9 @@ inside WSL, which counts as Linux. Native Windows is out of scope.
 
 | # | Decision | Detail |
 |---|---|---|
-| 1 | Aft builds its own predictive terminal and its own session holder | No mosh, no tmux. See sections 4 and 5 |
+| 1 | Aft builds its own predictive terminal and its own berth | No mosh, no tmux. See sections 4 and 5 |
 | 2 | Code lives only on the server. There is no sync logic of any kind | See section 6 |
-| 3 | A small Aft helper runs on each server | It is the session holder and the server half of the bridges |
+| 3 | A small Aft helper runs on each server | It is the berth and the server half of the bridges |
 | 4 | Aft adds the PATH line to the user's shell config itself | `aft uninstall` removes it exactly. See section 8 |
 | 5 | Third-party dependencies are allowed | The old no-dependency rule is removed from the README, guides and AGENTS.md |
 | 6 | macOS and Linux, client and server | Both are tested in CI |
@@ -105,7 +105,7 @@ waiting at its prompt.
 - No person has yet judged the feel on a real network. Phase 2 ends with
   that check.
 
-## 4. The session holder replaces tmux
+## 4. The berth replaces tmux
 
 tmux can be configured to be invisible, so its appearance alone is not the
 reason to replace it. The reasons are these:
@@ -118,9 +118,9 @@ reason to replace it. The reasons are these:
 - **tmux would be a server dependency** that users must install. On macOS
   servers that means Homebrew. Aft never installs third-party software.
 - **Aft already needs a terminal emulator.** The client needs one for
-  prediction. The holder needs exactly the same component.
+  prediction. The berth needs exactly the same component.
 
-The Aft session holder is part of the helper. Per session it holds three
+The Aft berth is part of the helper. Per session it holds three
 things: a pseudo-terminal running the agent, a terminal emulator fed
 everything the agent prints, and a bounded scrollback.
 
@@ -132,7 +132,7 @@ everything the agent prints, and a bounded scrollback.
   screen. It answers the terminal queries an app sends, such as cursor
   position and device attributes, so the agent never blocks waiting for a
   terminal.
-- **Reattached.** The holder replays recent scrollback for apps on the
+- **Reattached.** The berth replays recent scrollback for apps on the
   normal screen. It restores terminal modes: alternate screen, mouse,
   bracketed paste, keyboard protocol flags and cursor visibility. It paints
   the current screen, then sends the app a resize signal so it redraws
@@ -173,7 +173,7 @@ Still bound by network latency: menus, autocomplete popups, and the agent's
 response after Enter. The response is dominated by model time.
 
 One terminal emulation library serves both sides, the client's shadow
-screen and the holder's emulator. Phase 2 starts by choosing it, against
+screen and the berth's emulator. Phase 2 starts by choosing it, against
 four tests: mode tracking, query answering, rendering a screen back out to
 escape codes, and correctness on recorded agent output.
 
@@ -203,7 +203,7 @@ All work lives on the server. Aft has no sync logic and none is planned.
    ▲ draws            │ keys
    │                  ▼
  aft client                                        aft helper
-   ├─ passthrough + shadow screen                    ├─ session holder
+   ├─ passthrough + shadow screen                    ├─ berth
    ├─ prediction overlay                             │    ├─ pty → claude │ codex │ any
    ├─ reconnect, reattach, resize                    │    ├─ emulator + scrollback
    ├─ bridge server: open URL, clipboard ◄────────── ├─ bridge shims on the session PATH
@@ -371,8 +371,8 @@ internal/config/     config, aft.toml, state
 internal/ssh/        OpenSSH master, channels, forwards, helper install
 internal/vt/         shared terminal emulation wrapper around the chosen library
 internal/client/     passthrough, shadow screen, prediction, reconnect, title
-internal/holder/     server sessions: pty, emulator, scrollback, query answering, reattach
-internal/helper/     server entry: holder control, shims, listeners
+internal/berth/     server sessions: pty, emulator, scrollback, query answering, reattach
+internal/helper/     server entry: berth control, shims, listeners
 internal/launcher/   shims, on/off decision, shell block install and removal
 internal/bridge/     local open-URL and clipboard
 internal/ports/      mirror
@@ -401,7 +401,7 @@ be merged.
   passwords.
 - With prediction off, output matches passthrough exactly.
 
-**Holder.**
+**Berth.**
 
 - Reattach restores the screen, the terminal modes and scrollback.
 - While detached, terminal queries are answered.
@@ -436,7 +436,7 @@ with a Linux server, and a macOS client with a macOS server.
 
 | Phase | Delivers | Exit criteria |
 |---|---|---|
-| 1 | SSH master, helper install, session holder with passthrough, attach, detach, ls, reconnect | `claude` runs on a server, detaches, survives a killed connection, and reattaches with the screen restored. Typing still has full latency |
+| 1 | SSH master, helper install, berth with passthrough, attach, detach, ls, reconnect | `claude` runs on a server, detaches, survives a killed connection, and reattaches with the screen restored. Typing still has full latency |
 | 2 | Terminal library choice, shadow screen, prediction, query answering | Typing and fidelity tests pass. **Go or no-go:** a person types into Claude Code at a 120 ms round trip and it feels local |
 | 3 | Launchers, shell block, `aft setup`, `on`, `off`, `clone`, `shell` | The same `claude` command runs locally or remotely depending on on/off |
 | 4 | Bridges and port mirror | Browser login, image paste and a dev server on local `localhost` all work |
@@ -452,7 +452,7 @@ with a Linux server, and a macOS client with a macOS server.
   which most agents do completely.
 - **Query timing at launch.** Agents probe the terminal at startup. A launch
   always happens with a client attached, so your real terminal answers. While
-  detached, the holder answers.
+  detached, the berth answers.
 - **Terminal library fit.** It must track modes and render back out to escape
   codes. Mitigation: choose it by test at the start of Phase 2. Writing a
   focused emulator is the fallback.

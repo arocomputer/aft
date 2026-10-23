@@ -4,12 +4,12 @@ set -eu
 cd "$(dirname "$0")"
 
 usage() {
-  echo 'usage: ./x [fmt [--check]|check|test|docs|helpers|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
+  echo 'usage: ./x [fmt [--check]|check|test|try|bench|docs|helpers|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
   exit 2
 }
 
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
-ldflags="-s -w -X main.version=$version -X github.com/arocomputer/aft/internal/helper.Version=$version"
+ldflags="-s -w -X main.version=$version -X github.com/fschrhunt/aft/internal/helper.Version=$version"
 
 task=${1:-check}
 if [ "$#" -gt 0 ]; then shift; fi
@@ -35,6 +35,41 @@ case "$task" in
     [ "$#" -eq 0 ] || usage
     go test -race ./...
     python3 -m unittest discover -s scripts -p 'test_*.py'
+    ;;
+  try)
+    # The interactive test command center: build aft and open the guided
+    # self-test. Everything runs on this machine in a throwaway home.
+    [ "$#" -eq 0 ] || usage
+    ./x build >/dev/null
+    exec ./bin/aft selftest
+    ;;
+  bench)
+    # Run the microbenchmarks and the end-to-end latency sweep, writing a
+    # timestamped report to benchmarks/.
+    [ "$#" -eq 0 ] || usage
+    ./x build >/dev/null
+    out="benchmarks/report-$(date +%Y%m%d-%H%M%S).md"
+    {
+      echo "# aft benchmark report"
+      echo
+      echo "- date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "- $(go version)"
+      echo "- target: $(go env GOOS)/$(go env GOARCH)"
+      echo
+      echo "## Microbenchmarks"
+      echo
+      echo '```'
+      go test -run '''^$''' -bench . -benchmem ./internal/client/ ./internal/vt/ ./internal/proto/
+      echo '```'
+      echo
+      echo "## End-to-end typing latency"
+      echo
+      echo "Prediction keeps the echo flat as the delay grows; raw tracks the round trip."
+      echo
+      go run ./benchmarks/latency ./bin/aft
+    } | tee "$out"
+    echo >&2
+    echo "wrote $out" >&2
     ;;
   docs)
     [ "$#" -eq 0 ] || usage

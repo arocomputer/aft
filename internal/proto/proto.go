@@ -1,5 +1,5 @@
 // Package proto is the framed byte protocol between an Aft client and a
-// session holder. The same frames travel over a Unix socket on the server and,
+// session berth. The same frames travel over a Unix socket on the server and,
 // unchanged, through the SSH channel that relays them to the client, so the
 // relay in between is a plain byte pump.
 //
@@ -20,7 +20,7 @@ import (
 // Type identifies a frame.
 type Type uint8
 
-// Frames from the client to the holder.
+// Frames from the client to the berth.
 const (
 	Input       Type = 0x01 // terminal input bytes for the application
 	Resize      Type = 0x02 // cols, rows as two uint16
@@ -29,19 +29,21 @@ const (
 	Ping        Type = 0x05
 	End         Type = 0x06 // stop the application and the session
 	Kick        Type = 0x07 // drop whichever client is attached (sent by aft detach)
+	ReqSnapshot Type = 0x08 // ask the berth for its scrollback and screen (copy mode)
 )
 
-// Frames from the holder to the client.
+// Frames from the berth to the client.
 const (
 	Output    Type = 0x11 // terminal output bytes from the application
 	Exit      Type = 0x12 // the application exited; payload is a JSON ExitInfo
-	Title     Type = 0x13 // reserved: holder-set title
+	Title     Type = 0x13 // reserved: berth-set title
 	BridgeReq Type = 0x14 // a shim on the server needs the client; JSON BridgeRequest
 	Listeners Type = 0x15 // listening TCP ports on the server, uint16 each
 	Hello     Type = 0x16 // sent on attach; JSON HelloInfo
 	Pong      Type = 0x17
 	Detached  Type = 0x18 // another client took over, or aft detach was run
 	Error     Type = 0x19 // human-readable error text; the connection then closes
+	Snapshot  Type = 0x1a // gob-encoded vt.SnapshotData, answering ReqSnapshot
 )
 
 // MaxPayload bounds a single frame.

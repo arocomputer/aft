@@ -103,6 +103,8 @@ func run(cmd string, args []string) int {
 		return cmdAgents(args)
 	case "uninstall":
 		return cmdUninstall(args)
+	case "selftest":
+		return cmdSelftest(args)
 	case "completion":
 		return cmdCompletion(args)
 	}

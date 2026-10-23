@@ -85,7 +85,7 @@ func TestAltScreenAndModes(t *testing.T) {
 	}
 }
 
-// TestQueriesAnswered checks the responses the holder gives while detached.
+// TestQueriesAnswered checks the responses the berth gives while detached.
 func TestQueriesAnswered(t *testing.T) {
 	term := New(80, 24)
 	var replies []string
@@ -214,4 +214,68 @@ func hasWide(s string) bool {
 		}
 	}
 	return false
+}
+
+// TestOSC52Clipboard decodes an OSC 52 write to the callback and ignores a
+// read when no reader is set.
+func TestOSC52Clipboard(t *testing.T) {
+	term := New(20, 3)
+	var got []byte
+	var gotSel string
+	term.Clipboard = func(sel string, data []byte) { gotSel, got = sel, data }
+	// "hello" base64 is aGVsbG8=
+	feed(t, term, "\x1b]52;c;aGVsbG8=\x1b\\")
+	if gotSel != "c" || string(got) != "hello" {
+		t.Fatalf("clipboard write: sel=%q data=%q", gotSel, got)
+	}
+	// A read request with no reader set must not panic or reply.
+	var replied bool
+	term.Reply = func([]byte) { replied = true }
+	feed(t, term, "\x1b]52;c;?\x1b\\")
+	if replied {
+		t.Fatal("answered a clipboard read with no reader set")
+	}
+	// With a reader, the read is answered as base64.
+	term.ClipboardRead = func(string) []byte { return []byte("hi") }
+	var reply string
+	term.Reply = func(b []byte) { reply = string(b) }
+	feed(t, term, "\x1b]52;c;?\x1b\\")
+	if reply != "\x1b]52;c;aGk=\x1b\\" {
+		t.Fatalf("clipboard read reply: %q", reply)
+	}
+}
+
+// TestOSC52Chunked checks a clipboard write split across writes still decodes.
+func TestOSC52Chunked(t *testing.T) {
+	term := New(20, 3)
+	var got []byte
+	term.Clipboard = func(_ string, data []byte) { got = data }
+	for _, part := range []string{"\x1b]52;c;aGVs", "bG8=", "\x1b\\"} {
+		feed(t, term, part)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("chunked clipboard: %q", got)
+	}
+}
+
+// TestSnapshot returns scrollback plus the screen with the cursor located in
+// the combined buffer.
+func TestSnapshot(t *testing.T) {
+	term := New(10, 2)
+	feed(t, term, "one\r\ntwo\r\nthree\r\nfourAB")
+	snap := term.Snapshot()
+	// Two lines scrolled off (one, two) plus two visible rows (three, fourAB).
+	if snap.Cols != 10 || snap.Rows != 2 {
+		t.Fatalf("size %d x %d", snap.Cols, snap.Rows)
+	}
+	if len(snap.Lines) != 4 {
+		t.Fatalf("lines = %d, want 4", len(snap.Lines))
+	}
+	if LineText(snap.Lines[0]) != "one" || LineText(snap.Lines[3]) != "fourAB" {
+		t.Fatalf("content: %q .. %q", LineText(snap.Lines[0]), LineText(snap.Lines[3]))
+	}
+	// Cursor is on the last visible row (index 3) after "fourAB".
+	if snap.CursorRow != 3 || snap.CursorCol != 6 {
+		t.Fatalf("cursor at %d,%d", snap.CursorRow, snap.CursorCol)
+	}
 }

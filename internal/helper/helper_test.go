@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arocomputer/aft/internal/holder"
+	"github.com/arocomputer/aft/internal/berth"
 	"github.com/arocomputer/aft/internal/proto"
 )
 
-// TestMain lets the test binary act as the helper executable, so holder.Start
+// TestMain lets the test binary act as the helper executable, so berth.Start
 // can spawn real detached sessions during tests.
 func TestMain(m *testing.M) {
 	if os.Getenv("AFT_TEST_AS_HELPER") == "1" {
@@ -44,7 +44,7 @@ type conn struct {
 
 func attach(t *testing.T, id string, cols, rows int) *conn {
 	t.Helper()
-	c, err := net.Dial("unix", holder.SocketPath(id))
+	c, err := net.Dial("unix", berth.SocketPath(id))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,17 +86,17 @@ func (c *conn) collect(t *testing.T, want string) string {
 	return ""
 }
 
-// TestSessionLifecycle runs a real detached holder: attach, type, detach,
+// TestSessionLifecycle runs a real detached berth: attach, type, detach,
 // reattach with a repaint, then end it.
 func TestSessionLifecycle(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
 	helperCmd := []string{self}
-	o := holder.Options{ID: "t-shell", Command: []string{"sh", "-c", `printf 'ready> '; read line; printf 'got:%s\n' "$line"; read again`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := holder.Start(helperCmd, o); err != nil {
+	o := berth.Options{ID: "t-shell", Command: []string{"sh", "-c", `printf 'ready> '; read line; printf 'got:%s\n' "$line"; read again`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := berth.Start(helperCmd, o); err != nil {
 		t.Fatal(err)
 	}
-	defer holder.Control("t-shell", proto.End)
+	defer berth.Control("t-shell", proto.End)
 
 	c := attach(t, "t-shell", 40, 10)
 	if f := c.read(t); f.Type != proto.Hello {
@@ -106,7 +106,7 @@ func TestSessionLifecycle(t *testing.T) {
 	proto.Write(c.c, proto.Input, []byte("hello\r"))
 	c.collect(t, "got:hello")
 
-	list, err := holder.List()
+	list, err := berth.List()
 	if err != nil || len(list) != 1 || list[0].ID != "t-shell" {
 		t.Fatalf("list %+v %v", list, err)
 	}
@@ -114,7 +114,7 @@ func TestSessionLifecycle(t *testing.T) {
 	// Drop the connection: the session must survive.
 	c.c.Close()
 	time.Sleep(100 * time.Millisecond)
-	if list, _ := holder.List(); len(list) != 1 {
+	if list, _ := berth.List(); len(list) != 1 {
 		t.Fatal("session died with its client")
 	}
 
@@ -145,7 +145,7 @@ func TestSessionLifecycle(t *testing.T) {
 		}
 	}
 	time.Sleep(100 * time.Millisecond)
-	if list, _ := holder.List(); len(list) != 0 {
+	if list, _ := berth.List(); len(list) != 0 {
 		t.Fatalf("session still listed: %+v", list)
 	}
 }
@@ -157,11 +157,11 @@ func TestDetachedQueriesAreAnswered(t *testing.T) {
 	self, _ := os.Executable()
 	// The program asks for the cursor position and prints the reply it gets.
 	script := `stty raw -echo; printf '\033[6n'; reply=$(head -c 6 | tr -d '\033'); stty sane; printf 'reply=%s\n' "$reply"; sleep 30`
-	o := holder.Options{ID: "t-query", Command: []string{"sh", "-c", script}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := holder.Start([]string{self}, o); err != nil {
+	o := berth.Options{ID: "t-query", Command: []string{"sh", "-c", script}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := berth.Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
-	defer holder.Control("t-query", proto.End)
+	defer berth.Control("t-query", proto.End)
 	time.Sleep(300 * time.Millisecond) // the query happens with no client
 	c := attach(t, "t-query", 40, 10)
 	c.read(t) // hello
@@ -176,11 +176,11 @@ func TestDetachedQueriesAreAnswered(t *testing.T) {
 func TestSecondClientTakesOver(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
-	o := holder.Options{ID: "t-two", Command: []string{"sh", "-c", "printf 'x> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := holder.Start([]string{self}, o); err != nil {
+	o := berth.Options{ID: "t-two", Command: []string{"sh", "-c", "printf 'x> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := berth.Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
-	defer holder.Control("t-two", proto.End)
+	defer berth.Control("t-two", proto.End)
 	a := attach(t, "t-two", 40, 10)
 	a.read(t)
 	a.collect(t, "x>")
@@ -252,17 +252,17 @@ func TestOpenShimSendsBridgeRequest(t *testing.T) {
 func TestWrapperWrapsCommand(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
-	o := holder.Options{
+	o := berth.Options{
 		ID:      "t-wrap",
 		Command: []string{"sh", "-c", "echo COMMAND-RAN; sleep 30"},
 		Wrapper: []string{"sh", "-c", `echo WRAPPER-RAN; exec "$@"`, "sh"},
 		Dir:     t.TempDir(),
 		Cols:    40, Rows: 10,
 	}
-	if err := holder.Start([]string{self}, o); err != nil {
+	if err := berth.Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
-	defer holder.Control("t-wrap", proto.End)
+	defer berth.Control("t-wrap", proto.End)
 	c := attach(t, "t-wrap", 40, 10)
 	c.read(t) // hello
 	out := c.collect(t, "COMMAND-RAN")

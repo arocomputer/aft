@@ -25,7 +25,7 @@ func Run() string { return filepath.Join(Dir(), "run") }
 // Sessions holds one JSON record per live session.
 func Sessions() string { return filepath.Join(Dir(), "sessions") }
 
-// Log holds per-session holder logs.
+// Log holds per-session berth logs.
 func Log() string { return filepath.Join(Dir(), "log") }
 
 // Bin holds the helper binary on a server.

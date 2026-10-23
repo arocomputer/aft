@@ -55,6 +55,51 @@ The working directory on the server is the project's mapped directory plus
 your current subdirectory. Code lives only on the server and moves with git;
 Aft never syncs or copies files.
 
+## Copy and paste
+
+Copy and paste are your terminal's job, and aft keeps them working because it
+passes the server's output through to your terminal untouched. Your terminal
+owns the screen, the selection and the clipboard; aft does not get in the way.
+
+- **Select and copy.** Drag to select and press Cmd+C (Ctrl+Shift+C on Linux)
+  as always. For a full-screen agent such as Claude Code, Codex or opencode,
+  the application captures the mouse, so hold Option while dragging in
+  iTerm2 and Terminal, or Ctrl in most Linux terminals, to select the screen
+  instead. This is standard terminal behavior, the same as plain SSH.
+- **Paste.** Cmd+V (Ctrl+Shift+V) pastes as always. aft forwards the paste
+  whole, using bracketed paste when the application asked for it, so editors
+  and agents treat it as pasted text rather than typed keystrokes.
+- **Copy from the agent.** When the agent or a tool on the server copies to the
+  clipboard with the OSC 52 escape, aft sets your laptop clipboard directly,
+  so it works even when your terminal blocks OSC 52 by default. Reading your
+  clipboard from the server is not allowed unless you turn it on.
+- **Scrollback.** For ordinary command output your terminal keeps the history
+  and scrolls as usual. A full-screen agent draws its own screen, so scrolling
+  is the application's, reached with its keys or the mouse wheel. For history
+  that aft itself holds, use copy mode below.
+
+## Copy mode
+
+Copy mode is aft's scrollback viewer. It freezes the screen into a pager you
+drive with the keyboard, over the history the server kept for the session, so
+it works the same in any terminal and in a full-screen agent.
+
+Open it with the aft prefix, then `[`. The prefix is Ctrl-] by default; set
+`prefix` in the config to change or disable it. Inside copy mode:
+
+- **Scroll** with the arrows, PgUp and PgDn, `g` for the top and `G` for the
+  bottom.
+- **Search** with `/`, then text and Enter; `n` and `N` move to the next and
+  previous match toward older and newer output.
+- **Copy** by pressing `v` to start selecting, moving to extend, then `y` to
+  copy the lines to your clipboard and leave. You can also just drag-select the
+  frozen text and press Cmd+C, because copy mode does not capture the mouse.
+- **Leave** with `q` or Escape.
+
+The snapshot is taken when you open copy mode, so it is a still view; new output
+keeps arriving underneath and is there when you leave. The prefix also detaches:
+Ctrl-] then `d` leaves the session running.
+
 ## Bridges
 
 Inside a session, `~/.aft/shims` on the server comes first on `PATH` and
@@ -62,8 +107,7 @@ provides `open`, `xdg-open`, `pbpaste`, `wl-paste`, `xclip` and `xsel`. When
 the application opens an `http` or `https` URL, such as a login page, it opens
 in your local browser. When it reads the clipboard, for example to paste an
 image, it gets your local clipboard. Anything else is passed to the real
-command on the server. Copying text from the application reaches your clipboard
-through the terminal's own OSC 52 support, with no shim involved.
+command on the server.
 
 Remote commands run with your full permissions on the server. An agent's
 sandbox protects only the machine it runs on.

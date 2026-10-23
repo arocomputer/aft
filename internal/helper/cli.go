@@ -18,7 +18,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/holder"
+	"github.com/arocomputer/aft/internal/berth"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/proto"
 )
@@ -62,31 +62,31 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			return 2
 		}
 		if args[0] == "serve" {
-			if err := holder.Serve(o); err != nil {
+			if err := berth.Serve(o); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
 			return 0
 		}
-		if err := holder.Start(prefix, o); err != nil {
+		if err := berth.Start(prefix, o); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return relay(o.ID, stdin, stdout, stderr)
 	case "attach":
-		if len(args) != 2 || !holder.ValidID(args[1]) {
+		if len(args) != 2 || !berth.ValidID(args[1]) {
 			fmt.Fprintln(stderr, "usage: aft-helper attach ID")
 			return 2
 		}
 		return relay(args[1], stdin, stdout, stderr)
 	case "ls":
-		list, err := holder.List()
+		list, err := berth.List()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		if list == nil {
-			list = []holder.Record{}
+			list = []berth.Record{}
 		}
 		json.NewEncoder(stdout).Encode(list)
 		return 0
@@ -97,7 +97,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		var ids []string
 		if args[1] == "--all" {
-			list, _ := holder.List()
+			list, _ := berth.List()
 			for _, r := range list {
 				ids = append(ids, r.ID)
 			}
@@ -106,13 +106,13 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		code := 0
 		for _, id := range ids {
-			if !holder.ValidID(id) {
+			if !berth.ValidID(id) {
 				fmt.Fprintf(stderr, "invalid session id %q\n", id)
 				code = 2
 				continue
 			}
 			t := kindFor(args[0])
-			if err := holder.Control(id, t); err != nil {
+			if err := berth.Control(id, t); err != nil {
 				fmt.Fprintln(stderr, err)
 				code = 1
 			}
@@ -146,7 +146,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		fmt.Fprintln(stdout, path)
 		return 0
 	case "listeners":
-		ports, err := holder.Listeners()
+		ports, err := berth.Listeners()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -155,9 +155,9 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "uninstall":
 		// Ends every session and removes Aft's directory on this machine.
-		list, _ := holder.List()
+		list, _ := berth.List()
 		for _, r := range list {
-			holder.Control(r.ID, kindFor("end"))
+			berth.Control(r.ID, kindFor("end"))
 		}
 		if err := os.RemoveAll(home.Dir()); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -170,10 +170,10 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	return 2
 }
 
-func parseSessionArgs(name string, args []string) (holder.Options, error) {
+func parseSessionArgs(name string, args []string) (berth.Options, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var o holder.Options
+	var o berth.Options
 	fs.StringVar(&o.ID, "id", "", "session id")
 	fs.StringVar(&o.Dir, "dir", "", "working directory")
 	fs.IntVar(&o.Cols, "cols", 80, "columns")
@@ -191,9 +191,9 @@ func parseSessionArgs(name string, args []string) (holder.Options, error) {
 		return o, fmt.Errorf("%s requires -- COMMAND", name)
 	}
 	if o.ID == "" {
-		o.ID = holder.NewID(o.Command[0])
+		o.ID = berth.NewID(o.Command[0])
 	}
-	if !holder.ValidID(o.ID) {
+	if !berth.ValidID(o.ID) {
 		return o, fmt.Errorf("invalid session id %q", o.ID)
 	}
 	if o.Dir == "" {
@@ -214,7 +214,7 @@ func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
 
 func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if err := holder.Attach(id, struct {
+	if err := berth.Attach(id, struct {
 		io.Reader
 		io.Writer
 	}{stdin, stdout}); err != nil {

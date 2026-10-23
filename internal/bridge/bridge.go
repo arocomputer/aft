@@ -4,6 +4,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -77,6 +78,41 @@ func OpenURL(url string) error {
 		return fmt.Errorf("could not open the browser: %w", err)
 	}
 	return nil
+}
+
+// SetClipboard writes data to the local clipboard with the platform tool.
+func SetClipboard(data []byte) error {
+	name, args := "", []string(nil)
+	switch {
+	case runtime.GOOS == "darwin":
+		name = "pbcopy"
+	case hasTool("wl-copy") && os.Getenv("WAYLAND_DISPLAY") != "":
+		name = "wl-copy"
+	case hasTool("xclip"):
+		name, args = "xclip", []string{"-selection", "clipboard"}
+	case hasTool("xsel"):
+		name, args = "xsel", []string{"--clipboard", "--input"}
+	default:
+		return fmt.Errorf("no clipboard tool found")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = bytes.NewReader(data)
+	return cmd.Run()
+}
+
+func hasTool(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// ClipboardAvailable reports whether a local clipboard tool exists.
+func ClipboardAvailable() bool {
+	if runtime.GOOS == "darwin" {
+		return hasTool("pbcopy")
+	}
+	return hasTool("wl-copy") || hasTool("xclip") || hasTool("xsel")
 }
 
 // Clipboard returns clipboard contents of the given MIME type.

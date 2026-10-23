@@ -72,7 +72,8 @@ to undo.
 default_host = "box"
 agents       = ["claude", "codex", "opencode", "pi"]
 predict      = true
-detach_key   = "ctrl-]"        # off by default
+prefix       = "ctrl-]"        # opens copy mode (prefix then [) and detach (then d); "" disables
+detach_key   = ""              # a second, direct detach key; off by default
 wrapper      = []              # default wrapper for every host
 [env]
 pass = []                      # variables to pass to every host

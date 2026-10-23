@@ -14,9 +14,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/arocomputer/aft/internal/berth"
 	"github.com/arocomputer/aft/internal/client"
 	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/holder"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/ports"
 	"github.com/arocomputer/aft/internal/transport"
@@ -74,7 +74,7 @@ func existingSession(h transport.Host, name, dir string) string {
 	if err != nil {
 		return ""
 	}
-	var recs []holder.Record
+	var recs []berth.Record
 	if json.Unmarshal(out, &recs) != nil {
 		return ""
 	}
@@ -104,12 +104,17 @@ func SessionOptions(cfg config.Config, host, root string, p config.Project) (cli
 	if err != nil {
 		return client.Options{}, err
 	}
+	prefix, err := cfg.PrefixKey()
+	if err != nil {
+		return client.Options{}, err
+	}
 	return client.Options{
 		Env:       Environment(s.Env),
 		Wrapper:   s.Wrapper,
 		Predict:   s.Predict,
 		Ports:     rng,
 		DetachKey: detach,
+		Prefix:    prefix,
 	}, nil
 }
 
