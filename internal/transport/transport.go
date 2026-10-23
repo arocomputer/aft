@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fschrhunt/aft/internal/home"
+	"github.com/arocomputer/aft/internal/home"
 )
 
 // Host is a server to reach. SSH is the destination given to ssh, usually an

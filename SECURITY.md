@@ -8,7 +8,7 @@ maintenance branches yet. Fixes target the current development branch.
 Do not disclose vulnerabilities, credentials or private host details in public
 issues. Once private vulnerability reporting is enabled for the repository, use
 GitHub's **Security → Report a vulnerability** at
-[fschrhunt/aft](https://github.com/fschrhunt/aft/security).
+[arocomputer/aft](https://github.com/arocomputer/aft/security).
 If that option is unavailable, open an issue requesting a private reporting
 channel without including vulnerability details. No response-time guarantee is
 currently offered.

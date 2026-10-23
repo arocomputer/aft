@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fschrhunt/aft/internal/helper"
-	"github.com/fschrhunt/aft/internal/launcher"
+	"github.com/arocomputer/aft/internal/helper"
+	"github.com/arocomputer/aft/internal/launcher"
 )
 
 const usage = `aft — your agents on your server, your terminal on your machine

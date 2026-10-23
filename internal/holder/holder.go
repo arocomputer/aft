@@ -23,9 +23,9 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/fschrhunt/aft/internal/home"
-	"github.com/fschrhunt/aft/internal/proto"
-	"github.com/fschrhunt/aft/internal/vt"
+	"github.com/arocomputer/aft/internal/home"
+	"github.com/arocomputer/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/vt"
 )
 
 // Options describe the session to run.
