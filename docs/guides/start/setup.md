@@ -15,8 +15,9 @@ aft setup --host devbox
 
 Setup connects, installs Aft's helper under `~/.aft` on the server, reports
 which agents it finds there, creates launchers for your agents under
-`~/.aft/shims`, and adds a marked block to your shell config that puts that
-directory first on `PATH`:
+`~/.aft/shims`, and asks how to put that directory first on your `PATH`. If you
+manage your dotfiles, choose the option that prints the line for you to add;
+otherwise aft adds a marked block to your shell config:
 
 ```sh
 # >>> aft >>>
@@ -72,5 +73,8 @@ mirror = "3000-9999"
 A repository may commit an optional `aft.toml` with `host`, `dir` and
 `ports.mirror` so a team shares the same mapping. Each person maps the host
 name to their own SSH destination in their config.
+
+Per-host overrides, the launch wrapper and the PATH choice are covered in
+[configuration](../usage/config.md).
 
 Next: [sessions](../usage/sessions.md).

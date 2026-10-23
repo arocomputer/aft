@@ -21,21 +21,31 @@ import (
 // DefaultAgents are the launchers setup creates when they are installed.
 var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
 
-// Config is ~/.aft/config.toml.
+// Config is ~/.aft/config.toml. Global keys set defaults; a host or a
+// repository's aft.toml can override most of them.
 type Config struct {
-	DefaultHost string                `toml:"default_host"`
-	Agents      []string              `toml:"agents"`
-	Predict     *bool                 `toml:"predict,omitempty"`
-	DetachKey   string                `toml:"detach_key"`
-	Hosts       map[string]HostConfig `toml:"hosts"`
-	Env         EnvConfig             `toml:"env"`
-	Ports       PortsConfig           `toml:"ports"`
-	Mounts      []Mount               `toml:"mounts"`
+	DefaultHost     string                `toml:"default_host"`
+	Agents          []string              `toml:"agents"`
+	Predict         *bool                 `toml:"predict,omitempty"`
+	DetachKey       string                `toml:"detach_key"`
+	PathIntegration string                `toml:"path_integration"` // "edit" (default) or "manual"
+	Wrapper         []string              `toml:"wrapper"`          // default command wrapper on the server
+	Hosts           map[string]HostConfig `toml:"hosts"`
+	Env             EnvConfig             `toml:"env"`
+	Ports           PortsConfig           `toml:"ports"`
+	Mounts          []Mount               `toml:"mounts"`
 }
 
-// HostConfig names a server.
+// HostConfig describes one server and overrides global settings for it.
 type HostConfig struct {
-	SSH string `toml:"ssh"`
+	SSH     string   `toml:"ssh"`               // destination, may carry ssh options
+	Home    string   `toml:"home,omitempty"`    // helper home on the server, default ~/.aft
+	Wrapper []string `toml:"wrapper,omitempty"` // command wrapper on the server
+	Predict *bool    `toml:"predict,omitempty"` // prediction for sessions on this host
+	Ports   string   `toml:"ports,omitempty"`   // mirror range for this host
+	Env     []string `toml:"env,omitempty"`     // extra variables to pass to this host
+	Alive   int      `toml:"alive,omitempty"`   // ServerAlive interval seconds, 0 = default
+	Persist int      `toml:"persist,omitempty"` // ControlPersist seconds, 0 = default
 }
 
 // Mount maps a locally mounted tree to the server directory it comes from, for
@@ -80,10 +90,60 @@ type State struct {
 
 // RepoConfig is an optional aft.toml at a repository root.
 type RepoConfig struct {
-	Host  string      `toml:"host"`
-	Dir   string      `toml:"dir"`
-	Ports PortsConfig `toml:"ports"`
+	Host    string      `toml:"host"`
+	Dir     string      `toml:"dir"`
+	Ports   PortsConfig `toml:"ports"`
+	Wrapper []string    `toml:"wrapper"` // command wrapper for this project
+	Env     []string    `toml:"env"`     // extra variables for this project
 }
+
+// Settings are the effective per-session settings after merging global, host
+// and project configuration. Project overrides host overrides global.
+type Settings struct {
+	Wrapper []string
+	Predict bool
+	Ports   string
+	Env     []string
+	Alive   int
+	Persist int
+}
+
+// Resolve merges settings for a host and an optional repository config.
+func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
+	h := c.Hosts[hostName]
+	s := Settings{
+		Wrapper: c.Wrapper,
+		Predict: c.PredictOn(),
+		Ports:   c.Ports.Mirror,
+		Env:     append([]string(nil), c.Env.Pass...),
+		Alive:   h.Alive,
+		Persist: h.Persist,
+	}
+	if len(h.Wrapper) > 0 {
+		s.Wrapper = h.Wrapper
+	}
+	if h.Predict != nil {
+		s.Predict = *h.Predict
+	}
+	if h.Ports != "" {
+		s.Ports = h.Ports
+	}
+	s.Env = append(s.Env, h.Env...)
+	if repo != nil {
+		if len(repo.Wrapper) > 0 {
+			s.Wrapper = repo.Wrapper
+		}
+		if repo.Ports.Mirror != "" {
+			s.Ports = repo.Ports.Mirror
+		}
+		s.Env = append(s.Env, repo.Env...)
+	}
+	return s
+}
+
+// EditDotfiles reports whether setup should edit shell config files itself.
+// Manual mode prints the line instead, for people who manage dotfiles.
+func (c Config) EditDotfiles() bool { return c.PathIntegration != "manual" }
 
 // Path is the config file.
 func Path() string { return filepath.Join(home.Dir(), "config.toml") }
@@ -143,7 +203,7 @@ func (c Config) Host(name string) (transport.Host, error) {
 	if h.SSH == "" {
 		return transport.Host{}, fmt.Errorf("host %q has no ssh destination", name)
 	}
-	return transport.Host{Name: name, SSH: h.SSH}, nil
+	return transport.Host{Name: name, SSH: h.SSH, Alive: h.Alive, Persist: h.Persist}, nil
 }
 
 // HostNames lists configured hosts in order.

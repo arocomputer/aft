@@ -1,7 +1,7 @@
 ---
 title: Mounted projects
 description: Projects that already live on the server over SMB or NFS
-order: 5
+order: 6
 ---
 
 # Mounted projects

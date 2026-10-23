@@ -23,8 +23,10 @@ import (
 // alias from ~/.ssh/config. It may also carry ssh options before the
 // destination, such as "-p 2222 user@box". Name "local" means this machine.
 type Host struct {
-	Name string
-	SSH  string
+	Name    string
+	SSH     string
+	Alive   int // ServerAliveInterval seconds, 0 uses the default
+	Persist int // ControlPersist seconds, 0 uses the default
 }
 
 // sshDest splits the SSH field into options and the destination.
@@ -75,18 +77,25 @@ func controlPath() string { return filepath.Join(home.Run(), "cm-%C") }
 // host's own options, then the destination.
 func sshArgs(h Host, batch bool, extra ...string) []string {
 	hostOpts, dest := h.sshDest()
-	args := append(sshOptions(batch), hostOpts...)
+	args := append(sshOptions(h, batch), hostOpts...)
 	args = append(args, extra...)
 	return append(args, "--", dest)
 }
 
 // sshOptions are shared by every ssh invocation.
-func sshOptions(batch bool) []string {
+func sshOptions(h Host, batch bool) []string {
+	persist, alive := 600, 5
+	if h.Persist > 0 {
+		persist = h.Persist
+	}
+	if h.Alive > 0 {
+		alive = h.Alive
+	}
 	opts := []string{
 		"-o", "ControlMaster=auto",
 		"-o", "ControlPath=" + controlPath(),
-		"-o", "ControlPersist=600",
-		"-o", "ServerAliveInterval=5",
+		"-o", fmt.Sprintf("ControlPersist=%d", persist),
+		"-o", fmt.Sprintf("ServerAliveInterval=%d", alive),
 		"-o", "ServerAliveCountMax=3",
 	}
 	if batch {

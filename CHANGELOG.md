@@ -29,6 +29,14 @@ stays on your machine, and typing feels local.
   `aft exec`, `aft status`, `aft doctor`, `aft ports` and `aft agents add`.
 - macOS and Linux servers are supported; the helper is embedded for both on
   amd64 and arm64.
+- Configure per host and per project, with project over host over global. A
+  launch wrapper runs the agent inside any environment you name (a container, a
+  nix or mise shell, a custom shell); per-host home, prediction, port range,
+  passed env and SSH keepalive tuning are all overridable.
+- Interactive setup: aft asks how to put its launchers on your PATH and, for
+  people who manage their dotfiles, prints the line instead of editing. Prompts
+  are driven directly, with no terminal probing, so they never disturb a
+  session.
 - Recognize a project on a network mount (SMB or NFS): `aft on` maps it to its
   real path on the server with no clone and no sync, auto-detecting the mapping
   from the mount and the server's share definition. Manage mappings with

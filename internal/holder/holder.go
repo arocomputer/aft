@@ -34,6 +34,7 @@ type Options struct {
 	Command []string
 	Dir     string
 	Env     []string // KEY=VALUE pairs allowed in from the client
+	Wrapper []string // optional command to run the agent inside, e.g. nix develop -c
 	Cols    int
 	Rows    int
 }
@@ -165,7 +166,7 @@ func Serve(o Options) error {
 	s := &Session{opts: o, term: vt.New(o.Cols, o.Rows), waiting: map[uint32]chan proto.BridgeResponse{}, exited: make(chan struct{})}
 	s.term.Reply = s.replyWhenDetached
 
-	cmd := loginCommand(o.Command)
+	cmd := buildCommand(o.Wrapper, o.Command)
 	cmd.Dir = o.Dir
 	cmd.Env = s.environment()
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(o.Rows), Cols: uint16(o.Cols)})
@@ -213,10 +214,19 @@ func Serve(o Options) error {
 	return nil
 }
 
-// loginCommand runs the command through the user's login shell so the server
-// PATH and environment are the ones the user would get in a terminal there.
-// Aft's shim directory goes first on PATH so bridge shims win.
-func loginCommand(argv []string) *exec.Cmd {
+// buildCommand builds the process to run in the session. With no wrapper it
+// runs the agent through the user's login shell, so the server PATH and
+// environment match a normal terminal there, with Aft's shim directory first.
+// A configured wrapper replaces that: the agent runs as wrapper + command, so
+// the user can launch it inside a container, a nix or mise environment, a
+// specific shell, or anything else, described per host or per project. The
+// session environment (AFT_SHIMS, AFT_BRIDGE) is set either way, so a wrapper
+// that inherits the environment keeps the bridges working.
+func buildCommand(wrapper, argv []string) *exec.Cmd {
+	if len(wrapper) > 0 {
+		full := append(append([]string(nil), wrapper...), argv...)
+		return exec.Command(full[0], full[1:]...)
+	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"

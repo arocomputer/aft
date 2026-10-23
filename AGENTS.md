@@ -30,6 +30,12 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
   shims, the on/off decision and the shell PATH block. `internal/config` reads
   settings and state. `internal/bridge` and `internal/ports` are the local
   sides of URL opening, clipboard and port mirroring.
+- `internal/ui` holds raw-mode interactive prompts for setup and config. It
+  never uses a TUI framework, because Bubble Tea probes the terminal on import,
+  which would corrupt the session client that shares it.
+- `internal/config` resolves settings as project over host over global, and
+  carries the launch wrapper that lets a user run the agent inside any
+  environment (a container, a nix or mise shell).
 - `internal/proto` is the framed protocol between client and holder.
 
 Tests live beside the code. The helper and end-to-end tests spawn the test
@@ -45,7 +51,11 @@ binary itself as the helper and drive the client under a real pseudo-terminal.
 - Everything Aft writes lives under `~/.aft` on each machine plus the recorded
   shell block, and `aft uninstall` removes exactly that.
 - Aft installs nothing but its own helper, edits nothing but the shell block,
-  and never runs sudo.
+  and never runs sudo. Setup asks before editing dotfiles and can print the
+  line instead.
+- Nothing on the client path may write to the terminal at startup. Interactive
+  prompts live in internal/ui and run only when called; no imported package may
+  probe the terminal, or it corrupts the passthrough client.
 
 Run `./x check` for changes and `./x release-check` for distribution work.
 Cross-build success is not runtime verification; report limits honestly.

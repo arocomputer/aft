@@ -20,6 +20,7 @@ import (
 	"github.com/fschrhunt/aft/internal/launcher"
 	"github.com/fschrhunt/aft/internal/remote"
 	"github.com/fschrhunt/aft/internal/transport"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 func flags(name string) *flag.FlagSet {
@@ -40,11 +41,6 @@ func ask(prompt, def string) string {
 		return def
 	}
 	return line
-}
-
-func confirm(prompt string) bool {
-	a := strings.ToLower(ask(prompt+" [y/N]", "n"))
-	return a == "y" || a == "yes"
 }
 
 // cmdSetup adds a server and prepares this machine.
@@ -106,9 +102,27 @@ func cmdSetup(args []string) int {
 	if err := launcher.InstallShims(self, cfg.Agents, &st); err != nil {
 		return fail(err)
 	}
-	changed, err := launcher.InstallShellBlock(&st)
-	if err != nil {
-		return fail(err)
+	fmt.Printf("Launchers for %s are in %s.\n", strings.Join(cfg.Agents, ", "), home.Shims())
+
+	// Decide how the PATH line reaches the shell. People who manage their
+	// dotfiles want to add it themselves, so ask rather than edit blindly.
+	if cfg.PathIntegration == "" && !*yes {
+		cfg.PathIntegration = choosePathIntegration()
+	}
+	if cfg.EditDotfiles() {
+		changed, err := launcher.InstallShellBlock(&st)
+		if err != nil {
+			return fail(err)
+		}
+		for _, f := range changed {
+			ui.Note("added the aft PATH line to %s", f)
+		}
+		if len(changed) > 0 {
+			fmt.Println("Open a new terminal so it takes effect.")
+		}
+	} else {
+		fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
+		fmt.Println("\n    export PATH=\"$HOME/.aft/shims:$PATH\"")
 	}
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
@@ -116,15 +130,25 @@ func cmdSetup(args []string) int {
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("Launchers for %s are in %s.\n", strings.Join(cfg.Agents, ", "), home.Shims())
-	for _, f := range changed {
-		fmt.Printf("Added the aft PATH block to %s.\n", f)
-	}
-	if len(changed) > 0 {
-		fmt.Println("Open a new terminal, or run: export PATH=\"$HOME/.aft/shims:$PATH\"")
-	}
 	fmt.Println("Next: cd into a project and run aft on, then start your agent as usual.")
 	return 0
+}
+
+// choosePathIntegration asks whether aft should edit the shell config itself,
+// defaulting to manual when the shell config looks managed.
+func choosePathIntegration() string {
+	def := 0
+	if launcher.DotfilesManaged() {
+		def = 1
+	}
+	i := ui.Choose("How should aft put its launchers on your PATH?", []ui.Option{
+		{Label: "Edit my shell config for me", Hint: "~/.zshrc or ~/.bashrc"},
+		{Label: "Show me the line, I manage my dotfiles", Hint: "chezmoi, stow, nix, a repo"},
+	}, def)
+	if i == 1 {
+		return "manual"
+	}
+	return "edit"
 }
 
 func agentsIn(m map[string]string) []string {
@@ -219,7 +243,7 @@ func cmdOn(args []string) int {
 			return fail(fmt.Errorf("%s does not exist on %s; create it there or pass --dir", *dir, h.Name))
 		}
 		fmt.Printf("%s does not exist on %s.\n", *dir, h.Name)
-		if !confirm(fmt.Sprintf("Clone %s there?", url)) {
+		if !ui.Confirm(fmt.Sprintf("Clone %s there?", url), false) {
 			return 1
 		}
 		if err := transport.Shell(h, "mkdir -p "+transport.Quote(filepath.Dir(*dir))+" && git clone "+transport.Quote(url)+" "+transport.Quote(*dir)); err != nil {
@@ -331,7 +355,7 @@ func cmdShell(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	opts, err := launcher.SessionOptions(cfg, root, p)
+	opts, err := launcher.SessionOptions(cfg, *hostName, root, p)
 	if err != nil {
 		return fail(err)
 	}
@@ -465,7 +489,7 @@ func cmdAttach(args []string) int {
 		}
 	}
 	st, _ := config.LoadState()
-	opts, err := launcher.SessionOptions(cfg, "", config.Project{})
+	opts, err := launcher.SessionOptions(cfg, h.Name, "", config.Project{})
 	if err != nil {
 		return fail(err)
 	}
@@ -604,8 +628,12 @@ func cmdDoctor(args []string) int {
 		found := agentsIn(info.Agents)
 		report(len(found) > 0, fmt.Sprintf("agents on %s: %s", n, strings.Join(found, ", ")), "install an agent on the server")
 	}
-	if len(st.ShellBlocks) == 0 {
-		report(false, "shell PATH block recorded", "run aft setup")
+	if cfg.EditDotfiles() {
+		if len(st.ShellBlocks) == 0 {
+			report(false, "shell PATH line installed", "run aft setup")
+		}
+	} else if !launcher.OnPath() {
+		report(false, "shell PATH line added by you (manual mode)", "add $HOME/.aft/shims to PATH in your dotfiles")
 	}
 	if problems == 0 {
 		fmt.Println("Everything looks good.")
@@ -757,7 +785,7 @@ func cmdUninstall(args []string) int {
 	}
 	fmt.Printf("  remove %s (launchers, config, state)\n", home.Dir())
 	fmt.Println("Your code, SSH config and each agent's own data stay.")
-	if !*yes && !confirm("Continue?") {
+	if !*yes && !ui.Confirm("Continue?", false) {
 		return 1
 	}
 	code := 0

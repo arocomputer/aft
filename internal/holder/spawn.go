@@ -59,6 +59,9 @@ func Start(helper []string, o Options) error {
 	for _, kv := range o.Env {
 		args = append(args, "--env", kv)
 	}
+	for _, w := range o.Wrapper {
+		args = append(args, "--wrap", w)
+	}
 	args = append(args, "--")
 	args = append(args, o.Command...)
 	cmd := exec.Command(helper[0], args...)

@@ -50,7 +50,7 @@ func Launch(name string, args []string) int {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 		return 1
 	}
-	opts, err := SessionOptions(cfg, root, p)
+	opts, err := SessionOptions(cfg, p.Host, root, p)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 		return 1
@@ -86,28 +86,38 @@ func existingSession(h transport.Host, name, dir string) string {
 	return ""
 }
 
-// SessionOptions builds client options from config for a project.
-func SessionOptions(cfg config.Config, root string, p config.Project) (client.Options, error) {
-	rng, err := ports.ParseRange(cfg.Ports.Mirror)
+// SessionOptions builds client options for a project, resolving settings from
+// the global config, the host, and the project's aft.toml.
+func SessionOptions(cfg config.Config, host, root string, p config.Project) (client.Options, error) {
+	var repo *config.RepoConfig
+	if root != "" {
+		if r, _, ok := config.LoadRepo(root); ok {
+			repo = &r
+		}
+	}
+	s := cfg.Resolve(host, repo)
+	rng, err := ports.ParseRange(s.Ports)
 	if err != nil {
 		return client.Options{}, err
-	}
-	if repo, _, ok := config.LoadRepo(root); ok && repo.Ports.Mirror != "" {
-		if r, err := ports.ParseRange(repo.Ports.Mirror); err == nil {
-			rng = r
-		}
 	}
 	detach, err := config.DetachByte(cfg.DetachKey)
 	if err != nil {
 		return client.Options{}, err
 	}
-	return client.Options{Env: Environment(cfg), Predict: cfg.PredictOn(), Ports: rng, DetachKey: detach}, nil
+	return client.Options{
+		Env:       Environment(s.Env),
+		Wrapper:   s.Wrapper,
+		Predict:   s.Predict,
+		Ports:     rng,
+		DetachKey: detach,
+	}, nil
 }
 
-// Environment collects the allowlisted variables to send to the server.
-func Environment(cfg config.Config) []string {
+// Environment collects the allowlisted variables to send to the server: the
+// base set plus whatever the resolved settings add.
+func Environment(extra []string) []string {
 	var out []string
-	for _, k := range append(append([]string{}, PassEnv...), cfg.Env.Pass...) {
+	for _, k := range append(append([]string{}, PassEnv...), extra...) {
 		if v, ok := os.LookupEnv(k); ok {
 			out = append(out, k+"="+v)
 		}
@@ -345,4 +355,26 @@ func OnPath() bool {
 	real, _ := filepath.EvalSymlinks(dirs[0])
 	shims, _ := filepath.EvalSymlinks(home.Shims())
 	return dirs[0] == home.Shims() || (real != "" && real == shims)
+}
+
+// DotfilesManaged guesses whether the user manages their shell config with a
+// tool, so setup can default to printing the PATH line instead of editing.
+// It looks for a symlinked rc file (stow, dotfiles repos, nix) or a known
+// manager on PATH (chezmoi, yadm, home-manager).
+func DotfilesManaged() bool {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	for _, rc := range []string{".zshrc", ".bashrc", ".bash_profile", ".profile"} {
+		if fi, err := os.Lstat(filepath.Join(h, rc)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+	}
+	for _, tool := range []string{"chezmoi", "yadm", "home-manager"} {
+		if _, err := exec.LookPath(tool); err == nil {
+			return true
+		}
+	}
+	return false
 }

@@ -33,6 +33,7 @@ type Options struct {
 	Command   []string // for a new session
 	Dir       string   // working directory on the server
 	Env       []string // KEY=VALUE pairs to pass through
+	Wrapper   []string // optional command to run the agent inside
 	Predict   bool
 	Ports     ports.Range
 	DetachKey byte // 0 disables
@@ -105,6 +106,9 @@ func (c *session) open(first bool) (*transport.Proc, error) {
 		args = []string{"new", "--dir", c.o.Dir, "--cols", strconv.Itoa(c.cols), "--rows", strconv.Itoa(c.rows)}
 		for _, kv := range c.o.Env {
 			args = append(args, "--env", kv)
+		}
+		for _, w := range c.o.Wrapper {
+			args = append(args, "--wrap", w)
 		}
 		args = append(args, "--")
 		args = append(args, c.o.Command...)

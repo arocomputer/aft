@@ -14,6 +14,7 @@ import (
 	"github.com/fschrhunt/aft/internal/config"
 	"github.com/fschrhunt/aft/internal/remote"
 	"github.com/fschrhunt/aft/internal/transport"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 // detected describes a network mount discovered under a path.
@@ -356,7 +357,7 @@ func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool)
 		return "", "", false
 	}
 	fmt.Printf("This directory is on %s, a %s mount of %s:%s.\n", d.Point, strings.ToUpper(d.Kind), hostName, serverPath)
-	if !confirm("Map it so aft uses the files in place (no clone, no sync)?") {
+	if !ui.Confirm("Map it so aft uses the files in place (no clone, no sync)?", false) {
 		return "", "", false
 	}
 	cfg.Mounts = addMount(cfg.Mounts, config.Mount{Local: d.Point, Host: hostName, Remote: serverPath})

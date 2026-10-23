@@ -240,3 +240,28 @@ func TestOpenShimSendsBridgeRequest(t *testing.T) {
 		t.Fatal("no bridge request received")
 	}
 }
+
+// TestWrapperWrapsCommand checks a configured wrapper runs the agent inside it:
+// the wrapper writes a marker, then execs the command, and the session shows
+// both. This is the knob that lets users bring their own environment.
+func TestWrapperWrapsCommand(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := holder.Options{
+		ID:      "t-wrap",
+		Command: []string{"sh", "-c", "echo COMMAND-RAN; sleep 30"},
+		Wrapper: []string{"sh", "-c", `echo WRAPPER-RAN; exec "$@"`, "sh"},
+		Dir:     t.TempDir(),
+		Cols:    40, Rows: 10,
+	}
+	if err := holder.Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Control("t-wrap", proto.End)
+	c := attach(t, "t-wrap", 40, 10)
+	c.read(t) // hello
+	out := c.collect(t, "COMMAND-RAN")
+	if !strings.Contains(out, "WRAPPER-RAN") {
+		t.Fatalf("wrapper did not run before the command: %q", out)
+	}
+}

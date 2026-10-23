@@ -178,12 +178,14 @@ func parseSessionArgs(name string, args []string) (holder.Options, error) {
 	fs.StringVar(&o.Dir, "dir", "", "working directory")
 	fs.IntVar(&o.Cols, "cols", 80, "columns")
 	fs.IntVar(&o.Rows, "rows", 24, "rows")
-	var env multi
+	var env, wrap multi
 	fs.Var(&env, "env", "KEY=VALUE to pass to the application")
+	fs.Var(&wrap, "wrap", "wrapper word to run the agent inside")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
 	o.Env = env
+	o.Wrapper = wrap
 	o.Command = fs.Args()
 	if len(o.Command) == 0 {
 		return o, fmt.Errorf("%s requires -- COMMAND", name)
