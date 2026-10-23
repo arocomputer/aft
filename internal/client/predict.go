@@ -24,9 +24,17 @@ type Predictor struct {
 	w       io.Writer
 	enabled bool
 
-	// displaced is true when the real cursor is not where the shadow says,
-	// because an overlay moved it.
+	// Tracked state of the real terminal between server writes. Only our own
+	// predictions change it, so we can emit the fewest bytes: a bare character
+	// when the cursor and pen are already right, exactly like native echo.
+	// displaced means our predictions moved the real cursor/pen off the shadow,
+	// so Output must resync before applying server output.
 	displaced bool
+	realRow   int
+	realCol   int
+	realPen   vt.Attr
+	posKnown  bool
+	penKnown  bool
 	pending   []prediction
 	confident bool // echoes have been matching; predictions are drawn
 	srtt      time.Duration
@@ -39,6 +47,8 @@ type Predictor struct {
 	caretCol   int
 	baseRow    int
 	baseCol    int
+
+	onClip func([]byte)
 }
 
 type prediction struct {
@@ -54,6 +64,15 @@ func NewPredictor(cols, rows int, w io.Writer, enabled bool) *Predictor {
 	return &Predictor{shadow: vt.New(cols, rows), w: w, enabled: enabled, confident: true, srtt: 150 * time.Millisecond}
 }
 
+// OnClipboard routes the server's OSC 52 clipboard writes to fn. The callback
+// is reapplied after Reset so it survives a reconnect.
+func (p *Predictor) OnClipboard(fn func([]byte)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onClip = fn
+	p.shadow.Clipboard = func(_ string, data []byte) { fn(data) }
+}
+
 // Resize follows the terminal size and drops in-flight predictions.
 func (p *Predictor) Resize(cols, rows int) {
 	p.mu.Lock()
@@ -62,17 +81,23 @@ func (p *Predictor) Resize(cols, rows int) {
 	p.pending = nil
 	p.caretValid = false
 	p.displaced = false
+	p.posKnown, p.penKnown = false, false
 }
 
-// Reset forgets everything, for a fresh attach where the holder repaints.
+// Reset forgets everything, for a fresh attach where the berth repaints.
 func (p *Predictor) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cols, rows := p.shadow.Size()
 	p.shadow = vt.New(cols, rows)
+	if p.onClip != nil {
+		fn := p.onClip
+		p.shadow.Clipboard = func(_ string, data []byte) { fn(data) }
+	}
 	p.pending = nil
 	p.caretValid = false
 	p.displaced = false
+	p.posKnown, p.penKnown = false, false
 	p.confident = true
 }
 
@@ -100,6 +125,11 @@ func (p *Predictor) Output(b []byte) error {
 		return err
 	}
 	p.shadow.Write(b)
+	// The real cursor now matches the shadow; the pen is the server's, unknown
+	// to us, so the next prediction re-states it once.
+	cur := p.shadow.Cursor()
+	p.realRow, p.realCol, p.posKnown = cur.Row, cur.Col, !cur.Wrap
+	p.penKnown = false
 	p.reconcile()
 	return nil
 }
@@ -175,9 +205,21 @@ func (p *Predictor) predictText(r rune, now time.Time) {
 		if drawnCaret {
 			attr.Reverse = false
 		}
-		out := vt.CUP(row, col) + vt.SGR(attr) + string(r)
+		// Emit only what the real terminal does not already have: a cursor move
+		// if it is not at the target, a pen change if the style differs, then
+		// the character. In steady typing this is a single byte.
+		var out []byte
+		if !p.posKnown || p.realRow != row || p.realCol != col {
+			out = append(out, vt.CUP(row, col)...)
+		}
+		if !p.penKnown || p.realPen != attr {
+			out = append(out, vt.SGR(attr)...)
+		}
+		out = append(out, string(r)...)
+		p.realRow, p.realCol = row, col+1
+		p.realPen, p.penKnown, p.posKnown = attr, true, true
 		if drawnCaret {
-			// Move the drawn caret block one cell right.
+			// Move the drawn caret block one cell right, then force a resync.
 			next := p.shadow.Cell(row, col+1)
 			na := next.Attr
 			na.Reverse = true
@@ -185,9 +227,11 @@ func (p *Predictor) predictText(r rune, now time.Time) {
 			if nr == 0 {
 				nr = ' '
 			}
-			out += vt.SGR(na) + string(nr)
+			out = append(out, vt.SGR(na)...)
+			out = append(out, string(nr)...)
+			p.posKnown, p.penKnown = false, false
 		}
-		p.w.Write([]byte(out))
+		p.w.Write(out)
 		p.displaced = true
 	}
 	p.pending = append(p.pending, pred)
@@ -215,6 +259,7 @@ func (p *Predictor) predictBackspace(now time.Time) {
 		}
 		p.w.Write([]byte(out))
 		p.displaced = true
+		p.posKnown, p.penKnown = false, false
 		p.caretCol = last.col
 		return
 	}
@@ -242,6 +287,7 @@ func (p *Predictor) predictBackspace(now time.Time) {
 	}
 	p.w.Write([]byte(out))
 	p.displaced = true
+	p.posKnown, p.penKnown = false, false
 	p.pending = append(p.pending, prediction{row: row, col: col - 1, r: ' ', gen: p.shadow.Gen(), at: now, drawn: true})
 	p.caretValid, p.caretRow, p.caretCol = true, row, col-1
 }
@@ -318,10 +364,33 @@ func (p *Predictor) Tick() {
 	if len(out) > 0 {
 		p.w.Write(out)
 		p.displaced = true
+		p.posKnown, p.penKnown = false, false
 	}
 	if len(p.pending) == 0 {
 		p.caretValid = false
 	}
+}
+
+// Absorb feeds server output to the shadow without writing to the terminal.
+// Copy mode uses it so the shadow stays current while the pager owns the
+// screen; Repaint then restores the live screen on exit.
+func (p *Predictor) Absorb(b []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.shadow.Write(b)
+}
+
+// Repaint clears the screen and redraws the live screen from the shadow,
+// dropping any predictions. Copy mode calls it on exit. It paints the current
+// screen only, never scrollback, so the terminal's own history is untouched.
+func (p *Predictor) Repaint() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.w.Write([]byte("[H[2J"))
+	p.w.Write(p.shadow.Render(vt.RenderOptions{Scrollback: false, Title: true}))
+	p.pending = nil
+	p.caretValid = false
+	p.displaced = false
 }
 
 // Shadow exposes the emulator for tests.

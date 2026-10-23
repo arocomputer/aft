@@ -243,3 +243,30 @@ func TestDetachAndReattach(t *testing.T) {
 		t.Fatal("client did not exit after the shell ended")
 	}
 }
+
+// TestCopyModeScrollback drives a real shell session: it prints a marker that
+// scrolls off, enters copy mode with the prefix, jumps to the top, and expects
+// the marker back on screen with the copy-mode status bar.
+func TestCopyModeScrollback(t *testing.T) {
+	t.Setenv("AFT_HOME", shortHome(t))
+	s := start(t, "shell", "--host", "local")
+	defer s.cmd.Process.Kill()
+	s.typeKeys("printf 'MARKER-TOP\\n'; for i in $(seq 1 60); do echo line $i; done\r")
+	s.waitFor("line 60", 10*time.Second)
+	// The marker scrolled off the visible screen.
+	// Enter copy mode: prefix (Ctrl-]) then "[".
+	s.typeKeys("\x1d[")
+	s.waitFor("COPY", 5*time.Second)
+	// Jump to the top of the buffer; the marker comes back into view.
+	s.typeKeys("g")
+	s.waitFor("MARKER-TOP", 5*time.Second)
+	// Leave copy mode and the shell.
+	s.typeKeys("q")
+	time.Sleep(200 * time.Millisecond)
+	s.typeKeys("exit\r")
+	select {
+	case <-s.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("client did not exit after the shell ended")
+	}
+}

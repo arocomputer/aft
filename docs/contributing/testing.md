@@ -22,7 +22,7 @@ a build. Tests need no server and no credentials.
   confirms is repainted and lowers confidence; Backspace undoes a prediction;
   the drawn caret used by pi moves correctly; passthrough is exact when
   prediction is off.
-- **Holder** (`internal/helper`): a real detached session is started, typed
+- **Berth** (`internal/helper`): a real detached session is started, typed
   into, dropped, reattached at a new size with a repaint carrying earlier
   output, and ended with an Exit frame. A detached application's cursor-position
   query is answered. A second client takes over and the first is told.
@@ -30,12 +30,26 @@ a build. Tests need no server and no credentials.
   pseudo-terminal on the local host; the relay is killed as a dropped
   connection would be; the client reconnects, the screen is intact and the
   shell is alive. Detach from another terminal and reattach with `aft attach`.
+  A shell prints a marker that scrolls off, the prefix opens copy mode, `g`
+  jumps to the top, and the marker is back on screen with the status bar.
 - **Prediction timing** (`internal/client`): a predicted character is written
   before `Key` returns, so typing is drawn at local speed with no wait on the
   network.
 - **Bridges** (`internal/bridge`, `internal/helper`): the open-url bridge
   rejects non-web schemes; the clipboard reader runs the local tool; and the
   `open` shim turns a URL into an open-url request on the session bridge socket.
+
+## The guided self-test
+
+`./x try` opens the interactive test command center (the `aft selftest`
+command). It runs everything on this machine as its own server, in a throwaway
+`AFT_HOME`, so it needs no SSH and never touches your real config, dotfiles or
+sessions. Run it on the computer your terminal is on, not over SSH: prediction
+runs wherever aft runs, so testing it through an SSH session measures that SSH
+link, not aft. It warns you if it detects an SSH session. A menu
+offers: typing feel over a simulated slow link with prediction on then off;
+detach and reattach; copy mode and scrollback; the OSC 52 clipboard; and running
+a real agent. Run it with `./x try`.
 
 ## Manual checks before a release
 

@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -508,7 +509,34 @@ func (t *Terminal) oscDispatch(s []byte) {
 		if rest == "?" {
 			t.reply("\x1b]12;rgb:e5e5/e5e5/e5e5\x1b\\")
 		}
+	case "52":
+		t.clipboard(rest)
 	}
+}
+
+// clipboard handles OSC 52: "<selection>;<base64>" writes the clipboard, and
+// "<selection>;?" reads it (only when a reader is set).
+func (t *Terminal) clipboard(rest string) {
+	sel, data, ok := strings.Cut(rest, ";")
+	if !ok {
+		return
+	}
+	if data == "?" {
+		if t.ClipboardRead != nil {
+			if b := t.ClipboardRead(sel); b != nil {
+				t.reply("\x1b]52;" + sel + ";" + base64.StdEncoding.EncodeToString(b) + "\x1b\\")
+			}
+		}
+		return
+	}
+	if t.Clipboard == nil {
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(data))
+	if err != nil {
+		return
+	}
+	t.Clipboard(sel, raw)
 }
 
 // dcsDispatch handles device control strings; only XTGETTCAP gets an answer.

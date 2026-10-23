@@ -1,4 +1,4 @@
-package holder
+package berth
 
 import (
 	"crypto/rand"
@@ -37,7 +37,7 @@ func NewID(command string) string {
 	return base + "-" + hex.EncodeToString(b[:])
 }
 
-// Start launches a detached holder process for o and waits until its socket
+// Start launches a detached berth process for o and waits until its socket
 // accepts connections. helper is the argv prefix that runs helper
 // subcommands: the aft-helper binary alone, or the aft binary plus "helper".
 func Start(helper []string, o Options) error {
@@ -72,7 +72,7 @@ func Start(helper []string, o Options) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	// Reap the holder if it exits; otherwise it outlives us by design.
+	// Reap the berth if it exits; otherwise it outlives us by design.
 	exited := make(chan struct{})
 	go func() { cmd.Wait(); close(exited) }()
 	deadline := time.Now().Add(10 * time.Second)

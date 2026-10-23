@@ -28,6 +28,7 @@ type Config struct {
 	Agents          []string              `toml:"agents"`
 	Predict         *bool                 `toml:"predict,omitempty"`
 	DetachKey       string                `toml:"detach_key"`
+	Prefix          *string               `toml:"prefix,omitempty"` // key for copy mode and detach; nil means the default ctrl-]
 	PathIntegration string                `toml:"path_integration"` // "edit" (default) or "manual"
 	Wrapper         []string              `toml:"wrapper"`          // default command wrapper on the server
 	Hosts           map[string]HostConfig `toml:"hosts"`
@@ -312,6 +313,16 @@ func DefaultRemoteDir(local string) string {
 		}
 	}
 	return local
+}
+
+// PrefixKey is the control byte that opens aft's own commands (copy mode,
+// detach). It defaults to Ctrl-] when unset; "", "off" or "none" disable it.
+func (c Config) PrefixKey() (byte, error) {
+	s := "ctrl-]"
+	if c.Prefix != nil {
+		s = *c.Prefix
+	}
+	return DetachByte(s)
 }
 
 // DetachByte turns a detach_key setting such as "ctrl-]" into a byte.

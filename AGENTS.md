@@ -17,13 +17,15 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
   invoked under an agent's name. `cmd/aft-helper` is the server binary.
 - `internal/vt` is the terminal emulator both sides use: the client's shadow
-  screen and the holder's detached screen. It renders a screen back to escape
+  screen and the berth's detached screen. It renders a screen back to escape
   sequences and answers terminal queries.
-- `internal/holder` runs one application in a pseudo-terminal on the server,
+- `internal/berth` runs one application in a pseudo-terminal on the server,
   attaches one client at a time, repaints on reattach, and relays bridge
   requests. `internal/helper` is the server CLI around it plus the bridge shims.
 - `internal/client` is the terminal client: input tokenizer, prediction,
-  passthrough, reconnect, bridges and port mirroring.
+  passthrough, reconnect, bridges, port mirroring, and copy mode (the
+  scrollback pager, in copymode.go). `cmd/aft/selftest.go` is the guided
+  hands-on harness, isolated in a throwaway home.
 - `internal/transport` reaches a host through the user's OpenSSH with a shared
   master connection, or runs the helper locally for the reserved host `local`.
 - `internal/remote` embeds and installs the helper. `internal/launcher` owns
@@ -36,7 +38,7 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 - `internal/config` resolves settings as project over host over global, and
   carries the launch wrapper that lets a user run the agent inside any
   environment (a container, a nix or mise shell).
-- `internal/proto` is the framed protocol between client and holder.
+- `internal/proto` is the framed protocol between client and berth.
 
 Tests live beside the code. The helper and end-to-end tests spawn the test
 binary itself as the helper and drive the client under a real pseudo-terminal.
@@ -46,6 +48,10 @@ binary itself as the helper and drive the client under a real pseudo-terminal.
 - Server output passes through to the terminal byte for byte. Predictions are
   drawn only between escape sequences and are reconciled or repainted.
 - Enter, control keys, pastes and escape sequences are never predicted.
+- The prefix key (default Ctrl-], configurable, disableable) is the only key
+  aft takes from the application, and only while enabled; prefix then [ opens
+  copy mode, prefix then d detaches. Copy mode works on a snapshot and never
+  captures the mouse, so native selection still works.
 - Sessions survive a lost client. Aft never stops a session on its own.
 - Only allowlisted environment variables cross to the server.
 - Everything Aft writes lives under `~/.aft` on each machine plus the recorded

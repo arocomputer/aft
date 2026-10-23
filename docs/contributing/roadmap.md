@@ -1,7 +1,9 @@
 # Scope and roadmap
 
 [The design](plan.md) describes what Aft is and the decisions behind it. The
-[guides](../guides/start/README.md) describe the delivered behavior.
+[guides](../guides/start/README.md) describe the delivered behavior. The
+[client roadmap](client-roadmap.md) tracks terminal-client and berth
+features for power users, copy and paste among them.
 
 ## Deliberate limits
 

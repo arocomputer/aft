@@ -159,3 +159,28 @@ func TestPredictionIsSynchronous(t *testing.T) {
 		t.Fatalf("Key took %v; prediction must be local-speed", elapsed)
 	}
 }
+
+// TestPredictionMinimalBytes checks that steady typing emits a bare character
+// per key after the first, like native echo, with no cursor-move or style bytes.
+func TestPredictionMinimalBytes(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H$ ")) // prompt, cursor after it, default pen
+	out.Reset()
+	p.Key(Token{Kind: TokText, Rune: 'a', Bytes: []byte("a")})
+	first := out.Len()
+	out.Reset()
+	p.Key(Token{Kind: TokText, Rune: 'b', Bytes: []byte("b")})
+	p.Key(Token{Kind: TokText, Rune: 'c', Bytes: []byte("c")})
+	rest := out.String()
+	if rest != "bc" {
+		t.Fatalf("steady typing should emit bare characters, got %q", rest)
+	}
+	if first > 6 {
+		t.Fatalf("first keystroke emitted %d bytes, expected a short pen+char", first)
+	}
+	// The reference terminal still shows the right line.
+	if screenOf(&out, 40, 5); p.Shadow().Line(0) != "$" {
+		t.Fatalf("shadow unexpectedly changed: %q", p.Shadow().Line(0))
+	}
+}

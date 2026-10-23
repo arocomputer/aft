@@ -6,6 +6,8 @@ package client
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,7 @@ import (
 	"github.com/arocomputer/aft/internal/proto"
 	"github.com/arocomputer/aft/internal/remote"
 	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/vt"
 )
 
 // Options describe what to run or attach to.
@@ -39,11 +42,34 @@ type Options struct {
 	Predict   bool
 	Ports     ports.Range
 	DetachKey byte // 0 disables
+	Prefix    byte // 0 disables; opens copy mode and detach
+	LatencyMS int  // simulated one-way delay each direction, for the selftest
 	Quiet     bool
 }
 
 // Run attaches the terminal to a session and returns the process exit code.
+// saneSize defaults a terminal size to 80x24 when the terminal reports an error
+// or a zero dimension. A 0x0 size would otherwise be sent as a resize the
+// berth reads as a control connection, so the session would never attach.
+func saneSize(cols, rows int, err error) (int, int) {
+	if err != nil || cols <= 0 || rows <= 0 {
+		return 80, 24
+	}
+	return cols, rows
+}
+
 func Run(o Options) int {
+	// Advanced/testing env overrides: AFT_LATENCY_MS simulates a slow link each
+	// direction, and AFT_PREDICT=0 turns prediction off, so you can feel the
+	// difference without a remote server.
+	if o.LatencyMS == 0 {
+		if n, err := strconv.Atoi(os.Getenv("AFT_LATENCY_MS")); err == nil && n > 0 {
+			o.LatencyMS = n
+		}
+	}
+	if v := os.Getenv("AFT_PREDICT"); v == "0" || v == "false" {
+		o.Predict = false
+	}
 	in, out := os.Stdin, os.Stdout
 	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
 		fmt.Fprintln(os.Stderr, "aft: a terminal is required")
@@ -57,14 +83,14 @@ func Run(o Options) int {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 		return 1
 	}
-	cols, rows, err := term.GetSize(int(out.Fd()))
-	if err != nil {
-		cols, rows = 80, 24
-	}
+	cols, rows := saneSize(term.GetSize(int(out.Fd())))
 
 	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID}
 	c.mirror = ports.New(o.Host, o.Ports)
 	c.pred = NewPredictor(cols, rows, out, o.Predict)
+	// A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
+	// even when the terminal itself blocks OSC 52.
+	c.pred.OnClipboard(func(data []byte) { go bridge.SetClipboard(data) })
 	defer c.mirror.Close()
 	defer c.clearMirrors()
 
@@ -80,6 +106,16 @@ func Run(o Options) int {
 	}
 	restore := func() { term.Restore(int(in.Fd()), state) }
 	defer restore()
+	// If the terminal window closes (SIGHUP) or we are killed (SIGTERM), restore
+	// the terminal before exiting so it is never left in raw mode. The session
+	// keeps running on the server and can be reattached.
+	death := make(chan os.Signal, 1)
+	signal.Notify(death, syscall.SIGHUP, syscall.SIGTERM)
+	go func() {
+		<-death
+		restore()
+		os.Exit(1)
+	}()
 	code := c.loop(proc)
 	restore()
 	if c.message != "" {
@@ -97,9 +133,16 @@ type session struct {
 	mirror     *ports.Mirror
 	message    string
 
-	wmu  sync.Mutex
-	wr   io.Writer
-	zero bool
+	wmu sync.Mutex
+	wr  io.Writer
+	rd  io.Reader
+
+	z     Tokenizer        // input tokenizer, kept across the loop
+	flush <-chan time.Time // fires to release a lone Escape held by the tokenizer
+
+	copy          *copyMode // non-nil while the scrollback pager is open
+	prefixPending bool      // the prefix key was pressed; the next key is a command
+	awaitSnap     bool      // a snapshot was requested to open copy mode
 }
 
 // open starts or attaches to the session and performs the handshake.
@@ -124,6 +167,11 @@ func (c *session) open(first bool) (*transport.Proc, error) {
 	}
 	c.wmu.Lock()
 	c.wr = proc.Stdin
+	c.rd = proc.Stdout
+	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
+		c.wr = laggyWriter{proc.Stdin, d}
+		c.rd = laggyReader(proc.Stdout, d)
+	}
 	c.wmu.Unlock()
 	if err := c.send(proto.Resize, proto.EncodeResize(c.cols, c.rows)); err != nil {
 		proc.Kill()
@@ -173,42 +221,42 @@ func (c *session) loop(proc *transport.Proc) int {
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 
-	var z Tokenizer
-	var flush <-chan time.Time
 	connected := true
 	frames := c.readFrames(proc)
 	for {
+		// Keystrokes take priority: drain every queued key before touching
+		// output, so a burst of agent output never stalls your typing.
+		if connected {
+		drain:
+			for {
+				select {
+				case b, ok := <-keys:
+					if leave, code := c.handleBatch(b, ok, connected); leave {
+						return code
+					}
+				default:
+					break drain
+				}
+			}
+		}
 		select {
 		case b, ok := <-keys:
-			if !ok {
-				c.send(proto.Detach, nil)
-				return 0
+			if leave, code := c.handleBatch(b, ok, connected); leave {
+				return code
 			}
-			if !connected {
-				if len(b) == 1 && b[0] == 0x03 {
-					c.message = fmt.Sprintf("aft: left session %s while disconnected; it keeps running. Reattach with: aft attach %s", c.id, c.id)
-					return 1
-				}
-				continue
-			}
-			toks := z.Feed(b)
-			if z.Pending() {
-				flush = time.After(40 * time.Millisecond)
-			} else {
-				flush = nil
-			}
-			if !c.handleKeys(toks) {
-				return 0
-			}
-		case <-flush:
-			flush = nil
-			if connected && !c.handleKeys(z.Flush()) {
+		case <-c.flush:
+			c.flush = nil
+			if connected && !c.handleKeys(c.z.Flush()) {
 				return 0
 			}
 		case <-winch:
 			if cols, rows, err := term.GetSize(int(c.out.Fd())); err == nil {
 				c.cols, c.rows = cols, rows
 				c.pred.Resize(cols, rows)
+				if c.copy != nil {
+					c.copy.resize(cols, rows)
+					c.out.Write(c.copy.view())
+				}
 				if connected {
 					c.send(proto.Resize, proto.EncodeResize(cols, rows))
 				}
@@ -219,6 +267,9 @@ func (c *session) loop(proc *transport.Proc) int {
 			if fe.err != nil {
 				// The connection dropped without the application ending.
 				connected = false
+				// Leave copy mode: its snapshot is stale and the reattach repaints.
+				c.copy = nil
+				c.awaitSnap = false
 				msg, _ := proc.Wait()
 				if c.id == "" {
 					c.message = "aft: could not start the session: " + msg
@@ -235,7 +286,7 @@ func (c *session) loop(proc *transport.Proc) int {
 				connected = true
 				frames = c.readFrames(proc)
 				// Deliver what was typed while disconnected, in order.
-				if len(typed) > 0 && !c.handleKeys(z.Feed(typed)) {
+				if len(typed) > 0 && !c.handleKeys(c.z.Feed(typed)) {
 					return 0
 				}
 				continue
@@ -251,8 +302,9 @@ func (c *session) loop(proc *transport.Proc) int {
 
 func (c *session) readFrames(proc *transport.Proc) <-chan frameOrErr {
 	ch := make(chan frameOrErr, 256)
+	rd := c.rd
 	go func() {
-		r := bufio.NewReaderSize(proc.Stdout, 256<<10)
+		r := bufio.NewReaderSize(rd, 256<<10)
 		for {
 			f, err := proto.Read(r)
 			if err != nil {
@@ -265,29 +317,131 @@ func (c *session) readFrames(proc *transport.Proc) <-chan frameOrErr {
 	return ch
 }
 
-// handleKeys forwards tokens and lets the predictor draw. It returns false if
-// the user pressed the detach key.
+// handleKeys routes input: to copy mode when open, to a prefix command when the
+// prefix was just pressed, otherwise to the application with prediction. It
+// returns false when the client should leave (the user detached).
 func (c *session) handleKeys(toks []Token) bool {
 	for _, t := range toks {
-		if c.o.DetachKey != 0 && t.Kind == TokOther && len(t.Bytes) == 1 && t.Bytes[0] == c.o.DetachKey {
+		switch {
+		case c.copy != nil:
+			exit, copied := c.copy.key(t)
+			if copied != nil {
+				go bridge.SetClipboard(copied)
+			}
+			if exit {
+				c.exitCopy()
+			} else {
+				c.out.Write(c.copy.view())
+			}
+		case c.prefixPending:
+			c.prefixPending = false
+			if !c.prefixCommand(t) {
+				return false // prefix-d (detach) asks the loop to leave
+			}
+		case c.o.Prefix != 0 && len(t.Bytes) == 1 && t.Bytes[0] == c.o.Prefix:
+			c.prefixPending = true
+		case c.o.DetachKey != 0 && len(t.Bytes) == 1 && t.Bytes[0] == c.o.DetachKey:
 			c.send(proto.Detach, nil)
-			c.message = fmt.Sprintf("aft: detached from %s; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+			c.message = c.detachMessage()
 			return false
+		default:
+			// Draw the local prediction first, so your echo is never delayed by
+			// a slow or congested link, then forward the keystroke.
+			c.pred.Key(t)
+			if err := c.send(proto.Input, t.Bytes); err != nil {
+				return true
+			}
 		}
-		if err := c.send(proto.Input, t.Bytes); err != nil {
-			return true
-		}
-		c.pred.Key(t)
 	}
 	return true
+}
+
+// handleBatch tokenizes one read from the terminal and routes it. It returns
+// leave=true with an exit code when the client should stop (stdin closed, or a
+// detach). It is called both from the priority drain and the main select.
+func (c *session) handleBatch(b []byte, ok, connected bool) (leave bool, code int) {
+	if !ok {
+		c.send(proto.Detach, nil)
+		return true, 0
+	}
+	if !connected {
+		// While disconnected, only Ctrl-C leaves; other keys are dropped.
+		if len(b) == 1 && b[0] == 0x03 {
+			c.message = fmt.Sprintf("aft: left session %s while disconnected; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+			return true, 1
+		}
+		return false, 0
+	}
+	toks := c.z.Feed(b)
+	if c.z.Pending() {
+		c.flush = time.After(40 * time.Millisecond)
+	} else {
+		c.flush = nil
+	}
+	if !c.handleKeys(toks) {
+		return true, 0
+	}
+	return false, 0
+}
+
+// prefixCommand runs the key after the prefix. It returns false only for detach,
+// which asks the loop to leave.
+func (c *session) prefixCommand(t Token) bool {
+	switch {
+	case len(t.Bytes) == 1 && t.Bytes[0] == c.o.Prefix:
+		// The prefix twice sends the literal key to the application.
+		c.pred.Key(t)
+		c.send(proto.Input, t.Bytes)
+	case string(t.Bytes) == "[":
+		c.enterCopy()
+	case string(t.Bytes) == "d":
+		c.send(proto.Detach, nil)
+		c.message = c.detachMessage()
+		return false
+	}
+	return true
+}
+
+func (c *session) detachMessage() string {
+	return fmt.Sprintf("aft: detached from %s; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+}
+
+// enterCopy requests a snapshot; copy mode opens when it arrives.
+func (c *session) enterCopy() {
+	if c.awaitSnap || c.copy != nil {
+		return
+	}
+	c.awaitSnap = true
+	c.send(proto.ReqSnapshot, nil)
+}
+
+// exitCopy closes the pager and restores the live screen from the shadow.
+func (c *session) exitCopy() {
+	c.copy = nil
+	c.pred.Repaint()
 }
 
 // handleFrame applies one frame. done is true when the client should exit.
 func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 	switch f.Type {
 	case proto.Output:
+		if c.copy != nil {
+			// The pager owns the screen; keep the shadow current for the repaint
+			// on exit, but do not draw the live output over the pager.
+			c.pred.Absorb(f.Payload)
+			return 0, false
+		}
 		if err := c.pred.Output(f.Payload); err != nil {
 			return 1, true
+		}
+	case proto.Snapshot:
+		if c.awaitSnap {
+			c.awaitSnap = false
+			var sd vt.SnapshotData
+			if gob.NewDecoder(bytes.NewReader(f.Payload)).Decode(&sd) == nil {
+				c.copy = newCopyMode(sd, c.cols, c.rows)
+				c.out.Write(c.copy.view())
+			}
 		}
 	case proto.Hello:
 		var h proto.HelloInfo

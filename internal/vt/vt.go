@@ -1,7 +1,7 @@
 // Package vt is a terminal emulator that tracks screen contents, cursor and
 // terminal modes from a byte stream. Aft uses it twice: the client keeps a
 // shadow of what the server has drawn so it can predict typed characters, and
-// the session holder keeps the agent's screen while nobody is attached so it
+// the session berth keeps the agent's screen while nobody is attached so it
 // can repaint on reattach and answer the terminal queries an agent sends.
 //
 // The emulator never renders on its own. Callers read cells, cursor and modes,
@@ -128,6 +128,17 @@ type Terminal struct {
 	// downstream is expected to answer instead.
 	Reply func([]byte)
 
+	// Clipboard, when set, is called for an OSC 52 clipboard write with the
+	// selection letters and the decoded bytes. The berth leaves it nil; the
+	// client sets the local clipboard from it, so a copy made on the server
+	// reaches the laptop even when the terminal blocks OSC 52.
+	Clipboard func(sel string, data []byte)
+
+	// ClipboardRead, when set, answers an OSC 52 read request. Nil ignores
+	// reads, the safe default, so a remote application cannot silently read the
+	// local clipboard.
+	ClipboardRead func(sel string) []byte
+
 	// Bells counts BEL characters seen; callers may reset it.
 	Bells int
 
@@ -186,6 +197,71 @@ func (t *Terminal) Line(row int) string {
 // Scrollback returns lines that scrolled off the top of the main screen,
 // oldest first.
 func (t *Terminal) Scrollback() [][]Cell { return t.scrollback }
+
+// SnapshotData is a terminal's scrollback and visible screen as rows of cells,
+// with the cursor's position within that combined buffer. The berth sends it to
+// the client for copy mode, which renders and navigates it locally.
+type SnapshotData struct {
+	Cols, Rows int
+	Lines      [][]Cell
+	CursorRow  int
+	CursorCol  int
+}
+
+// snapshotMaxCells bounds a snapshot so its encoded frame stays well under the
+// protocol limit even for a full scrollback of wide content.
+const snapshotMaxCells = 1 << 20
+
+// Snapshot returns the scrollback followed by the visible screen for copy mode,
+// each row trimmed of trailing blank cells and copied fresh, plus the cursor's
+// position in the combined buffer. The oldest scrollback is dropped if needed
+// to keep the whole snapshot within snapshotMaxCells.
+func (t *Terminal) Snapshot() SnapshotData {
+	rows := make([][]Cell, 0, len(t.scrollback)+t.rows)
+	for _, l := range t.scrollback {
+		rows = append(rows, trimTrailingBlank(l))
+	}
+	for r := 0; r < t.rows; r++ {
+		rows = append(rows, trimTrailingBlank(t.active().cells[r*t.cols:(r+1)*t.cols]))
+	}
+	cursorRow := len(t.scrollback) + t.cur.Row
+	// Drop oldest scrollback until within budget, keeping the whole screen.
+	total := 0
+	for _, r := range rows {
+		total += len(r)
+	}
+	drop := 0
+	for total > snapshotMaxCells && drop < len(t.scrollback) {
+		total -= len(rows[drop])
+		drop++
+	}
+	rows = rows[drop:]
+	cursorRow -= drop
+	if cursorRow < 0 {
+		cursorRow = 0
+	}
+	return SnapshotData{Cols: t.cols, Rows: t.rows, Lines: rows, CursorRow: cursorRow, CursorCol: t.cur.Col}
+}
+
+// trimTrailingBlank returns a fresh copy of a row with trailing default-blank
+// cells removed, which makes a snapshot of ordinary output far smaller.
+func trimTrailingBlank(cells []Cell) []Cell {
+	end := len(cells)
+	for end > 0 {
+		c := cells[end-1]
+		if c.Width == 1 && (c.Rune == ' ' || c.Rune == 0) && c.Attr == (Attr{}) {
+			end--
+			continue
+		}
+		break
+	}
+	row := make([]Cell, end)
+	copy(row, cells[:end])
+	return row
+}
+
+// LineText returns the trimmed text of a row of cells, for copy mode selection.
+func LineText(cells []Cell) string { return lineText(cells) }
 
 // InGround reports whether the parser is between sequences and not inside a
 // partial multibyte character. Output may be safely interposed only then.
