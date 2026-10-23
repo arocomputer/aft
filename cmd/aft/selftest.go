@@ -7,9 +7,9 @@ import (
 
 	"github.com/arocomputer/aft/internal/bridge"
 	"github.com/arocomputer/aft/internal/client"
-	"github.com/arocomputer/aft/internal/helper"
 	"github.com/arocomputer/aft/internal/ports"
 	"github.com/arocomputer/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/server"
 	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/transport"
 )
@@ -215,7 +215,7 @@ When the session closes, paste (Cmd+V / Ctrl+Shift+V) somewhere to check.
 }
 
 func selftestAgent(prefix byte) {
-	info := helper.GatherInfo()
+	info := server.GatherInfo()
 	var found []string
 	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"} {
 		if _, ok := info.Agents[a]; ok {

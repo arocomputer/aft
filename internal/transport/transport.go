@@ -1,7 +1,7 @@
-// Package transport reaches a server's helper. Over SSH it uses the user's own
+// Package transport reaches a server's server. Over SSH it uses the user's own
 // OpenSSH client with one shared master connection per host, so keys, agents,
 // jump hosts and host trust all come from the user's SSH configuration. The
-// reserved host "local" runs the helper on this machine, which is how tests
+// reserved host "local" runs the server on this machine, which is how tests
 // and single-machine trials work.
 package transport
 
@@ -60,10 +60,10 @@ func RemoteHome() string {
 	return "~/.aft"
 }
 
-// RemoteHelper is the helper path on a server.
-func RemoteHelper() string { return RemoteHome() + "/bin/helper" }
+// RemoteServer is the installed server binary's path on a host.
+func RemoteServer() string { return RemoteHome() + "/server" }
 
-// RemotePrefix sets AFT_HOME for the helper when the remote home is overridden.
+// RemotePrefix sets AFT_HOME for the server when the remote home is overridden.
 func RemotePrefix() string {
 	if os.Getenv("AFT_REMOTE_HOME") != "" {
 		return "AFT_HOME=" + Quote(RemoteHome()) + " "
@@ -71,7 +71,7 @@ func RemotePrefix() string {
 	return ""
 }
 
-func controlPath() string { return filepath.Join(home.Run(), "cm-%C") }
+func controlPath() string { return filepath.Join(home.Sockets(), "cm-%C") }
 
 // sshArgs builds the arguments for one ssh invocation: shared options, the
 // host's own options, then the destination.
@@ -169,7 +169,7 @@ func CloseMaster(h Host) {
 	exec.Command("ssh", controlArgs(h, "exit")...).Run()
 }
 
-// Proc is a running helper command with its pipes.
+// Proc is a running server command with its pipes.
 type Proc struct {
 	cmd    *exec.Cmd
 	Stdin  io.WriteCloser
@@ -177,9 +177,9 @@ type Proc struct {
 	stderr bytes.Buffer
 }
 
-// Helper starts a helper subcommand on the host with piped stdin and stdout.
-func Helper(h Host, args ...string) (*Proc, error) {
-	cmd, err := helperCommand(h, args)
+// Server starts a server subcommand on the host with piped stdin and stdout.
+func Server(h Host, args ...string) (*Proc, error) {
+	cmd, err := serverCommand(h, args)
 	if err != nil {
 		return nil, err
 	}
@@ -212,12 +212,12 @@ func (p *Proc) Kill() {
 	}
 }
 
-// Stderr returns what the helper has written to stderr so far.
+// Stderr returns what the server has written to stderr so far.
 func (p *Proc) Stderr() string { return strings.TrimSpace(p.stderr.String()) }
 
-// Output runs a helper subcommand to completion and returns its stdout.
+// Output runs a server subcommand to completion and returns its stdout.
 func Output(h Host, stdin io.Reader, args ...string) ([]byte, error) {
-	cmd, err := helperCommand(h, args)
+	cmd, err := serverCommand(h, args)
 	if err != nil {
 		return nil, err
 	}
@@ -235,16 +235,16 @@ func Output(h Host, stdin io.Reader, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// helperCommand builds the command that runs a helper subcommand on the host.
-func helperCommand(h Host, args []string) (*exec.Cmd, error) {
+// serverCommand builds the command that runs a server subcommand on the host.
+func serverCommand(h Host, args []string) (*exec.Cmd, error) {
 	if h.IsLocal() {
 		self, err := os.Executable()
 		if err != nil {
 			return nil, err
 		}
-		return exec.Command(self, append([]string{"helper"}, args...)...), nil
+		return exec.Command(self, append([]string{"server"}, args...)...), nil
 	}
-	remote := RemotePrefix() + RemoteHelper() + " " + shellJoin(args)
+	remote := RemotePrefix() + RemoteServer() + " " + shellJoin(args)
 	return exec.Command("ssh", append(sshArgs(h, true, "-T"), remote)...), nil
 }
 

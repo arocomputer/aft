@@ -1,9 +1,9 @@
-// Package helper is the server side of Aft: the commands the client runs over
+// Package server is the server side of Aft: the commands the client runs over
 // SSH to start, attach to and manage sessions, plus the bridge shims that give
 // an application on the server access to the user's machine. It is built into
-// both the full aft binary (for local sessions) and the small helper binary
+// both the full aft binary (for local sessions) and the small server binary
 // that Aft installs on servers.
-package helper
+package server
 
 import (
 	"crypto/sha256"
@@ -23,7 +23,9 @@ import (
 	"github.com/arocomputer/aft/internal/session"
 )
 
-// Info is what `helper info` prints for doctor and version checks.
+// Info is what `server info` prints for doctor and version checks. SHA is the
+// live hash of the running server binary, so aft can tell whether the installed
+// server matches the one it carries without keeping a separate version file.
 type Info struct {
 	OS      string            `json:"os"`
 	Arch    string            `json:"arch"`
@@ -38,12 +40,12 @@ type Info struct {
 // Version is set by the build.
 var Version = "dev"
 
-// Main runs a helper subcommand with stdio attached to the caller. prefix is
-// how to invoke helper subcommands again from a child process: the helper
-// binary by itself, or the aft binary followed by "helper".
+// Main runs a server subcommand with stdio attached to the caller. prefix is
+// how to invoke server subcommands again from a child process: the server
+// binary by itself, or the aft binary followed by "server".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: helper new|attach|serve|ls|end|kick|setup|info|listeners")
+		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|kick|setup|info|listeners")
 		return 2
 	}
 	self, err := os.Executable()
@@ -75,7 +77,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return relay(o.ID, stdin, stdout, stderr)
 	case "attach":
 		if len(args) != 2 || !session.ValidID(args[1]) {
-			fmt.Fprintln(stderr, "usage: helper attach ID")
+			fmt.Fprintln(stderr, "usage: server attach ID")
 			return 2
 		}
 		return relay(args[1], stdin, stdout, stderr)
@@ -92,7 +94,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "end", "kick":
 		if len(args) != 2 {
-			fmt.Fprintf(stderr, "usage: helper %s ID|--all\n", args[0])
+			fmt.Fprintf(stderr, "usage: server %s ID|--all\n", args[0])
 			return 2
 		}
 		var ids []string
@@ -119,12 +121,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		return code
 	case "setup":
-		fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-		sha := fs.String("sha", "", "sha256 of this helper binary, recorded for version checks")
-		if err := fs.Parse(args[1:]); err != nil {
-			return 2
-		}
-		if err := Setup(self, *sha); err != nil {
+		if err := Setup(self); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -135,7 +132,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "sharepath":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "usage: helper sharepath SHARE")
+			fmt.Fprintln(stderr, "usage: server sharepath SHARE")
 			return 2
 		}
 		path, err := SharePath(args[1])
@@ -166,7 +163,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		fmt.Fprintln(stdout, "removed", home.Dir())
 		return 0
 	}
-	fmt.Fprintf(stderr, "unknown helper command %q\n", args[0])
+	fmt.Fprintf(stderr, "unknown server command %q\n", args[0])
 	return 2
 }
 
@@ -224,30 +221,22 @@ func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// Setup prepares a server for sessions: the directory layout, the bridge
-// shims, and the recorded hash of the installed helper.
-func Setup(self, sha string) error {
+// Setup prepares a host for sessions: the directory layout and the bridge
+// shims. self is the installed server binary, which the shims point at.
+func Setup(self string) error {
 	if err := home.Ensure(); err != nil {
 		return err
 	}
-	if err := home.InstallBridge(self); err != nil {
-		return err
-	}
-	if sha != "" {
-		if err := os.WriteFile(filepath.Join(home.Bin(), "helper.sha256"), []byte(sha+"\n"), 0o600); err != nil {
-			return err
-		}
-	}
-	return nil
+	return home.InstallShims(self)
 }
 
 // GatherInfo inspects this machine for doctor and the version check.
 func GatherInfo() Info {
 	info := Info{OS: runtime.GOOS, Arch: runtime.GOARCH, Version: Version, Home: home.Dir(), Shell: os.Getenv("SHELL"), Agents: map[string]string{}}
-	if b, err := os.ReadFile(filepath.Join(home.Bin(), "helper.sha256")); err == nil {
-		info.SHA = strings.TrimSpace(string(b))
+	if exe, err := os.Executable(); err == nil {
+		info.SHA, _ = FileSHA256(exe)
 	}
-	if _, err := os.Lstat(filepath.Join(home.Bridge(), "open")); err == nil {
+	if _, err := os.Lstat(filepath.Join(home.Shims(), "open")); err == nil {
 		info.Shims = true
 	}
 	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose", "git", "node"} {

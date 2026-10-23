@@ -1,4 +1,4 @@
-package helper
+package server
 
 import (
 	"bufio"
@@ -14,10 +14,10 @@ import (
 	"github.com/arocomputer/aft/internal/session"
 )
 
-// TestMain lets the test binary act as the helper executable, so session.Start
+// TestMain lets the test binary act as the server executable, so session.Start
 // can spawn real detached sessions during tests.
 func TestMain(m *testing.M) {
-	if os.Getenv("AFT_TEST_AS_HELPER") == "1" {
+	if os.Getenv("AFT_TEST_AS_SERVER") == "1" {
 		os.Exit(Main(nil, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())
@@ -33,7 +33,7 @@ func isolate(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("AFT_HOME", dir)
-	t.Setenv("AFT_TEST_AS_HELPER", "1")
+	t.Setenv("AFT_TEST_AS_SERVER", "1")
 	t.Setenv("SHELL", "/bin/sh")
 }
 
@@ -91,9 +91,9 @@ func (c *conn) collect(t *testing.T, want string) string {
 func TestSessionLifecycle(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
-	helperCmd := []string{self}
+	serverCmd := []string{self}
 	o := session.Options{ID: "t-shell", Command: []string{"sh", "-c", `printf 'ready> '; read line; printf 'got:%s\n' "$line"; read again`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := session.Start(helperCmd, o); err != nil {
+	if err := session.Start(serverCmd, o); err != nil {
 		t.Fatal(err)
 	}
 	defer session.Control("t-shell", proto.End)
@@ -205,7 +205,7 @@ func TestSecondClientTakesOver(t *testing.T) {
 func TestShimPassthroughOutsideSession(t *testing.T) {
 	isolate(t)
 	t.Setenv("AFT_BRIDGE", "")
-	if !IsShim("/x/.aft/shims/xdg-open") || IsShim("/usr/bin/helper") {
+	if !IsShim("/x/.aft/shims/xdg-open") || IsShim("/usr/bin/server") {
 		t.Fatal("shim detection")
 	}
 }

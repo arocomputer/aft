@@ -54,7 +54,7 @@ func TestEditedBlockIsKept(t *testing.T) {
 	InstallShellBlock(&st)
 	// The user edits inside the block.
 	content, _ := os.ReadFile(rc)
-	edited := strings.Replace(string(content), "$HOME/.aft/shims", "$HOME/.aft/shims:/extra", 1)
+	edited := strings.Replace(string(content), "$HOME/.aft/launchers", "$HOME/.aft/launchers:/extra", 1)
 	os.WriteFile(rc, []byte(edited), 0o644)
 	removed, kept := RemoveShellBlocks(&st)
 	if len(removed) != 0 || len(kept) != 1 {

@@ -212,7 +212,7 @@ func resolveSet(host string) map[string]bool {
 }
 
 // serverPathFor derives the server directory a detected mount exposes: the NFS
-// export directly, or the SMB share resolved through the server's helper.
+// export directly, or the SMB share resolved through the server's server.
 func serverPathFor(h transport.Host, d detected) (string, error) {
 	if d.Kind == "nfs" {
 		if d.Export == "" {

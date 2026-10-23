@@ -88,7 +88,7 @@ func cmdSetup(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Helper ready on %s (%s/%s).\n", n, info.OS, info.Arch)
+		fmt.Printf("Server ready on %s (%s/%s).\n", n, info.OS, info.Arch)
 		found := agentsIn(info.Agents)
 		if len(found) == 0 {
 			fmt.Println("No agents found on the server yet. Install one there (claude, codex, opencode, pi) and run aft doctor.")
@@ -99,10 +99,10 @@ func cmdSetup(args []string) int {
 	if len(cfg.Agents) == 0 {
 		cfg.Agents = config.DefaultAgents
 	}
-	if err := launcher.InstallShims(self, cfg.Agents, &st); err != nil {
+	if err := launcher.InstallLaunchers(self, cfg.Agents, &st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("Launchers for %s are in %s.\n", strings.Join(cfg.Agents, ", "), home.Shims())
+	fmt.Printf("Launchers for %s are in %s.\n", strings.Join(cfg.Agents, ", "), home.Launchers())
 
 	// Decide how the PATH line reaches the shell. People who manage their
 	// dotfiles want to add it themselves, so ask rather than edit blindly.
@@ -122,7 +122,7 @@ func cmdSetup(args []string) int {
 		}
 	} else {
 		fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
-		fmt.Println("\n    export PATH=\"$HOME/.aft/shims:$PATH\"")
+		fmt.Println("\n    export PATH=\"$HOME/.aft/launchers:$PATH\"")
 	}
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
@@ -578,72 +578,203 @@ func cmdStatus(args []string) int {
 	return 0
 }
 
-// cmdDoctor checks everything Aft depends on and says how to fix what is off.
+// docFinding is one line of a doctor report: a check, its level, and if it is
+// not ok, the exact command that fixes it. Fixed is set when --fix repaired it.
+type docFinding struct {
+	Section string `json:"section"`
+	Level   string `json:"level"` // ok | info | warn | fix
+	Text    string `json:"text"`
+	Hint    string `json:"hint,omitempty"`
+	Fixed   bool   `json:"fixed,omitempty"`
+}
+
+// doctor accumulates findings under the current section and, when fixing, runs
+// each repair as its check is added.
+type doctor struct {
+	fix      bool
+	cur      string
+	findings []docFinding
+}
+
+func (d *doctor) section(s string) { d.cur = s }
+func (d *doctor) ok(text string) {
+	d.findings = append(d.findings, docFinding{d.cur, "ok", text, "", false})
+}
+func (d *doctor) info(text string) {
+	d.findings = append(d.findings, docFinding{d.cur, "info", text, "", false})
+}
+func (d *doctor) warn(text, h string) {
+	d.findings = append(d.findings, docFinding{d.cur, "warn", text, h, false})
+}
+func (d *doctor) bad(text, hint string) {
+	d.findings = append(d.findings, docFinding{d.cur, "fix", text, hint, false})
+}
+
+// repair records a fixable finding. Under --fix it runs fn and, on success,
+// turns the finding into an ok line describing what it did.
+func (d *doctor) repair(text, hint string, fn func() error, done string) {
+	f := docFinding{d.cur, "fix", text, hint, false}
+	if d.fix {
+		if err := fn(); err == nil {
+			f.Level, f.Text, f.Hint, f.Fixed = "ok", text+" — "+done, "", true
+		} else {
+			f.Hint = err.Error()
+		}
+	}
+	d.findings = append(d.findings, f)
+}
+
+// cmdDoctor inspects everything Aft depends on, grouped by where a problem would
+// be, and prints the exact command to fix each one. --fix applies the safe
+// repairs (reinstall a stale or missing server, re-add the PATH line); --json
+// prints machine-readable findings; --host limits host checks to one host.
 func cmdDoctor(args []string) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	doFix := fs.Bool("fix", false, "apply the safe repairs")
+	asJSON := fs.Bool("json", false, "print findings as JSON")
+	only := fs.String("host", "", "check only this host")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fail(err)
 	}
 	st, _ := config.LoadState()
-	problems := 0
-	report := func(ok bool, what, fix string) {
-		mark := "ok "
-		if !ok {
-			mark = "!! "
-			problems++
-		}
-		fmt.Printf("%s%s", mark, what)
-		if !ok && fix != "" {
-			fmt.Printf(" — %s", fix)
-		}
-		fmt.Println()
+	self, _ := os.Executable()
+	d := &doctor{fix: *doFix}
+
+	d.section("This machine")
+	d.info("aft " + version + ", home " + home.Dir())
+	if _, err := exec.LookPath("ssh"); err == nil {
+		d.ok("ssh present")
+	} else {
+		d.bad("ssh missing", "install OpenSSH")
 	}
-	_, err = exec.LookPath("ssh")
-	report(err == nil, "ssh present", "install OpenSSH")
-	report(launcher.OnPath(), "launchers on PATH", "open a new terminal, or run aft setup")
+	switch {
+	case launcher.OnPath():
+		d.ok("launchers on PATH")
+	case cfg.EditDotfiles():
+		d.repair("launchers not on PATH", "run aft setup", func() error {
+			if _, err := launcher.InstallShellBlock(&st); err != nil {
+				return err
+			}
+			return config.SaveState(st)
+		}, "added the PATH line; open a new terminal")
+	default:
+		d.bad("launchers not on PATH (manual mode)", `add $HOME/.aft/launchers to your PATH`)
+	}
 	for _, a := range cfg.Agents {
-		if launcher.Installed(a) {
-			if _, err := launcher.RealBinary(a); err == nil {
-				fmt.Printf("ok  launcher %s (local copy found)\n", a)
+		if !launcher.Installed(a) {
+			d.repair("launcher "+a+" missing", "run aft setup", func() error {
+				return launcher.InstallLaunchers(self, cfg.Agents, &st)
+			}, "reinstalled launchers")
+			continue
+		}
+		if _, err := launcher.RealBinary(a); err == nil {
+			d.info("launcher " + a + " (local copy found)")
+		} else {
+			d.info("launcher " + a + " (no local copy; runs only on a host)")
+		}
+	}
+
+	d.section("Here")
+	cwd, _ := os.Getwd()
+	if root, p, ok := st.FindProject(cwd); ok {
+		d.info("on: " + root + " → " + p.Host + ":" + p.Dir)
+	} else {
+		d.info("off (aft on makes agents here run on a host)")
+	}
+
+	if len(cfg.Hosts) == 0 {
+		d.section("Hosts")
+		d.bad("no host configured", "run aft setup")
+	}
+	for _, n := range cfg.HostNames() {
+		if *only != "" && n != *only {
+			continue
+		}
+		title := "Host " + n
+		if n == cfg.DefaultHost {
+			title += " (default)"
+		}
+		d.section(title)
+		h, _ := cfg.Host(n)
+		if err := transport.EnsureMaster(h); err != nil {
+			d.bad("cannot connect ("+h.SSH+")", err.Error())
+			continue
+		}
+		d.ok("connected (" + h.SSH + ")")
+		info, err := remote.Info(h)
+		switch {
+		case err != nil || info.Version == "":
+			d.repair("server not installed", "run aft setup", func() error { _, e := remote.Ensure(h); return e }, "installed the server")
+		case !info.Shims:
+			d.repair("bridge shims missing", "run aft setup", func() error { _, e := remote.Ensure(h); return e }, "reinstalled the server")
+		default:
+			if ok, e := remote.UpToDate(info); e == nil && !ok {
+				d.repair("server out of date ("+info.Version+")", "run aft setup", func() error { _, e := remote.Ensure(h); return e }, "updated the server")
 			} else {
-				fmt.Printf("ok  launcher %s (no local copy; works only where aft is on)\n", a)
+				d.ok("server ready (" + info.OS + "/" + info.Arch + ", " + info.Version + ")")
+			}
+			if found := agentsIn(info.Agents); len(found) > 0 {
+				d.info("agents: " + strings.Join(found, ", "))
+			} else {
+				d.warn("no agents on the host", "install one there (claude, codex, ...)")
 			}
 		}
 	}
-	if len(cfg.Hosts) == 0 {
-		report(false, "server configured", "run aft setup")
+
+	if *asJSON {
+		b, _ := json.MarshalIndent(d.findings, "", "  ")
+		fmt.Println(string(b))
+	} else {
+		d.print()
 	}
-	for _, n := range cfg.HostNames() {
-		h, _ := cfg.Host(n)
-		if err := transport.EnsureMaster(h); err != nil {
-			report(false, "connect to "+n, err.Error())
-			continue
+	fixes := 0
+	for _, f := range d.findings {
+		if f.Level == "fix" {
+			fixes++
 		}
-		report(true, "connected to "+n, "")
-		info, err := remote.Ensure(h)
-		if err != nil {
-			report(false, "helper on "+n, err.Error())
-			continue
-		}
-		report(true, fmt.Sprintf("helper on %s (%s/%s, %s)", n, info.OS, info.Arch, info.Version), "")
-		report(info.Shims, "bridge shims on "+n, "run aft setup again")
-		found := agentsIn(info.Agents)
-		report(len(found) > 0, fmt.Sprintf("agents on %s: %s", n, strings.Join(found, ", ")), "install an agent on the server")
 	}
-	if cfg.EditDotfiles() {
-		if len(st.ShellBlocks) == 0 {
-			report(false, "shell PATH line", "run aft setup")
+	if fixes > 0 {
+		return 1
+	}
+	return 0
+}
+
+// print writes the findings grouped by section, each line marked by level.
+func (d *doctor) print() {
+	mark := map[string]string{"ok": "ok  ", "info": "    ", "warn": "warn", "fix": "fix "}
+	section, fixes, warns := "", 0, 0
+	for _, f := range d.findings {
+		if f.Section != section {
+			fmt.Printf("\n%s\n", f.Section)
+			section = f.Section
 		}
-	} else if !launcher.OnPath() {
-		report(false, "PATH set in your dotfiles (manual mode)", "add $HOME/.aft/shims to PATH")
+		line := "  " + mark[f.Level] + " " + f.Text
+		if f.Hint != "" {
+			line += " — " + f.Hint
+		}
+		fmt.Println(line)
+		switch f.Level {
+		case "fix":
+			fixes++
+		case "warn":
+			warns++
+		}
 	}
 	fmt.Println()
-	if problems == 0 {
+	switch {
+	case fixes > 0 && d.fix:
+		fmt.Printf("%d still to fix (could not be repaired automatically).\n", fixes)
+	case fixes > 0:
+		fmt.Printf("%d to fix, %d recommended. Run aft doctor --fix to apply the safe repairs.\n", fixes, warns)
+	case warns > 0:
+		fmt.Printf("All good, %d recommended improvement(s) above.\n", warns)
+	default:
 		fmt.Println("Everything looks good.")
-		return 0
 	}
-	fmt.Printf("%d thing(s) to fix above.\n", problems)
-	return 1
 }
 
 // cmdExec runs one command on the server without a session.
@@ -703,13 +834,13 @@ func cmdExec(args []string) int {
 
 // cmdPorts shows the mirrored ports recorded by running clients.
 func cmdPorts(args []string) int {
-	entries, _ := os.ReadDir(home.Run())
+	entries, _ := os.ReadDir(home.Sockets())
 	any := false
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "mirrors-") {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(home.Run(), e.Name()))
+		b, err := os.ReadFile(filepath.Join(home.Sockets(), e.Name()))
 		if err != nil {
 			continue
 		}
@@ -752,7 +883,7 @@ func cmdAgents(args []string) int {
 		}
 	}
 	cfg.Agents = append(cfg.Agents, name)
-	if err := launcher.InstallShims(self, []string{name}, &st); err != nil {
+	if err := launcher.InstallLaunchers(self, []string{name}, &st); err != nil {
 		return fail(err)
 	}
 	if err := config.Save(cfg); err != nil {
@@ -821,7 +952,7 @@ func cmdUninstall(args []string) int {
 		fmt.Printf("Left %s alone: its aft block was edited. Remove the lines between %q and %q yourself.\n", f, "# >>> aft >>>", "# <<< aft <<<")
 		code = 1
 	}
-	launcher.RemoveShims(&st)
+	launcher.RemoveLaunchers(&st)
 	if err := os.RemoveAll(home.Dir()); err != nil {
 		return fail(err)
 	}

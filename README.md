@@ -30,7 +30,7 @@ aft off            # back to fully local
 
 Close the laptop and the agent keeps working. Open it again and you are
 reattached, screen intact. Aft adds no hooks, plugins or settings to any agent,
-installs nothing but its own small helper on the server, and `aft uninstall`
+installs nothing but its own small server on the host, and `aft uninstall`
 removes every file and line it added.
 
 ## Start

@@ -15,7 +15,7 @@ import (
 )
 
 // TestMain lets this test binary act as the aft executable, including as the
-// local helper the client spawns, so a whole session runs in-process trees.
+// local server the client spawns, so a whole session runs in-process trees.
 func TestMain(m *testing.M) {
 	if os.Getenv("AFT_TEST_AS_AFT") == "1" && len(os.Args) > 1 {
 		os.Exit(run(os.Args[1], os.Args[2:]))
@@ -125,13 +125,13 @@ func tail(b []byte, n int) []byte {
 	return b
 }
 
-// relayPID finds the helper relay the client spawned, so a test can kill it
+// relayPID finds the server relay the client spawned, so a test can kill it
 // the way a dropped SSH connection would.
 func relayPID(t *testing.T, parent int) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		out, _ := exec.Command("pgrep", "-P", strings.TrimSpace(itoa(parent)), "-f", "helper (new|attach)").Output()
+		out, _ := exec.Command("pgrep", "-P", strings.TrimSpace(itoa(parent)), "-f", "server (new|attach)").Output()
 		if f := strings.Fields(string(out)); len(f) > 0 {
 			var pid int
 			for _, c := range f[0] {
