@@ -184,6 +184,14 @@ func cmdOn(args []string) int {
 	if _, err := remote.Ensure(h); err != nil {
 		return fail(err)
 	}
+	// Resolve a home-relative mapping to an absolute server path, since the
+	// Mac and the server have different home directories and the holder uses
+	// the path as a real working directory, not a shell word.
+	resolved, err := resolveRemoteDir(h, *dir)
+	if err != nil {
+		return fail(err)
+	}
+	*dir = resolved
 	exists, err := remoteDirExists(h, *dir)
 	if err != nil {
 		return fail(err)
@@ -263,7 +271,10 @@ func cmdClone(args []string) int {
 	if _, err := remote.Ensure(h); err != nil {
 		return fail(err)
 	}
-	dir := config.DefaultRemoteDir(local)
+	dir, err := resolveRemoteDir(h, config.DefaultRemoteDir(local))
+	if err != nil {
+		return fail(err)
+	}
 	if err := transport.Shell(h, "mkdir -p "+transport.Quote(filepath.Dir(dir))+" && git clone "+transport.Quote(url)+" "+transport.Quote(dir)); err != nil {
 		return fail(fmt.Errorf("clone failed: %w", err))
 	}
@@ -620,7 +631,11 @@ func cmdExec(args []string) int {
 	}
 	script := ""
 	if on {
-		script = "cd " + transport.Quote(config.RemoteDir(root, p, cwd)) + " && "
+		rdir, err := resolveRemoteDir(h, config.RemoteDir(root, p, cwd))
+		if err != nil {
+			return fail(err)
+		}
+		script = "cd " + transport.Quote(rdir) + " && "
 	}
 	q := make([]string, len(rest))
 	for i, a := range rest {
@@ -813,4 +828,34 @@ func remoteDirExists(h transport.Host, dir string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(string(out)) == "yes", nil
+}
+
+// resolveRemoteDir expands a leading ~ in a server path to the server's real
+// home directory, so the stored path is absolute. The Mac and the server have
+// different home directories, and the session holder uses the path as a real
+// working directory, not a shell word, so a literal ~ would never expand.
+func resolveRemoteDir(h transport.Host, dir string) (string, error) {
+	if dir != "~" && !strings.HasPrefix(dir, "~/") {
+		return dir, nil
+	}
+	out, err := transport.RunRaw(h, nil, `printf %s "$HOME"`)
+	if err != nil {
+		return "", err
+	}
+	home := strings.TrimSpace(string(out))
+	if home == "" || !strings.HasPrefix(home, "/") {
+		return "", fmt.Errorf("could not resolve the home directory on %s", h.Name)
+	}
+	return expandHome(dir, home), nil
+}
+
+// expandHome replaces a leading ~ or ~/ in dir with home.
+func expandHome(dir, home string) string {
+	if dir == "~" {
+		return home
+	}
+	if strings.HasPrefix(dir, "~/") {
+		return home + dir[1:]
+	}
+	return dir
 }
