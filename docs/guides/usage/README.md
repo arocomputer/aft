@@ -9,4 +9,5 @@ order: 2
 - [Sessions](sessions.md)
 - [Launchers](launchers.md)
 - [Ports](ports.md)
+- [Mounted projects](mounts.md)
 - [Uninstall](uninstall.md)

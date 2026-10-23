@@ -171,6 +171,18 @@ func cmdOn(args []string) int {
 	} else if gitRoot, err := gitTop(cwd); err == nil {
 		root = gitRoot
 	}
+	// A project on a network mount already lives on the server; map it in place
+	// with no clone and no sync. This runs unless the user forced --dir.
+	mounted := false
+	if *dir == "" {
+		if mh, mr, ok := resolveLocalDir(&cfg, root); ok {
+			if *hostName == "" {
+				*hostName = mh
+			}
+			*dir = mr
+			mounted = true
+		}
+	}
 	h, err := cfg.Host(*hostName)
 	if err != nil {
 		return fail(err)
@@ -184,19 +196,24 @@ func cmdOn(args []string) int {
 	if _, err := remote.Ensure(h); err != nil {
 		return fail(err)
 	}
-	// Resolve a home-relative mapping to an absolute server path, since the
-	// Mac and the server have different home directories and the holder uses
-	// the path as a real working directory, not a shell word.
-	resolved, err := resolveRemoteDir(h, *dir)
-	if err != nil {
-		return fail(err)
+	if !mounted {
+		// Resolve a home-relative mapping to an absolute server path, since the
+		// Mac and the server have different home directories and the holder uses
+		// the path as a real working directory, not a shell word.
+		resolved, err := resolveRemoteDir(h, *dir)
+		if err != nil {
+			return fail(err)
+		}
+		*dir = resolved
 	}
-	*dir = resolved
 	exists, err := remoteDirExists(h, *dir)
 	if err != nil {
 		return fail(err)
 	}
 	if !exists {
+		if mounted {
+			return fail(fmt.Errorf("the mount maps to %s on %s, but that path is missing; check aft mount list", *dir, h.Name))
+		}
 		url := gitRemote(root)
 		if url == "" || *noClone {
 			return fail(fmt.Errorf("%s does not exist on %s; create it there or pass --dir", *dir, h.Name))

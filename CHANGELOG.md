@@ -29,6 +29,10 @@ stays on your machine, and typing feels local.
   `aft exec`, `aft status`, `aft doctor`, `aft ports` and `aft agents add`.
 - macOS and Linux servers are supported; the helper is embedded for both on
   amd64 and arm64.
+- Recognize a project on a network mount (SMB or NFS): `aft on` maps it to its
+  real path on the server with no clone and no sync, auto-detecting the mapping
+  from the mount and the server's share definition. Manage mappings with
+  `aft mount`.
 
 ### Removed
 

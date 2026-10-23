@@ -133,6 +133,18 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	case "info":
 		json.NewEncoder(stdout).Encode(GatherInfo())
 		return 0
+	case "sharepath":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: aft-helper sharepath SHARE")
+			return 2
+		}
+		path, err := SharePath(args[1])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, path)
+		return 0
 	case "listeners":
 		ports, err := holder.Listeners()
 		if err != nil {

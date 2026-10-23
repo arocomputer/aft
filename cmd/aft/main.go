@@ -26,6 +26,7 @@ const usage = `aft — your agents on your server, your terminal on your machine
   aft doctor                    check SSH, helper, agents, launchers, shell block
   aft exec [--host H] -- CMD    run one command on the server
   aft ports                     mirrored ports
+  aft mount list | add ... | remove LOCAL   map a network-mounted folder
   aft agents add NAME           launch another program through Aft
   aft uninstall                 remove everything Aft added, everywhere
   aft completion bash|zsh|fish
@@ -96,6 +97,8 @@ func run(cmd string, args []string) int {
 		return cmdExec(args)
 	case "ports":
 		return cmdPorts(args)
+	case "mount":
+		return cmdMount(args)
 	case "agents":
 		return cmdAgents(args)
 	case "uninstall":

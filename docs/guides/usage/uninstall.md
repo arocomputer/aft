@@ -1,7 +1,7 @@
 ---
 title: Uninstall
 description: Remove everything Aft added, on every machine
-order: 4
+order: 6
 ---
 
 # Uninstall

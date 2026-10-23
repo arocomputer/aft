@@ -30,11 +30,22 @@ type Config struct {
 	Hosts       map[string]HostConfig `toml:"hosts"`
 	Env         EnvConfig             `toml:"env"`
 	Ports       PortsConfig           `toml:"ports"`
+	Mounts      []Mount               `toml:"mounts"`
 }
 
 // HostConfig names a server.
 type HostConfig struct {
 	SSH string `toml:"ssh"`
+}
+
+// Mount maps a locally mounted tree to the server directory it comes from, for
+// network mounts such as SMB or NFS where the files are the server's and the
+// Mac only views them. A project under Local needs no clone and no sync; aft
+// just runs commands against the real path on the server.
+type Mount struct {
+	Local  string `toml:"local"`  // the local mountpoint, e.g. /Volumes/Room
+	Host   string `toml:"host"`   // the aft host the mount comes from
+	Remote string `toml:"remote"` // the server path the mount exposes, e.g. /home/fschr/room
 }
 
 // EnvConfig lists extra variables that may cross to the server.
@@ -261,4 +272,27 @@ func DetachByte(s string) (byte, error) {
 		return ch - '[' + 27, nil
 	}
 	return 0, fmt.Errorf("detach_key must be a control character such as \"ctrl-]\"")
+}
+
+// MapLocal returns the host and server directory for a local path that lives
+// under a configured mount, choosing the most specific mount. The local path
+// should be resolved of symlinks by the caller, since a mountpoint is physical.
+func (c Config) MapLocal(local string) (host, remote string, ok bool) {
+	local = filepath.Clean(local)
+	best := -1
+	var chosen Mount
+	for _, m := range c.Mounts {
+		ml := filepath.Clean(m.Local)
+		if local == ml || strings.HasPrefix(local, ml+string(filepath.Separator)) {
+			if len(ml) > best {
+				best, chosen = len(ml), m
+			}
+		}
+	}
+	if best < 0 {
+		return "", "", false
+	}
+	suffix := filepath.ToSlash(strings.TrimPrefix(local, filepath.Clean(chosen.Local)))
+	remote = strings.TrimRight(chosen.Remote, "/") + suffix
+	return chosen.Host, remote, true
 }
