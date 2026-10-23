@@ -12,7 +12,7 @@ func TestSSHDest(t *testing.T) {
 		opts []string
 		dest string
 	}{
-		"devbox":                {nil, "devbox"},
+		"box":                   {nil, "box"},
 		"user@box":              {nil, "user@box"},
 		"-p 2222 user@box":      {[]string{"-p", "2222"}, "user@box"},
 		"-o ProxyJump=jump srv": {[]string{"-o", "ProxyJump=jump"}, "srv"},

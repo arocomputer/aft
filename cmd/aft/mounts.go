@@ -17,8 +17,8 @@ import (
 	"github.com/fschrhunt/aft/internal/ui"
 )
 
-// detected describes a network mount discovered under a path.
-type detected struct {
+// mountInfo describes a network mount found under a path.
+type mountInfo struct {
 	Point  string // the local mountpoint
 	Kind   string // "smb" or "nfs"
 	Server string // host or address the mount comes from
@@ -28,10 +28,10 @@ type detected struct {
 
 // detectMount returns the most specific SMB or NFS mount whose mountpoint
 // contains dir. dir should already be resolved of symlinks.
-func detectMount(dir string) (detected, bool) {
+func detectMount(dir string) (mountInfo, bool) {
 	mounts := listMounts()
 	best := -1
-	var chosen detected
+	var chosen mountInfo
 	for _, m := range mounts {
 		if dir == m.Point || strings.HasPrefix(dir, strings.TrimRight(m.Point, "/")+"/") {
 			if len(m.Point) > best {
@@ -43,7 +43,7 @@ func detectMount(dir string) (detected, bool) {
 }
 
 // listMounts reads the OS mount table and returns network mounts.
-func listMounts() []detected {
+func listMounts() []mountInfo {
 	if runtime.GOOS == "linux" {
 		return parseProcMounts()
 	}
@@ -51,13 +51,13 @@ func listMounts() []detected {
 }
 
 // parseProcMounts reads cifs and nfs mounts from /proc/mounts (Linux).
-func parseProcMounts() []detected {
+func parseProcMounts() []mountInfo {
 	f, err := os.Open("/proc/mounts")
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
-	var out []detected
+	var out []mountInfo
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
@@ -68,22 +68,22 @@ func parseProcMounts() []detected {
 		switch {
 		case fstype == "cifs" || fstype == "smb3":
 			server, share := splitUNC(src)
-			out = append(out, detected{Point: point, Kind: "smb", Server: server, Share: share})
+			out = append(out, mountInfo{Point: point, Kind: "smb", Server: server, Share: share})
 		case strings.HasPrefix(fstype, "nfs"):
 			server, export := splitNFS(src)
-			out = append(out, detected{Point: point, Kind: "nfs", Server: server, Export: export})
+			out = append(out, mountInfo{Point: point, Kind: "nfs", Server: server, Export: export})
 		}
 	}
 	return out
 }
 
 // parseBSDMounts parses `mount` output (macOS and BSD).
-func parseBSDMounts() []detected {
+func parseBSDMounts() []mountInfo {
 	out, err := exec.Command("mount").Output()
 	if err != nil {
 		return nil
 	}
-	var res []detected
+	var res []mountInfo
 	for _, line := range strings.Split(string(out), "\n") {
 		// "//user@host/Share on /Volumes/Share (smbfs, ...)"
 		// "host:/export on /mnt/x (nfs, ...)"
@@ -98,10 +98,10 @@ func parseBSDMounts() []detected {
 			switch {
 			case strings.HasPrefix(opts, "smbfs"):
 				server, share := splitUNC(src)
-				res = append(res, detected{Point: point, Kind: "smb", Server: server, Share: share})
+				res = append(res, mountInfo{Point: point, Kind: "smb", Server: server, Share: share})
 			case strings.HasPrefix(opts, "nfs"):
 				server, export := splitNFS(src)
-				res = append(res, detected{Point: point, Kind: "nfs", Server: server, Export: export})
+				res = append(res, mountInfo{Point: point, Kind: "nfs", Server: server, Export: export})
 			}
 		}
 	}
@@ -213,7 +213,7 @@ func resolveSet(host string) map[string]bool {
 
 // serverPathFor derives the server directory a detected mount exposes: the NFS
 // export directly, or the SMB share resolved through the server's helper.
-func serverPathFor(h transport.Host, d detected) (string, error) {
+func serverPathFor(h transport.Host, d mountInfo) (string, error) {
 	if d.Kind == "nfs" {
 		if d.Export == "" {
 			return "", fmt.Errorf("could not read the NFS export path")
@@ -316,7 +316,7 @@ func addMount(ms []config.Mount, m config.Mount) []config.Mount {
 
 // resolveLocalDir turns a local working directory into the host and server
 // directory to use. It checks configured mounts first, then offers to register
-// a detected network mount, and otherwise returns ok=false so the caller falls
+// a mountInfo network mount, and otherwise returns ok=false so the caller falls
 // back to its normal path logic.
 func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool) {
 	phys, err := filepath.EvalSymlinks(cwd)

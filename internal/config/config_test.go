@@ -68,13 +68,13 @@ func TestDefaultRemoteDir(t *testing.T) {
 // TestLoadRepo finds aft.toml walking up from a subdirectory.
 func TestLoadRepo(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "aft.toml"), []byte("host = \"devbox\"\ndir = \"/srv/x\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "aft.toml"), []byte("host = \"box\"\ndir = \"/srv/x\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sub := filepath.Join(dir, "a", "b")
 	os.MkdirAll(sub, 0o755)
 	r, root, ok := LoadRepo(sub)
-	if !ok || root != dir || r.Host != "devbox" || r.Dir != "/srv/x" {
+	if !ok || root != dir || r.Host != "box" || r.Dir != "/srv/x" {
 		t.Fatalf("got %+v %q %v", r, root, ok)
 	}
 	if _, _, ok := LoadRepo(t.TempDir()); ok {

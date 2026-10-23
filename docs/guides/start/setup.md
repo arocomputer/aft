@@ -6,11 +6,11 @@ order: 2
 
 # Setup
 
-Aft uses the SSH configuration you already have. Make sure `ssh devbox` works
+Aft uses the SSH configuration you already have. Make sure `ssh box` works
 first, then:
 
 ```sh
-aft setup --host devbox
+aft setup --host box
 ```
 
 Setup connects, installs Aft's helper under `~/.aft` on the server, reports
@@ -55,13 +55,13 @@ it on.
 `~/.aft/config.toml` holds your hosts and preferences:
 
 ```toml
-default_host = "devbox"
+default_host = "box"
 agents = ["claude", "codex", "opencode", "pi"]
 predict = true
 detach_key = ""              # for example "ctrl-]"; off by default
 
-[hosts.devbox]
-ssh = "devbox"               # the destination given to ssh
+[hosts.box]
+ssh = "box"               # the destination given to ssh
 
 [env]
 pass = []                    # extra variables allowed to cross to the server

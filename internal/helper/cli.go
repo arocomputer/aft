@@ -178,7 +178,7 @@ func parseSessionArgs(name string, args []string) (holder.Options, error) {
 	fs.StringVar(&o.Dir, "dir", "", "working directory")
 	fs.IntVar(&o.Cols, "cols", 80, "columns")
 	fs.IntVar(&o.Rows, "rows", 24, "rows")
-	var env, wrap multi
+	var env, wrap stringList
 	fs.Var(&env, "env", "KEY=VALUE to pass to the application")
 	fs.Var(&wrap, "wrap", "wrapper word to run the agent inside")
 	if err := fs.Parse(args); err != nil {
@@ -208,10 +208,10 @@ func parseSessionArgs(name string, args []string) (holder.Options, error) {
 	return o, nil
 }
 
-type multi []string
+type stringList []string
 
-func (m *multi) String() string     { return strings.Join(*m, ",") }
-func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
+func (m *stringList) String() string     { return strings.Join(*m, ",") }
+func (m *stringList) Set(s string) error { *m = append(*m, s); return nil }
 
 func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := holder.Attach(id, struct {

@@ -335,13 +335,13 @@ The helper runs on the server as `aft helper attach`, `new`, `ls`, `end`,
 `~/.aft/config.toml`:
 
 ```toml
-default_host = "devbox"
+default_host = "box"
 agents = ["claude", "codex", "opencode", "pi"]
 predict = true
 detach_key = ""              # off by default; nothing is stolen from agents
 
-[hosts.devbox]
-ssh = "devbox"               # alias from ~/.ssh/config
+[hosts.box]
+ssh = "box"               # alias from ~/.ssh/config
 
 [env]
 pass = []

@@ -20,8 +20,8 @@ agent as `wrapper + command`, so you decide the environment it starts in:
 
 ```toml
 # ~/.aft/config.toml — a whole server runs agents inside a dev container
-[hosts.devbox]
-ssh = "devbox"
+[hosts.box]
+ssh = "box"
 wrapper = ["docker", "exec", "-i", "dev"]
 ```
 
@@ -39,8 +39,8 @@ keep working when the wrapper inherits the environment.
 A host entry can override the global defaults for that server:
 
 ```toml
-[hosts.devbox]
-ssh     = "-p 2222 fschr@devbox"   # destination, with ssh options if needed
+[hosts.box]
+ssh     = "-p 2222 fschr@box"   # destination, with ssh options if needed
 home    = "~/.aft"                 # helper home on the server
 wrapper = ["nix", "develop", "-c"] # command wrapper
 predict = true                     # typing prediction for this host
@@ -69,7 +69,7 @@ to undo.
 ## Global keys
 
 ```toml
-default_host = "devbox"
+default_host = "box"
 agents       = ["claude", "codex", "opencode", "pi"]
 predict      = true
 detach_key   = "ctrl-]"        # off by default
