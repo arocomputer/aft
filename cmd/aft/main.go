@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fschrhunt/aft/internal/helper"
 	"github.com/fschrhunt/aft/internal/launcher"
@@ -39,7 +40,13 @@ var version = "dev"
 func main() {
 	helper.Version = version
 	base := filepath.Base(os.Args[0])
-	if base != "aft" && base != "aft.exe" && !isDevBinary(base) {
+	if helper.IsShim(base) {
+		os.Exit(helper.RunShim(os.Args[0], os.Args[1:]))
+	}
+	// Invoked under an agent's name (via a launcher symlink), run that agent
+	// on the server; invoked as aft (or a dev build whose name starts with
+	// "aft"), act as the CLI.
+	if !strings.HasPrefix(base, "aft") {
 		os.Exit(launcher.Launch(base, os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
@@ -47,11 +54,6 @@ func main() {
 		os.Exit(0)
 	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
-}
-
-// isDevBinary accepts the names `go run` and `go build -o` commonly produce.
-func isDevBinary(base string) bool {
-	return base == "main" || base == "aft-dev" || len(base) > 4 && base[:4] == "aft-" || base[:2] == "__"
 }
 
 func run(cmd string, args []string) int {

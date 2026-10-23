@@ -23,10 +23,6 @@ import (
 	"github.com/fschrhunt/aft/internal/proto"
 )
 
-// ShimNames are the commands Aft intercepts inside a session so a remote
-// application can open URLs and read the clipboard on the user's machine.
-var ShimNames = []string{"open", "xdg-open", "pbpaste", "wl-paste", "xclip", "xsel"}
-
 // Info is what `aft-helper info` prints for doctor and version checks.
 type Info struct {
 	OS      string            `json:"os"`
@@ -220,12 +216,8 @@ func Setup(self, sha string) error {
 	if err := home.Ensure(); err != nil {
 		return err
 	}
-	for _, n := range ShimNames {
-		link := filepath.Join(home.Shims(), n)
-		os.Remove(link)
-		if err := os.Symlink(self, link); err != nil {
-			return err
-		}
+	if err := home.InstallBridge(self); err != nil {
+		return err
 	}
 	if sha != "" {
 		if err := os.WriteFile(filepath.Join(home.Bin(), "aft-helper.sha256"), []byte(sha+"\n"), 0o600); err != nil {
@@ -241,7 +233,7 @@ func GatherInfo() Info {
 	if b, err := os.ReadFile(filepath.Join(home.Bin(), "aft-helper.sha256")); err == nil {
 		info.SHA = strings.TrimSpace(string(b))
 	}
-	if _, err := os.Lstat(filepath.Join(home.Shims(), "open")); err == nil {
+	if _, err := os.Lstat(filepath.Join(home.Bridge(), "open")); err == nil {
 		info.Shims = true
 	}
 	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose", "git", "node"} {

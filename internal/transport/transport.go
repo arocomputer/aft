@@ -20,10 +20,26 @@ import (
 )
 
 // Host is a server to reach. SSH is the destination given to ssh, usually an
-// alias from ~/.ssh/config. Name "local" means this machine.
+// alias from ~/.ssh/config. It may also carry ssh options before the
+// destination, such as "-p 2222 user@box". Name "local" means this machine.
 type Host struct {
 	Name string
 	SSH  string
+}
+
+// sshDest splits the SSH field into options and the destination.
+func (h Host) sshDest() (opts []string, dest string) {
+	f := strings.Fields(h.SSH)
+	if len(f) == 0 {
+		return nil, ""
+	}
+	return f[:len(f)-1], f[len(f)-1]
+}
+
+// Dest is the ssh destination without options, for messages.
+func (h Host) Dest() string {
+	_, d := h.sshDest()
+	return d
 }
 
 // Local is the host that runs sessions on this machine.
@@ -32,10 +48,37 @@ var Local = Host{Name: "local"}
 // IsLocal reports whether the host is this machine.
 func (h Host) IsLocal() bool { return h.Name == "local" || h.SSH == "" }
 
-// RemoteHelper is the helper path on a server, expanded by the remote shell.
-const RemoteHelper = "~/.aft/bin/aft-helper"
+// RemoteHome is Aft's directory on the server, expanded by the remote shell.
+// AFT_REMOTE_HOME overrides it, which tests use to keep a server on this same
+// machine away from the real ~/.aft.
+func RemoteHome() string {
+	if d := os.Getenv("AFT_REMOTE_HOME"); d != "" {
+		return d
+	}
+	return "~/.aft"
+}
+
+// RemoteHelper is the helper path on a server.
+func RemoteHelper() string { return RemoteHome() + "/bin/aft-helper" }
+
+// RemotePrefix sets AFT_HOME for the helper when the remote home is overridden.
+func RemotePrefix() string {
+	if os.Getenv("AFT_REMOTE_HOME") != "" {
+		return "AFT_HOME=" + Quote(RemoteHome()) + " "
+	}
+	return ""
+}
 
 func controlPath() string { return filepath.Join(home.Run(), "cm-%C") }
+
+// sshArgs builds the arguments for one ssh invocation: shared options, the
+// host's own options, then the destination.
+func sshArgs(h Host, batch bool, extra ...string) []string {
+	hostOpts, dest := h.sshDest()
+	args := append(sshOptions(batch), hostOpts...)
+	args = append(args, extra...)
+	return append(args, "--", dest)
+}
 
 // sshOptions are shared by every ssh invocation.
 func sshOptions(batch bool) []string {
@@ -65,10 +108,10 @@ func EnsureMaster(h Host) error {
 	if MasterAlive(h) {
 		return nil
 	}
-	cmd := exec.Command("ssh", append(sshOptions(false), "-fN", "--", h.SSH)...)
+	cmd := exec.Command("ssh", sshArgs(h, false, "-fN")...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("connect to %s: %w", h.SSH, err)
+		return fmt.Errorf("connect to %s: %w", h.Dest(), err)
 	}
 	return nil
 }
@@ -80,7 +123,7 @@ func MasterAlive(h Host) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "ControlPath="+controlPath(), "-O", "check", "--", h.SSH)
+	cmd := exec.CommandContext(ctx, "ssh", controlArgs(h, "check")...)
 	return cmd.Run() == nil
 }
 
@@ -91,13 +134,22 @@ func EnsureMasterBatch(h Host) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ssh", append(sshOptions(true), "-fN", "--", h.SSH)...)
+	cmd := exec.CommandContext(ctx, "ssh", sshArgs(h, true, "-fN")...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("reconnect to %s: %s", h.SSH, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("reconnect to %s: %s", h.Dest(), strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// controlArgs addresses the master connection for -O commands.
+func controlArgs(h Host, op string, extra ...string) []string {
+	hostOpts, dest := h.sshDest()
+	args := append([]string{"-o", "ControlPath=" + controlPath()}, hostOpts...)
+	args = append(args, "-O", op)
+	args = append(args, extra...)
+	return append(args, "--", dest)
 }
 
 // CloseMaster ends the shared connection.
@@ -105,7 +157,7 @@ func CloseMaster(h Host) {
 	if h.IsLocal() {
 		return
 	}
-	exec.Command("ssh", "-o", "ControlPath="+controlPath(), "-O", "exit", "--", h.SSH).Run()
+	exec.Command("ssh", controlArgs(h, "exit")...).Run()
 }
 
 // Proc is a running helper command with its pipes.
@@ -183,8 +235,8 @@ func helperCommand(h Host, args []string) (*exec.Cmd, error) {
 		}
 		return exec.Command(self, append([]string{"helper"}, args...)...), nil
 	}
-	remote := RemoteHelper + " " + shellJoin(args)
-	return exec.Command("ssh", append(sshOptions(true), "-T", "--", h.SSH, remote)...), nil
+	remote := RemotePrefix() + RemoteHelper() + " " + shellJoin(args)
+	return exec.Command("ssh", append(sshArgs(h, true, "-T"), remote)...), nil
 }
 
 // Shell runs a command on the host with this process's terminal attached.
@@ -193,7 +245,7 @@ func Shell(h Host, script string) error {
 	if h.IsLocal() {
 		cmd = exec.Command("sh", "-c", script)
 	} else {
-		cmd = exec.Command("ssh", append(sshOptions(false), "-t", "--", h.SSH, script)...)
+		cmd = exec.Command("ssh", append(sshArgs(h, false, "-t"), script)...)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
@@ -205,7 +257,7 @@ func RunRaw(h Host, stdin io.Reader, script string) ([]byte, error) {
 	if h.IsLocal() {
 		cmd = exec.Command("sh", "-c", script)
 	} else {
-		cmd = exec.Command("ssh", append(sshOptions(true), "-T", "--", h.SSH, script)...)
+		cmd = exec.Command("ssh", append(sshArgs(h, true, "-T"), script)...)
 	}
 	cmd.Stdin = stdin
 	var stderr bytes.Buffer
@@ -233,7 +285,7 @@ func Forward(h Host, port int, add bool) error {
 	spec := fmt.Sprintf("127.0.0.1:%d:localhost:%d", port, port)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "ControlPath="+controlPath(), "-O", op, "-L", spec, "--", h.SSH)
+	cmd := exec.CommandContext(ctx, "ssh", controlArgs(h, op, "-L", spec)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

@@ -76,7 +76,7 @@ func Ensure(h transport.Host) (helper.Info, error) {
 	}
 	uname, err := transport.RunRaw(h, nil, "uname -sm")
 	if err != nil {
-		return helper.Info{}, fmt.Errorf("reach %s: %w", h.SSH, err)
+		return helper.Info{}, fmt.Errorf("reach %s: %w", h.Dest(), err)
 	}
 	goos, goarch, err := Platform(string(uname))
 	if err != nil {
@@ -92,9 +92,10 @@ func Ensure(h transport.Host) (helper.Info, error) {
 	if err == nil && info.SHA == want && info.Shims {
 		return info, nil
 	}
-	script := "mkdir -p ~/.aft/bin && cat > ~/.aft/bin/aft-helper.new && chmod 700 ~/.aft/bin/aft-helper.new && mv -f ~/.aft/bin/aft-helper.new ~/.aft/bin/aft-helper && ~/.aft/bin/aft-helper setup --sha " + want
+	bin := transport.RemoteHome() + "/bin"
+	script := "mkdir -p " + bin + " && cat > " + bin + "/aft-helper.new && chmod 700 " + bin + "/aft-helper.new && mv -f " + bin + "/aft-helper.new " + bin + "/aft-helper && " + transport.RemotePrefix() + bin + "/aft-helper setup --sha " + want
 	if _, err := transport.RunRaw(h, bytes.NewReader(blob), script); err != nil {
-		return helper.Info{}, fmt.Errorf("install helper on %s: %w", h.SSH, err)
+		return helper.Info{}, fmt.Errorf("install helper on %s: %w", h.Dest(), err)
 	}
 	return Info(h)
 }

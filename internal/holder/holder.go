@@ -159,6 +159,9 @@ func Serve(o Options) error {
 	if o.Cols < 1 || o.Rows < 1 {
 		o.Cols, o.Rows = 80, 24
 	}
+	if self, err := os.Executable(); err == nil {
+		home.InstallBridge(self)
+	}
 	s := &Session{opts: o, term: vt.New(o.Cols, o.Rows), waiting: map[uint32]chan proto.BridgeResponse{}, exited: make(chan struct{})}
 	s.term.Reply = s.replyWhenDetached
 
@@ -234,7 +237,7 @@ func (s *Session) environment() []string {
 		}
 	}
 	out = append(out, s.opts.Env...)
-	out = append(out, "AFT_SESSION="+s.opts.ID, "AFT_BRIDGE="+BridgePath(s.opts.ID), "AFT_SHIMS="+home.Shims())
+	out = append(out, "AFT_SESSION="+s.opts.ID, "AFT_BRIDGE="+BridgePath(s.opts.ID), "AFT_SHIMS="+home.Bridge())
 	return out
 }
 

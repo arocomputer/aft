@@ -5,6 +5,7 @@
 package launcher
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,8 +16,10 @@ import (
 
 	"github.com/fschrhunt/aft/internal/client"
 	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/holder"
 	"github.com/fschrhunt/aft/internal/home"
 	"github.com/fschrhunt/aft/internal/ports"
+	"github.com/fschrhunt/aft/internal/transport"
 )
 
 // PassEnv are variables that always cross to the server.
@@ -55,7 +58,32 @@ func Launch(name string, args []string) int {
 	opts.Host = h
 	opts.Command = append([]string{name}, args...)
 	opts.Dir = config.RemoteDir(root, p, cwd)
+	// Reattach to an existing detached session for this agent in this directory
+	// rather than starting a second one.
+	if id := existingSession(h, name, opts.Dir); id != "" {
+		fmt.Fprintf(os.Stderr, "aft: reattaching to %s (aft end %s for a fresh one)\n", id, id)
+		opts.SessionID = id
+	}
 	return client.Run(opts)
+}
+
+// existingSession returns the id of a session running the same agent in the
+// same server directory, or empty. Errors mean "start fresh".
+func existingSession(h transport.Host, name, dir string) string {
+	out, err := transport.Output(h, nil, "ls")
+	if err != nil {
+		return ""
+	}
+	var recs []holder.Record
+	if json.Unmarshal(out, &recs) != nil {
+		return ""
+	}
+	for _, r := range recs {
+		if len(r.Command) > 0 && r.Command[0] == name && r.Dir == dir {
+			return r.ID
+		}
+	}
+	return ""
 }
 
 // SessionOptions builds client options from config for a project.
