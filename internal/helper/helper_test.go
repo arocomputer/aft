@@ -97,7 +97,7 @@ func TestSessionLifecycle(t *testing.T) {
 	if f := c.read(t); f.Type != proto.Hello {
 		t.Fatalf("first frame %v", f.Type)
 	}
-	c.collect(t, "ready> ")
+	c.collect(t, "ready>") // trailing space is trimmed on a repaint, so do not depend on it
 	proto.Write(c.c, proto.Input, []byte("hello\r"))
 	c.collect(t, "got:hello")
 
