@@ -183,7 +183,27 @@ func Load() (Config, error) {
 	if c.Hosts == nil {
 		c.Hosts = map[string]HostConfig{}
 	}
+	// Mounts are matched by their real path. One saved under a symlink in
+	// the home folder (~/room for /Volumes/Room), as older versions or a
+	// hand edit could, is spelled out here; the home folder is local disk,
+	// so this cannot block on a share, unlike resolving the mounts themselves.
+	if h, err := os.UserHomeDir(); err == nil {
+		for i, m := range c.Mounts {
+			if strings.HasPrefix(filepath.Clean(m.Local), h+string(filepath.Separator)) {
+				c.Mounts[i].Local = RealPath(m.Local)
+			}
+		}
+	}
 	return c, nil
+}
+
+// RealPath spells p without symlinks. If p does not exist, its folder is
+// resolved and its name kept.
+func RealPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Join(resolve(filepath.Dir(p)), filepath.Base(p))
 }
 
 // Save writes the config.
@@ -410,15 +430,15 @@ func DetachByte(s string) (byte, error) {
 
 // MapLocal returns the host and server directory for a local path that lives
 // under a configured mount, choosing the most specific mount. Mounts are kept
-// by their real path (aft mount add and detection both resolve it), so the
-// path is compared as given and, when its folder is reached through a
-// symlink (~/room may be /Volumes/Room), by its real spelling too; mounts
-// themselves are never resolved here, which could block on a network share
-// whose server is offline.
+// by their real path (aft mount add, detection and Load see to it), so the
+// path is compared as given and, when it is reached through a symlink
+// (~/room may be /Volumes/Room), by its real spelling too. Mounts themselves
+// are never resolved here, which could block on a share whose server is
+// offline; callers pass paths they have just used, which cannot.
 func (c Config) MapLocal(local string) (host, remote string, ok bool) {
 	local = filepath.Clean(local)
 	forms := []string{local}
-	if real := filepath.Join(resolve(filepath.Dir(local)), filepath.Base(local)); real != local {
+	if real := RealPath(local); real != local {
 		forms = append(forms, real)
 	}
 	best := -1

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -337,5 +338,21 @@ func TestGoneSessionSaysSo(t *testing.T) {
 	var got struct{ Gone, Remains bool }
 	if json.Unmarshal(out.Bytes(), &got) != nil || !got.Gone || !got.Remains {
 		t.Fatalf("udp answered %q", out.String())
+	}
+}
+
+// TestStaleOrMissingSocketIsNotRunning treats a missing socket and one left
+// behind by a session that died (its connection is refused) as not running,
+// which the client turns into "gone"; other dial failures are not.
+func TestStaleOrMissingSocketIsNotRunning(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	var gone notRunning
+	if _, err := dial("nobody"); !errors.As(err, &gone) {
+		t.Fatalf("missing socket: %v, want not running", err)
+	}
+	os.WriteFile(SocketPath("stale"), nil, 0o600)
+	if _, err := dial("stale"); !errors.As(err, &gone) {
+		t.Fatalf("stale socket: %v, want not running", err)
 	}
 }

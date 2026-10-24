@@ -158,6 +158,7 @@ type session struct {
 	unflash chan struct{} // a flashed notice is due to be taken down
 
 	cancelled    bool               // Ctrl-C cancelled the upload in progress
+	noticeUp     bool               // a notice covers the top row
 	cancelUpload context.CancelFunc // stops the paste upload in progress
 	uploadCtx    context.Context    // done once the upload has finished or stopped
 
@@ -249,10 +250,11 @@ func (c *session) dial() (link, error) {
 			if err != nil && c.id == "" && !strings.Contains(err.Error(), "unknown server command") {
 				return nil, fmt.Errorf("could not start the session: %w", err)
 			}
-			if err == nil && json.Unmarshal(out, &got) == nil && got.Gone {
+			answered := err == nil && json.Unmarshal(out, &got) == nil
+			if answered && got.Gone {
 				return nil, sessionEnded{Remains: got.Remains}
 			}
-			if err == nil && json.Unmarshal(out, &got) == nil {
+			if answered {
 				c.id = got.ID
 				if got.Port != 0 {
 					c.offer, c.udpAddr = &got.Offer, addr
@@ -403,8 +405,9 @@ func (c *session) loop(proc link) int {
 		case <-tick.C:
 			c.pred.Tick()
 		case <-c.unflash:
-			if c.copy == nil {
+			if c.copy == nil && c.noticeUp {
 				c.pred.RestoreRow(0)
+				c.noticeUp = false
 			}
 		case <-beat.C:
 			if connected {
@@ -433,11 +436,13 @@ func (c *session) loop(proc link) int {
 				var gone sessionEnded
 				if errors.As(err, &gone) {
 					c.pred.Repaint() // clear the reconnecting notice
+					c.noticeUp = false
 					c.message = c.goneMessage(gone)
 					return 1
 				}
 				if errors.Is(err, errLeft) {
 					c.pred.Repaint() // clear the reconnecting notice
+					c.noticeUp = false
 					c.message = c.detachMessage("left %s while disconnected; it keeps running")
 					return 1
 				}
@@ -627,6 +632,7 @@ func (c *session) enterCopy() {
 func (c *session) exitCopy() {
 	c.copy = nil
 	c.pred.Repaint()
+	c.noticeUp = false
 }
 
 // handleFrame applies one frame. done is true when the client should exit.
@@ -672,6 +678,12 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		}
 		return 0, true
 	case proto.Error:
+		if c.noticeUp {
+			// A reconnect may have drawn a notice that no repaint will
+			// cover now; take it down before saying why we leave.
+			c.pred.RestoreRow(0)
+			c.noticeUp = false
+		}
 		msg := string(f.Payload)
 		c.message = func() { ui.Error("%s", msg) }
 		return 1, true
@@ -722,6 +734,7 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			if conn, err := udp.Dial(c.udpAddr, *c.offer); err == nil {
 				if l := (udpLink{conn}); c.use(l) == nil {
 					c.pred.Reset()
+					c.noticeUp = false // the reattach repaints over it
 					c.title("")
 					return l, typed, nil
 				}
@@ -738,6 +751,7 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			}
 			if err == nil {
 				c.pred.Reset()
+				c.noticeUp = false // the reattach repaints over it
 				c.title("")
 				return proc, typed, nil
 			}
@@ -787,7 +801,10 @@ var errLeft = errors.New("left while disconnected")
 // notice draws a one-line message over the top row, as mosh does, since a
 // title is easy to miss: while the connection is down, where the repaint on
 // reconnect draws over it, and through flash, which takes it down itself.
-func (c *session) notice(text string) { c.pred.Notice(text) }
+func (c *session) notice(text string) {
+	c.pred.Notice(text)
+	c.noticeUp = true
+}
 
 // writeMirrors records the currently mirrored ports so `aft status` can report
 // them. It is keyed by session id and removed when the client exits.

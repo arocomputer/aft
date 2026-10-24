@@ -693,7 +693,7 @@ func List() ([]Record, error) {
 		}
 		if syscall.Kill(r.Server, 0) != nil {
 			// Its server died without cleaning up, so how it ended is unknown.
-			if _, err := os.Stat(remainsPath(r.ID)); err != nil {
+			if !hasRemains(r.ID) {
 				leaveRemains(r, Ending{At: time.Now().UTC().Format(time.RFC3339), Lost: true})
 			}
 			os.Remove(filepath.Join(home.Sessions(), e.Name()))
@@ -720,9 +720,9 @@ func Load(id string) (Record, error) {
 // Attach relays frames between rw and the session until either side ends.
 // This is the whole body of the SSH-side relay: a byte pump in each direction.
 func Attach(id string, rw io.ReadWriter) error {
-	conn, err := net.Dial("unix", SocketPath(id))
+	conn, err := dial(id)
 	if err != nil {
-		return notRunning(id)
+		return err
 	}
 	defer conn.Close()
 	errc := make(chan error, 2)
@@ -741,11 +741,32 @@ func (id notRunning) Error() string { return "session " + string(id) + " is not 
 // endedText is how a session that has just exited answers a request.
 const endedText = "the session has ended"
 
+// dial connects to a session's socket. Only a missing socket or a refused
+// connection means the session is not running; any other failure, such as a
+// full backlog or no free file descriptors, is reported as it is, since the
+// session may well be alive.
+func dial(id string) (net.Conn, error) {
+	conn, err := net.Dial("unix", SocketPath(id))
+	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+		return nil, notRunning(id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reach session %s: %w", id, err)
+	}
+	return conn, nil
+}
+
+// hasRemains reports whether session id ended and left its remains.
+func hasRemains(id string) bool {
+	_, err := os.Stat(remainsPath(id))
+	return err == nil
+}
+
 // GoneText tells someone reaching for session id that it is gone, and how
 // to see what it left if it left anything.
 func GoneText(id string) string {
-	if _, err := os.Stat(remainsPath(id)); err == nil {
-		return id + " ended while no terminal was attached; aft attach " + id + " shows its last screen"
+	if hasRemains(id) {
+		return "session " + id + " has ended; aft attach " + id + " shows its last screen and how it ended"
 	}
 	return "session " + id + " is not running"
 }
@@ -774,9 +795,9 @@ func OfferUDP(id string) (udp.Offer, error) {
 
 // request sends one control frame to a session and returns its answer.
 func request(id string, t proto.Type) (proto.Frame, error) {
-	conn, err := net.Dial("unix", SocketPath(id))
+	conn, err := dial(id)
 	if err != nil {
-		return proto.Frame{}, notRunning(id)
+		return proto.Frame{}, err
 	}
 	defer conn.Close()
 	if err := proto.Write(conn, proto.Resize, proto.EncodeResize(0, 0)); err != nil {
