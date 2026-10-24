@@ -168,7 +168,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		for _, r := range list {
 			Control(r.ID, kindFor("end"))
 		}
-		for _, d := range []string{home.Dir(), home.Temp()} {
+		for _, d := range []string{home.Dir(), home.Data(), home.Temp()} {
 			if err := os.RemoveAll(d); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
@@ -238,6 +238,7 @@ func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 // Setup prepares a host for sessions: the directory layout and the bridge
 // shims. self is the installed server binary, which the shims point at.
 func Setup(self string) error {
+	home.Migrate()
 	if err := home.Ensure(); err != nil {
 		return err
 	}

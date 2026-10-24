@@ -16,7 +16,7 @@ import (
 func TestShimPassthroughOutsideSession(t *testing.T) {
 	t.Setenv("AFT_HOME", t.TempDir())
 	t.Setenv("AFT_BRIDGE", "")
-	if !IsShim("/x/.aft/shims/xdg-open") || IsShim("/usr/bin/server") {
+	if !IsShim("/x/.local/share/aft/shims/xdg-open") || IsShim("/usr/bin/server") {
 		t.Fatal("shim detection")
 	}
 }

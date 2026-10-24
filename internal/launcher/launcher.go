@@ -202,14 +202,41 @@ func RemoveLaunchers(st *config.State) {
 const blockStart = "# >>> aft >>>"
 const blockEnd = "# <<< aft <<<"
 
+// PathDir is home.Launchers as the shell writes it.
+const PathDir = "$HOME/.local/share/aft/launchers"
+
 // Block returns the lines added to a POSIX shell config.
 func Block() string {
-	return blockStart + "\nexport PATH=\"$HOME/.aft/launchers:$PATH\"\n" + blockEnd + "\n"
+	return blockStart + "\nexport PATH=\"" + PathDir + ":$PATH\"\n" + blockEnd + "\n"
 }
 
 // FishBlock is the content of the fish drop-in file.
 func FishBlock() string {
-	return blockStart + "\nfish_add_path --prepend --move $HOME/.aft/launchers\n" + blockEnd + "\n"
+	return blockStart + "\nfish_add_path --prepend --move " + PathDir + "\n" + blockEnd + "\n"
+}
+
+// MoveShellBlocks rewrites each recorded block to the current PATH line, after
+// home.Migrate moved the launchers. It returns the files whose block was
+// edited by hand and still needs the new line. Remove it with home.Migrate.
+func MoveShellBlocks(st *config.State) (kept []string) {
+	for i, b := range st.ShellBlocks {
+		want := Block()
+		if filepath.Base(b.File) == "aft.fish" {
+			want = FishBlock()
+		}
+		existing, err := os.ReadFile(b.File)
+		if b.Block == want || err != nil {
+			continue
+		}
+		if !strings.Contains(string(existing), b.Block) {
+			kept = append(kept, b.File)
+			continue
+		}
+		if os.WriteFile(b.File, []byte(strings.Replace(string(existing), b.Block, want, 1)), 0o644) == nil {
+			st.ShellBlocks[i].Block = want
+		}
+	}
+	return kept
 }
 
 // ShellFiles returns the config files Aft should put the block in, based on

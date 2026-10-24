@@ -120,7 +120,7 @@ func Ensure(h transport.Host) (session.Info, error) {
 	// use is never truncated; then let it set up its own shims.
 	dir := transport.RemoteHome()
 	dst := transport.RemoteServer()
-	script := "mkdir -p " + dir + " && cat > " + dst + ".new && chmod 700 " + dst + ".new && mv -f " + dst + ".new " + dst + " && " + transport.RemotePrefix() + dst + " setup"
+	script := "mkdir -p -m 700 " + dir + " && cat > " + dst + ".new && chmod 700 " + dst + ".new && mv -f " + dst + ".new " + dst + " && " + transport.RemotePrefix() + dst + " setup"
 	if _, err := transport.RunRaw(h, bytes.NewReader(blob), script); err != nil {
 		return session.Info{}, fmt.Errorf("install server on %s: %w", h.Dest(), err)
 	}

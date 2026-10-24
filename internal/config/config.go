@@ -41,7 +41,6 @@ type Config struct {
 // HostConfig describes one host and overrides the top-level settings for it.
 type HostConfig struct {
 	SSH     string   `toml:"ssh"`               // destination, may carry ssh options
-	Home    string   `toml:"home,omitempty"`    // Aft's home on the host, default ~/.aft
 	Wrapper []string `toml:"wrapper,omitempty"` // command wrapper on the host
 	Predict *bool    `toml:"predict,omitempty"` // prediction for sessions on this host
 	Ports   string   `toml:"ports,omitempty"`   // mirror range for this host

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
+	"github.com/arocomputer/aft/internal/config"
+	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
 	"github.com/arocomputer/aft/internal/session"
 )
@@ -47,6 +49,9 @@ func main() {
 	if bridge.IsShim(base) {
 		os.Exit(bridge.RunShim(os.Args[0], os.Args[1:]))
 	}
+	if home.Migrate() {
+		moveShellBlocks()
+	}
 	// Invoked under an agent's name (via a launcher symlink), run that agent
 	// on the server; invoked as aft (or a dev build whose name starts with
 	// "aft"), act as the CLI.
@@ -58,6 +63,28 @@ func main() {
 		os.Exit(0)
 	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
+}
+
+// moveShellBlocks points the PATH line at the launchers' new home and tells
+// you about any line it could not change. Remove it with home.Migrate.
+func moveShellBlocks() {
+	st, err := config.LoadState()
+	if err != nil {
+		return
+	}
+	kept := launcher.MoveShellBlocks(&st)
+	config.SaveState(st)
+	fmt.Fprintf(os.Stderr, "aft: launchers moved to %s; open a new shell to use them.\n", home.Launchers())
+	if len(st.ShellBlocks) == 0 || len(kept) > 0 {
+		fmt.Fprintf(os.Stderr, "aft: put this first on your PATH instead of $HOME/.aft/launchers%s:\n    export PATH=\"%s:$PATH\"\n", inFiles(kept), launcher.PathDir)
+	}
+}
+
+func inFiles(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	return " in " + strings.Join(files, ", ")
 }
 
 func run(cmd string, args []string) int {

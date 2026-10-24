@@ -120,7 +120,7 @@ func cmdSetup(args []string) int {
 		}
 	} else {
 		fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
-		fmt.Println("\n    export PATH=\"$HOME/.aft/launchers:$PATH\"")
+		fmt.Println("\n    export PATH=\"" + launcher.PathDir + ":$PATH\"")
 	}
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
@@ -765,7 +765,7 @@ func cmdDoctor(args []string) int {
 	d := &doctor{fix: *doFix}
 
 	d.section("This machine")
-	d.info("aft " + version + ", home " + home.Dir())
+	d.info("aft " + version + ", home " + home.Dir() + ", plumbing " + home.Data())
 	if _, err := exec.LookPath("ssh"); err == nil {
 		d.ok("ssh present")
 	} else {
@@ -782,7 +782,7 @@ func cmdDoctor(args []string) int {
 			return config.SaveState(st)
 		}, "added the PATH line; open a new terminal")
 	default:
-		d.bad("launchers not on PATH (manual mode)", `add $HOME/.aft/launchers to your PATH`)
+		d.bad("launchers not on PATH (manual mode)", "add "+launcher.PathDir+" to your PATH")
 	}
 	for _, a := range cfg.Agents {
 		if !launcher.Installed(a) {
@@ -1033,12 +1033,12 @@ func cmdUninstall(args []string) int {
 	}
 	fmt.Println("This will:")
 	for _, n := range cfg.HostNames() {
-		fmt.Printf("  end Aft sessions and remove ~/.aft and pasted files on %s\n", n)
+		fmt.Printf("  end Aft sessions and remove ~/.aft, ~/.local/share/aft and pasted files on %s\n", n)
 	}
 	for _, b := range st.ShellBlocks {
 		fmt.Printf("  remove the aft block from %s\n", b.File)
 	}
-	fmt.Printf("  remove %s (launchers, config, state)\n", home.Dir())
+	fmt.Printf("  remove %s (config, state, logs) and %s (launchers, sockets)\n", home.Dir(), home.Data())
 	fmt.Println("Your code, SSH config and each agent's own data stay.")
 	if !*yes && !ui.Confirm("Continue?", false) {
 		return 1
@@ -1047,7 +1047,7 @@ func cmdUninstall(args []string) int {
 	for _, n := range cfg.HostNames() {
 		h, _ := cfg.Host(n)
 		if err := transport.EnsureMaster(h); err != nil {
-			fmt.Fprintf(os.Stderr, "aft: could not reach %s: %v (remove ~/.aft there by hand)\n", n, err)
+			fmt.Fprintf(os.Stderr, "aft: could not reach %s: %v (remove ~/.aft and ~/.local/share/aft there by hand)\n", n, err)
 			code = 1
 			continue
 		}
@@ -1073,11 +1073,13 @@ func cmdUninstall(args []string) int {
 		code = 1
 	}
 	launcher.RemoveLaunchers(&st)
-	if err := os.RemoveAll(home.Dir()); err != nil {
-		return fail(err)
+	for _, d := range []string{home.Dir(), home.Data()} {
+		if err := os.RemoveAll(d); err != nil {
+			return fail(err)
+		}
+		fmt.Printf("Removed %s.\n", d)
 	}
 	os.RemoveAll(home.Temp()) // pasted files, if the local host received any
-	fmt.Printf("Removed %s.\n", home.Dir())
 	if self, err := os.Executable(); err == nil {
 		fmt.Printf("The aft binary itself is at %s; delete it however you installed it.\n", self)
 	}

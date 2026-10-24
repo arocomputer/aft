@@ -13,15 +13,15 @@ first, then:
 aft setup --host box
 ```
 
-Setup connects, installs Aft's server under `~/.aft` on the host, reports
-which agents it finds there, creates launchers for your agents under
-`~/.aft/launchers`, and asks how to put that directory first on your `PATH`. If you
+Setup connects, installs Aft's server under `~/.local/share/aft` on the host,
+reports which agents it finds there, creates launchers for your agents under
+`~/.local/share/aft/launchers`, and asks how to put that directory first on your `PATH`. If you
 manage your dotfiles, choose the option that prints the line for you to add;
 otherwise aft adds a marked block to your shell config:
 
 ```sh
 # >>> aft >>>
-export PATH="$HOME/.aft/launchers:$PATH"
+export PATH="$HOME/.local/share/aft/launchers:$PATH"
 # <<< aft <<<
 ```
 

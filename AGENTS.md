@@ -66,10 +66,12 @@ binary itself as the server and drive the client under a real pseudo-terminal.
   captures the mouse, so native selection still works.
 - Sessions survive a lost client. Aft never stops a session on its own.
 - Only allowlisted environment variables cross to the server.
-- Aft writes only the directories `internal/home` names on each machine (its
-  own directory, and a private `aft-<uid>` directory in the platform's
-  temporary space for disposable files such as pasted files) plus the
-  recorded shell block, and `aft uninstall` removes exactly that.
+- Aft writes only the directories `internal/home` names on each machine plus
+  the recorded shell block, and `aft uninstall` removes exactly that: `~/.aft`
+  for what people read or edit (config, state, logs), `~/.local/share/aft` for
+  plumbing (server, shims, launchers, sessions, sockets) on every platform,
+  and a private `aft-<uid>` directory in the platform's temporary space for
+  disposable files such as pasted files.
 - Aft installs nothing but its own server, edits nothing but the shell block,
   and never runs sudo. Setup asks before editing dotfiles and can print the
   line instead.

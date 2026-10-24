@@ -46,7 +46,6 @@ A `[host.<name>]` table can override the global defaults for that host:
 ```toml
 [host.box]
 ssh     = "-p 2222 fschr@box"      # destination, with ssh options if needed
-home    = "~/.aft"                 # Aft's home on the host
 wrapper = ["nix", "develop", "-c"] # command wrapper
 predict = true                     # typing prediction for this host
 ports   = "3000-3999"              # mirror range

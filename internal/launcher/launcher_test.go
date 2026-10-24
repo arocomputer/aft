@@ -54,7 +54,7 @@ func TestEditedBlockIsKept(t *testing.T) {
 	InstallShellBlock(&st)
 	// The user edits inside the block.
 	content, _ := os.ReadFile(rc)
-	edited := strings.Replace(string(content), "$HOME/.aft/launchers", "$HOME/.aft/launchers:/extra", 1)
+	edited := strings.Replace(string(content), PathDir, PathDir+":/extra", 1)
 	os.WriteFile(rc, []byte(edited), 0o644)
 	removed, kept := RemoveShellBlocks(&st)
 	if len(removed) != 0 || len(kept) != 1 {
@@ -98,5 +98,21 @@ func TestEnvironmentAllowlist(t *testing.T) {
 	}
 	if strings.Contains(joined, "SECRET_TOKEN") {
 		t.Fatalf("leaked a non-allowlisted var: %v", env)
+	}
+}
+
+// TestMoveShellBlocks rewrites a recorded block that names the old launchers
+// directory, keeping the rest of the file.
+func TestMoveShellBlocks(t *testing.T) {
+	rc := filepath.Join(t.TempDir(), ".zshrc")
+	old := blockStart + "\nexport PATH=\"$HOME/.aft/launchers:$PATH\"\n" + blockEnd + "\n"
+	os.WriteFile(rc, []byte("alias ll='ls -l'\n\n"+old), 0o644)
+	st := config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: old}}}
+	if kept := MoveShellBlocks(&st); len(kept) != 0 {
+		t.Fatalf("kept %v", kept)
+	}
+	got, _ := os.ReadFile(rc)
+	if string(got) != "alias ll='ls -l'\n\n"+Block() || st.ShellBlocks[0].Block != Block() {
+		t.Fatalf("not moved:\n%s", got)
 	}
 }

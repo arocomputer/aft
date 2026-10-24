@@ -119,7 +119,7 @@ Ctrl-] then `d` leaves the session running.
 
 ## Bridges
 
-Inside a session, `~/.aft/shims` on the host comes first on `PATH` and
+Inside a session, `~/.local/share/aft/shims` on the host comes first on `PATH` and
 provides `open`, `xdg-open`, `pbpaste`, `wl-paste`, `xclip` and `xsel`. When
 the application opens an `http` or `https` URL, such as a login page, it opens
 in your local browser. When it reads the clipboard right after you paste, for

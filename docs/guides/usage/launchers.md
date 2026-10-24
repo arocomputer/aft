@@ -6,7 +6,7 @@ order: 2
 
 # Launchers
 
-`~/.aft/launchers` holds one symlink per agent name, each pointing at `aft`. When
+`~/.local/share/aft/launchers` holds one symlink per agent name, each pointing at `aft`. When
 `aft` is invoked as `claude`, it checks whether the current directory is inside
 a project that is on. If so, it starts `claude` on that project's server, in
 the matching directory, passing your arguments through literally. If not, it

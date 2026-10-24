@@ -50,14 +50,14 @@ var Local = Host{Name: "local"}
 // IsLocal reports whether the host is this machine.
 func (h Host) IsLocal() bool { return h.Name == "local" || h.SSH == "" }
 
-// RemoteHome is Aft's directory on the server, expanded by the remote shell.
-// AFT_REMOTE_HOME overrides it, which tests use to keep a server on this same
-// machine away from the real ~/.aft.
+// RemoteHome is Aft's plumbing directory on the server (home.Data there),
+// expanded by the remote shell. AFT_REMOTE_HOME overrides it, which tests use
+// to keep a server on this same machine away from the real one.
 func RemoteHome() string {
 	if d := os.Getenv("AFT_REMOTE_HOME"); d != "" {
 		return d
 	}
-	return "~/.aft"
+	return "~/.local/share/aft"
 }
 
 // RemoteServer is the installed server binary's path on a host.

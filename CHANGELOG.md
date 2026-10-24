@@ -48,6 +48,11 @@ stays on your machine, and typing feels local.
 - Pasting or dragging a local file into the terminal uploads it to the
   server's temporary directory and pastes the server path, so agents can open
   pasted screenshots, recordings and documents.
+- Aft keeps what you read or edit (config, state, logs) in `~/.aft` and its
+  plumbing (server, shims, launchers, sessions, sockets) in
+  `~/.local/share/aft`, on macOS and Linux alike. An older install moves
+  itself on first run, sessions keep running across the move, and the PATH
+  block Aft added is rewritten.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
 - `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,
@@ -71,7 +76,7 @@ stays on your machine, and typing feels local.
   `edit_dotfiles` (a boolean) replaces `path_integration`.
 - Configure per host and per project, with project over host over global. A
   launch wrapper runs the agent inside any environment you name (a container, a
-  nix or mise shell, a custom shell); per-host home, prediction, port range,
+  nix or mise shell, a custom shell); per-host prediction, port range,
   passed env and SSH keepalive tuning are all overridable.
 - Interactive setup: aft asks how to put its launchers on your PATH and, for
   people who manage their dotfiles, prints the line instead of editing. Prompts

@@ -17,8 +17,8 @@ currently offered.
 
 Aft uses your existing SSH authentication and host trust. Applications in a
 session run with your remote account's full permissions; an agent's sandbox
-protects only the machine it runs on. Aft's own files live under `~/.aft` on
-each machine with private permissions, and its sockets are Unix sockets owned
+protects only the machine it runs on. Aft's own files live under `~/.aft` and
+`~/.local/share/aft` on each machine with private permissions, and its sockets are Unix sockets owned
 by you, so other processes running as you can reach your sessions. Mirrored
 ports listen on loopback only but are reachable by other local users. The
 bridge shims let an application on the server open URLs in your browser and

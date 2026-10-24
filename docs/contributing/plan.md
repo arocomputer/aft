@@ -216,7 +216,7 @@ Keys, ProxyJump, agent, config and host trust all come from the user's
 setup. The connection carries four things:
 
 - **A session channel,** opened as
-  `ssh -tt host ~/.aft/server attach ID`.
+  `ssh -tt host ~/.local/share/aft/server attach ID`.
 - **The bridge socket,** a Unix socket forwarded back to your machine.
 - **Port mirrors,** added on the live connection with `ssh -O forward`.
 - **Short server calls,** such as listing sessions.
@@ -225,7 +225,7 @@ The transport is TCP. Prediction hides network stalls for typing, but not
 for output. UDP can be considered later if lossy networks prove a problem.
 
 **Server install.** Aft copies its own static binary for the server's OS and
-architecture to `~/.aft/server` on the server. It verifies the hash and pins
+architecture to `~/.local/share/aft/server` on the server. It verifies the hash and pins
 the binary to the client's version. macOS arm64 builds are signed ad hoc by
 the Go linker. A binary copied over SSH carries no quarantine flag.
 
@@ -234,7 +234,7 @@ macOS, it parses the built-in `lsof`.
 
 ## 8. Launchers, on/off, and the shell line
 
-**Launchers.** `~/.aft/launchers/` holds one symlink per agent name, each
+**Launchers.** `~/.local/share/aft/launchers/` holds one symlink per agent name, each
 pointing at `aft`. When `aft` is invoked as `claude`, it checks whether the
 current directory is inside a project that is on. If it is, it starts
 `claude` on the server, in the matching directory, with the arguments passed
@@ -251,7 +251,7 @@ finds:
 
 ```sh
 # >>> aft >>>
-export PATH="$HOME/.aft/launchers:$PATH"
+export PATH="$HOME/.local/share/aft/launchers:$PATH"
 # <<< aft <<<
 ```
 
@@ -273,14 +273,14 @@ Everything else comes from the server login environment.
 1. Lists everything it will remove and every running Aft session, then asks
    for confirmation.
 2. Ends the Aft sessions on every known host. These are sessions Aft created.
-3. Removes `~/.aft/` on every known host. That holds the server, session
-   state and sockets.
+3. Removes `~/.aft/` and `~/.local/share/aft/` on every known host. They hold
+   the logs, the server, session records and sockets.
 4. Removes the shell block from each recorded file. It removes the block only
    if it still matches exactly what Aft wrote. If the user edited it, Aft
    shows the block and leaves it for the user to remove. It deletes the
    fish drop-in file.
-5. Removes the local `~/.aft/`, which holds the shims, config, state and
-   control sockets.
+5. Removes the local `~/.aft/`, which holds config and state, and
+   `~/.local/share/aft/`, which holds the launchers and control sockets.
 6. Tells the user how they installed the `aft` binary, so they can remove it.
 
 What stays: code on the server, your SSH config and known hosts, and each
