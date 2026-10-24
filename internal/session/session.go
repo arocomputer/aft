@@ -124,8 +124,31 @@ func newClient(conn net.Conn) *client {
 	return c
 }
 
-// send queues one frame; it drops the client if it has gone away.
+// encodeSnapshot encodes a snapshot for one frame, dropping the oldest
+// scrollback until it fits: a frame larger than the protocol allows would
+// end the connection instead of opening copy mode.
+func encodeSnapshot(snap vt.SnapshotData) []byte {
+	for {
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(snap); err != nil {
+			return nil
+		}
+		if buf.Len() <= proto.MaxPayload || len(snap.Lines) <= snap.Rows {
+			return buf.Bytes()
+		}
+		drop := max((len(snap.Lines)-snap.Rows)/4, 1)
+		snap.Lines = snap.Lines[drop:]
+		snap.CursorRow = max(snap.CursorRow-drop, 0)
+	}
+}
+
+// send queues one frame; it drops the client if it has gone away. A frame
+// the protocol cannot carry is not sent: the stream must stay decodable.
 func (c *client) send(t proto.Type, payload []byte) {
+	if len(payload) > proto.MaxPayload {
+		log.Printf("frame %x of %d bytes exceeds the protocol limit; not sent", t, len(payload))
+		return
+	}
 	var buf []byte
 	hdr := [5]byte{byte(t), byte(len(payload) >> 24), byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload))}
 	buf = append(buf, hdr[:]...)
@@ -519,10 +542,7 @@ func (s *Session) serveClient(conn net.Conn) {
 			s.mu.Lock()
 			snap := s.term.Snapshot()
 			s.mu.Unlock()
-			var buf bytes.Buffer
-			if gob.NewEncoder(&buf).Encode(snap) == nil {
-				c.send(proto.Snapshot, buf.Bytes())
-			}
+			c.send(proto.Snapshot, encodeSnapshot(snap))
 		case proto.BridgeReply:
 			var resp proto.BridgeResponse
 			if json.Unmarshal(f.Payload, &resp) == nil {

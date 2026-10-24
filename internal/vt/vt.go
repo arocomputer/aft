@@ -362,6 +362,14 @@ func LineText(cells []Cell) string { return lineText(cells) }
 // partial multibyte character. Output may be safely interposed only then.
 func (t *Terminal) InGround() bool { return t.p.state == stGround && t.p.utf8n == 0 }
 
+// DropSequence abandons a sequence the parser is inside, for a stream that
+// ended mid-way and will not continue.
+func (t *Terminal) DropSequence() {
+	t.p.clear()
+	t.p.state = stGround
+	t.p.utf8n = 0
+}
+
 // ReverseCell returns the position of the single reverse-video cell on screen,
 // which applications that hide the terminal cursor use as a drawn caret.
 func (t *Terminal) ReverseCell() (row, col int, ok bool) {

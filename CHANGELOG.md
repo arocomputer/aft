@@ -164,6 +164,18 @@ stays on your machine, and typing feels local.
   xterm terminfos advertise, and cursor movement that treats a cursor outside
   the scroll region the way a VT does. A repaint restores the character sets
   too, so an application drawing a box keeps drawing lines after a reattach.
+- After Enter, nothing you type is drawn until the application echoes
+  again, so a password prompt never shows what you type. Keys typed during
+  an outage are delivered after the repaint, not drawn onto a blank screen.
+- Copy mode on a long session no longer freezes the client: a snapshot is
+  trimmed to what one frame can carry, a frame that cannot be decoded ends the
+  link instead of waiting on it forever, and a snapshot that never arrives
+  stops blocking copy mode after a few seconds.
+- Leaving a session closes the link at once, so the session sees the detach
+  rather than waiting out its idle timeout; closing the window releases the
+  port forwards it held.
+- Port mirroring applies updates in order, off the input loop; a notice never
+  draws over copy mode, and a flash takes down only itself.
 - Hyperlinks (OSC 8) are kept per cell and restored by a repaint, so a link
   on screen stays clickable after a reattach.
 - Copy mode's status bar names no keys; the guide lists them.

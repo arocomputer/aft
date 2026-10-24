@@ -39,7 +39,7 @@ func TestPastedMountFileNamesTheServerPath(t *testing.T) {
 // start marker already went to the app, so an end marker follows, or the app
 // would take every later key as pasted text.
 func TestCancelledUploadClosesThePaste(t *testing.T) {
-	c := &session{outbound: make(chan []byte, 4), sendDone: make(chan struct{}), pred: NewPredictor(40, 5, io.Discard, true), unflash: make(chan struct{}, 1)}
+	c := &session{outbound: make(chan []byte, 4), sendDone: make(chan struct{}), pred: NewPredictor(40, 5, io.Discard, true), unflash: make(chan int, 1)}
 	c.holding = true
 	c.finishUpload(uploadResult{paste: []byte("/x.png" + string(pasteEnd)), err: context.Canceled})
 	f, err := proto.Read(bufio.NewReader(bytes.NewReader(<-c.outbound)))

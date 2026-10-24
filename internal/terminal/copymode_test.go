@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -94,5 +95,18 @@ func TestCopyModeQuitAndEscape(t *testing.T) {
 	}
 	if exit, _ := c.key(other("\x1b")); !exit {
 		t.Fatal("Escape should exit")
+	}
+}
+
+// TestCopyModeWithNothingToShow opens on an empty snapshot and copies: no
+// line is selected and nothing panics.
+func TestCopyModeWithNothingToShow(t *testing.T) {
+	c := newCopyMode(vt.SnapshotData{Cols: 20, Rows: 5}, 20, 5)
+	c.move(3)
+	if exit, copied := c.key(Token{Kind: TokOther, Bytes: []byte("y")}); !exit || copied != nil {
+		t.Fatalf("exit %v copied %q", exit, copied)
+	}
+	if !bytes.Contains(c.view(), []byte("COPY")) {
+		t.Fatal("no status bar")
 	}
 }

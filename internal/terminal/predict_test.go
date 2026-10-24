@@ -317,8 +317,83 @@ func TestEnterLetsTheAppClearTheLine(t *testing.T) {
 	typeKeys(p, "abc")
 	p.Key(Token{Kind: TokOther, Bytes: []byte("\r")}) // Enter
 	p.Output([]byte("\r\x1b[2K> \x1b[7m \x1b[0m"))
-	if s := screenOf(&out, 40, 5); s.Line(0) != ">" || len(p.pending) != 0 || !p.confident {
-		t.Fatalf("after Enter: %q pending %d confident %v", s.Line(0), len(p.pending), p.confident)
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" || len(p.pending) != 0 {
+		t.Fatalf("after Enter: %q pending %d", s.Line(0), len(p.pending))
+	}
+}
+
+// TestNothingIsDrawnAfterEnterUntilAnEcho types after Enter: the next line
+// may be a password prompt, so the characters stay off the screen until the
+// application echoes one, and are drawn again from then on.
+func TestNothingIsDrawnAfterEnterUntilAnEcho(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H$ "))
+	typeKeys(p, "sudo")
+	p.Output([]byte("sudo"))
+	p.Key(Token{Kind: TokOther, Bytes: []byte("\r")})
+	p.Output([]byte("\r\nPassword: "))
+	typeKeys(p, "hunter2")
+	if s := screenOf(&out, 40, 5); s.Line(1) != "Password:" {
+		t.Fatalf("a password was drawn: %q", s.Line(1))
+	}
+	p.Output([]byte("\r\n$ "))
+	p.Key(Token{Kind: TokOther, Bytes: []byte("\x1b[13u")}) // Enter under the kitty protocol, then a prompt that echoes
+	typeKeys(p, "l")
+	p.Output([]byte("l"))
+	typeKeys(p, "s")
+	if s := screenOf(&out, 40, 5); s.Line(2) != "$ ls" {
+		t.Fatalf("after an echo the next key was not drawn: %q", s.Line(2))
+	}
+}
+
+// TestKeysAfterAResetWaitForTheRepaint feeds keys typed during an outage
+// right after Reset: nothing lands on the empty shadow, and the typed count
+// does not let a Backspace erase what the repaint shows.
+func TestKeysAfterAResetWaitForTheRepaint(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "ab")
+	p.Output([]byte("ab"))
+	p.Reset()
+	n := out.Len()
+	typeKeys(p, "ls")
+	p.Key(Token{Kind: TokBackspace})
+	if out.Len() != n {
+		t.Fatalf("drew %q on an empty shadow", out.String()[n:])
+	}
+}
+
+// TestNoticeAfterAStreamStoppedMidSequence drops the sequence a dead stream
+// left open, so the reconnecting notice can be drawn.
+func TestNoticeAfterAStreamStoppedMidSequence(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("hello\x1b[3"))
+	p.Notice("aft - reconnecting")
+	if strings.Contains(out.String(), "reconnecting") {
+		t.Fatal("a notice was drawn into an open sequence")
+	}
+	p.DropSequence()
+	p.Notice("aft - reconnecting")
+	if !strings.Contains(out.String(), "reconnecting") {
+		t.Fatal("no notice after the sequence was dropped")
+	}
+}
+
+// TestRepaintReplaysAnOpenSequence absorbs output that ends inside a sequence
+// while the pager owns the screen; the repaint replays that start, so the
+// rest of the sequence completes on the real terminal instead of printing.
+func TestRepaintReplaysAnOpenSequence(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1Hhello"))
+	p.Absorb([]byte("\x1b[2"))
+	p.Repaint()
+	p.Output([]byte("J"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != "" {
+		t.Fatalf("the screen was not cleared: %q", s.Line(0))
 	}
 }
 
@@ -421,7 +496,7 @@ func TestNoticeOnTheWrappingRow(t *testing.T) {
 	}
 }
 
-// TestBackspaceEraseOnlyWhatWasTyped presses Backspace at an empty prompt:
+// TestBackspaceErasesOnlyWhatWasTyped presses Backspace at an empty prompt:
 // the prompt is the application's, so nothing is predicted and it stays.
 // Once characters have been typed, Backspace is predicted over them, and
 // only as many of them as were typed.

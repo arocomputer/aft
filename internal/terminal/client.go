@@ -64,7 +64,6 @@ type Options struct {
 	Quiet      bool
 }
 
-// Run attaches the terminal to a session and returns the process exit code.
 // saneSize defaults a terminal size to 80x24 when the terminal reports an error
 // or a zero dimension. A 0x0 size would otherwise be sent as a resize the
 // session reads as a control connection, so the session would never attach.
@@ -75,6 +74,9 @@ func saneSize(cols, rows int, err error) (int, int) {
 	return cols, rows
 }
 
+// Run attaches the terminal to a session, starting one if o names none, and
+// returns the exit code to leave with: the application's when it ended, 0
+// after a detach, 1 when the session could not be reached or was lost.
 func Run(o Options) int {
 	// Advanced/testing env overrides: AFT_LATENCY_MS simulates a slow link each
 	// direction, and AFT_PREDICT=0 turns prediction off, so you can feel the
@@ -105,11 +107,13 @@ func Run(o Options) int {
 	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID, command: o.Command}
 	c.outbound = make(chan []byte, 4096)
 	c.uploads = make(chan uploadResult, 1)
-	c.unflash = make(chan struct{}, 1)
+	c.unflash = make(chan int, 1)
 	c.sendDone = make(chan struct{})
 	defer close(c.sendDone)
 	go c.writer()
 	c.mirror = ports.New(o.Host, o.Ports)
+	c.listeners = make(chan mirrorUpdate, 1)
+	go c.mirrorLoop()
 	c.pred = NewPredictor(cols, rows, out, o.Predict)
 	// A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
 	// even when the terminal itself blocks OSC 52.
@@ -117,7 +121,7 @@ func Run(o Options) int {
 	defer c.mirror.Close()
 	defer c.clearMirrors()
 
-	proc, err := c.open(true)
+	proc, err := c.open()
 	var gone sessionEnded
 	if errors.As(err, &gone) {
 		c.goneMessage(gone)()
@@ -142,9 +146,12 @@ func Run(o Options) int {
 	go func() {
 		<-death
 		restore()
+		c.mirror.Close() // the forwards live on the shared connection
+		c.clearMirrors()
 		os.Exit(1)
 	}()
 	code := c.loop(proc)
+	c.hangUp(proc)
 	restore()
 	if c.message != nil {
 		c.message()
@@ -161,8 +168,8 @@ type session struct {
 	mirror     *ports.Mirror
 	message    func() // prints why the client left, after the terminal is restored
 
-	command []string      // what the session runs, for the leaving message
-	unflash chan struct{} // a flashed notice is due to be taken down
+	command []string // what the session runs, for the leaving message
+	unflash chan int // a flashed notice is due to be taken down; its sequence number
 
 	cancelled    bool               // Ctrl-C cancelled the upload in progress
 	noticeUp     bool               // a notice covers the top row
@@ -184,9 +191,12 @@ type session struct {
 	outbound chan []byte   // frames queued for the writer goroutine
 	sendDone chan struct{} // closed on exit to stop the writer
 
-	copy          *copyMode // non-nil while the scrollback pager is open
-	prefixPending bool      // the prefix key was pressed; the next key is a command
-	awaitSnap     bool      // a snapshot was requested to open copy mode
+	copy          *copyMode         // non-nil while the scrollback pager is open
+	prefixPending bool              // the prefix key was pressed; the next key is a command
+	awaitSnap     bool              // a snapshot was requested to open copy mode
+	snapAsked     time.Time         // when, so a snapshot that never comes stops blocking copy mode
+	noticeSeq     int               // which notice is up; a flash takes down only its own
+	listeners     chan mirrorUpdate // the server's listening ports, mirrored in order off the input loop
 
 	holding  bool              // a pasted file is uploading; input is held
 	held     []Token           // keys typed during the upload, sent after it
@@ -221,7 +231,7 @@ func (l udpLink) Close()       { l.Conn.Close() }
 func (l udpLink) Wait() string { l.Conn.Close(); return "" }
 
 // open starts or attaches to the session and performs the handshake.
-func (c *session) open(first bool) (link, error) {
+func (c *session) open() (link, error) {
 	l, err := c.dial()
 	if err != nil {
 		return nil, err
@@ -237,6 +247,15 @@ func (c *session) use(l link) error {
 	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
 		c.wr = laggyWriter{l, d}
 		c.rd = laggyReader(l, d)
+	}
+	// Frames queued for the link that died never reached the session, and
+	// the session takes nothing before the size: forget them.
+	for drained := false; !drained; {
+		select {
+		case <-c.outbound:
+		default:
+			drained = true
+		}
 	}
 	c.wmu.Unlock()
 	if err := c.send(proto.Resize, proto.EncodeResize(c.cols, c.rows)); err != nil {
@@ -392,65 +411,62 @@ func (c *session) loop(proc link) int {
 	beat := time.NewTicker(10 * time.Second)
 	defer beat.Stop()
 
-	connected := true
-	frames := c.readFrames(proc)
+	frames := c.readFrames()
 	for {
 		// Keystrokes take priority: drain every queued key before touching
 		// output, so a burst of agent output never stalls your typing.
-		if connected {
-		drain:
-			for {
-				select {
-				case b, ok := <-keys:
-					if leave, code := c.handleBatch(b, ok, connected); leave {
-						return code
-					}
-				default:
-					break drain
+	drain:
+		for {
+			select {
+			case b, ok := <-keys:
+				if leave, code := c.handleBatch(b, ok); leave {
+					return code
 				}
+			default:
+				break drain
 			}
 		}
 		select {
 		case b, ok := <-keys:
-			if leave, code := c.handleBatch(b, ok, connected); leave {
+			if leave, code := c.handleBatch(b, ok); leave {
 				return code
 			}
 		case <-c.flush:
 			c.flush = nil
-			if connected && !c.handleKeys(c.z.Flush()) {
+			if !c.handleKeys(c.z.Flush()) {
 				return 0
 			}
 		case <-winch:
-			if cols, rows, err := term.GetSize(int(c.out.Fd())); err == nil {
-				c.cols, c.rows = cols, rows
-				c.pred.Resize(cols, rows)
-				if c.copy != nil {
-					c.copy.resize(cols, rows)
-					c.out.Write(c.copy.view())
-				}
-				if connected {
-					c.send(proto.Resize, proto.EncodeResize(cols, rows))
-				}
+			cols, rows := saneSize(term.GetSize(int(c.out.Fd())))
+			c.cols, c.rows = cols, rows
+			c.pred.Resize(cols, rows)
+			if c.copy != nil {
+				c.copy.resize(cols, rows)
+				c.out.Write(c.copy.view())
 			}
+			c.send(proto.Resize, proto.EncodeResize(cols, rows))
 		case <-tick.C:
 			c.pred.Tick()
-		case <-c.unflash:
-			if c.copy == nil && c.noticeUp {
+			if c.awaitSnap && time.Since(c.snapAsked) > 5*time.Second {
+				c.awaitSnap = false // the snapshot is not coming; allow another try
+			}
+		case seq := <-c.unflash:
+			if c.copy == nil && c.noticeUp && seq == c.noticeSeq {
 				c.pred.RestoreRow(0)
 				c.noticeUp = false
 			}
 		case <-beat.C:
-			if connected {
-				c.send(proto.Ping, nil)
-			}
+			c.send(proto.Ping, nil)
 		case u := <-c.uploads:
 			if !c.finishUpload(u) {
 				return 0
 			}
 		case fe := <-frames:
 			if fe.err != nil {
-				// The connection dropped without the application ending.
-				connected = false
+				// The connection dropped, or sent what cannot be decoded; either
+				// way this link is over. Close it before waiting, or a relay
+				// that is still alive would never be reaped.
+				proc.Close()
 				// Leave copy mode: its snapshot is stale and the reattach repaints.
 				c.copy = nil
 				c.awaitSnap = false
@@ -479,11 +495,17 @@ func (c *session) loop(proc link) int {
 					c.message = func() { ui.Error("%v", err) }
 					return 1
 				}
-				connected = true
-				frames = c.readFrames(proc)
-				// Deliver what was typed while disconnected, in order.
-				if len(typed) > 0 && !c.handleKeys(c.z.Feed(typed)) {
-					return 0
+				frames = c.readFrames()
+				// Deliver what was typed while disconnected, in order; a lone
+				// Escape among it is released by the usual timer.
+				if len(typed) > 0 {
+					toks := c.z.Feed(typed)
+					if c.z.Pending() {
+						c.flush = time.After(40 * time.Millisecond)
+					}
+					if !c.handleKeys(toks) {
+						return 0
+					}
 				}
 				continue
 			}
@@ -496,7 +518,8 @@ func (c *session) loop(proc link) int {
 	}
 }
 
-func (c *session) readFrames(proc link) <-chan frameOrErr {
+// readFrames decodes frames from the current link on its own goroutine.
+func (c *session) readFrames() <-chan frameOrErr {
 	ch := make(chan frameOrErr, 256)
 	rd := c.rd
 	go func() {
@@ -511,6 +534,17 @@ func (c *session) readFrames(proc link) <-chan frameOrErr {
 		}
 	}()
 	return ch
+}
+
+// hangUp gives the writer a moment to send what is queued, such as the
+// Detach frame, then closes the link, so the session learns at once that the
+// terminal has gone rather than after its idle timeout.
+func (c *session) hangUp(l link) {
+	for deadline := time.Now().Add(300 * time.Millisecond); len(c.outbound) > 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // the frame the writer holds
+	l.Close()
 }
 
 // handleKeys routes input: to copy mode when open, to a prefix command when the
@@ -569,18 +603,10 @@ func (c *session) handleKeys(toks []Token) bool {
 // handleBatch tokenizes one read from the terminal and routes it. It returns
 // leave=true with an exit code when the client should stop (stdin closed, or a
 // detach). It is called both from the priority drain and the main select.
-func (c *session) handleBatch(b []byte, ok, connected bool) (leave bool, code int) {
+func (c *session) handleBatch(b []byte, ok bool) (leave bool, code int) {
 	if !ok {
 		c.send(proto.Detach, nil)
 		return true, 0
-	}
-	if !connected {
-		// While disconnected, only Ctrl-C leaves; other keys are dropped.
-		if len(b) == 1 && b[0] == 0x03 {
-			c.message = c.detachMessage("left %s while disconnected; it keeps running")
-			return true, 1
-		}
-		return false, 0
 	}
 	toks := c.z.Feed(b)
 	if c.z.Pending() {
@@ -653,6 +679,7 @@ func (c *session) enterCopy() {
 	if c.awaitSnap || c.copy != nil {
 		return
 	}
+	c.snapAsked = time.Now()
 	c.awaitSnap = true
 	c.send(proto.ReqSnapshot, nil)
 }
@@ -715,7 +742,7 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		// and the leaving message use it.
 		c.clearMirrors()
 		c.id = string(f.Payload)
-		c.writeMirrors()
+		c.mirrorPorts(nil)
 		c.flash("aft - this session is now called " + c.id)
 	case proto.Error:
 		if c.noticeUp {
@@ -738,7 +765,7 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 			}()
 		}
 	case proto.Listeners:
-		go func() { c.mirror.Update(proto.DecodePorts(f.Payload)); c.writeMirrors() }()
+		c.mirrorPorts(proto.DecodePorts(f.Payload))
 	case proto.Pong:
 	}
 	return 0, false
@@ -751,6 +778,9 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 	delay := 500 * time.Millisecond
 	var typed []byte
 	lost := time.Now()
+	// The dead stream may have stopped inside an escape sequence; the
+	// reattach repaints everything, so the notice need not wait for its end.
+	c.pred.DropSequence()
 	for attempt := 1; ; attempt++ {
 		if attempt > 1 {
 			c.notice(fmt.Sprintf("aft - no contact with %s for %ds - reconnecting - Ctrl-C leaves, the session keeps running", c.o.Host.Name, int(time.Since(lost).Seconds())))
@@ -783,7 +813,7 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			// A session that is gone says so: the UDP request answers
 			// "gone" (see dial) and an SSH attach sends an Error frame, which
 			// ends the client with the reason. No extra question is needed.
-			proc, err := c.open(false)
+			proc, err := c.open()
 			var gone sessionEnded
 			if errors.As(err, &gone) {
 				return nil, nil, gone
@@ -804,9 +834,10 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 // the row; the input loop does the restoring when unflash fires.
 func (c *session) flash(text string) {
 	c.notice(text)
+	seq := c.noticeSeq
 	time.AfterFunc(5*time.Second, func() {
 		select {
-		case c.unflash <- struct{}{}:
+		case c.unflash <- seq:
 		default:
 		}
 	})
@@ -837,18 +868,63 @@ var errLeft = errors.New("left while disconnected")
 // title is easy to miss: while the connection is down, where the repaint on
 // reconnect draws over it, and through flash, which takes it down itself.
 func (c *session) notice(text string) {
+	if c.copy != nil {
+		return // the pager owns the screen; the reattach or exit repaints
+	}
 	c.pred.Notice(text)
 	c.noticeUp = true
+	c.noticeSeq++
 }
 
-// writeMirrors records the currently mirrored ports so `aft status` can report
-// them. It is keyed by session id and removed when the client exits.
-func (c *session) writeMirrors() {
-	if c.id == "" {
+// mirrorUpdate asks the mirror goroutine to match the server's listening
+// ports, or with nil ports only to rewrite the record under the session's
+// current name.
+type mirrorUpdate struct {
+	ports []int
+	id    string
+}
+
+// mirrorPorts hands the latest listening ports to mirrorLoop; a newer set
+// replaces one not yet taken.
+func (c *session) mirrorPorts(ports []int) {
+	u := mirrorUpdate{ports: ports, id: c.id}
+	for {
+		select {
+		case c.listeners <- u:
+			return
+		default:
+			select {
+			case <-c.listeners:
+			default:
+			}
+		}
+	}
+}
+
+// mirrorLoop applies port updates one at a time, in order, off the input
+// loop: a forward is an ssh control command, too slow to hold up typing.
+func (c *session) mirrorLoop() {
+	for {
+		select {
+		case u := <-c.listeners:
+			if u.ports != nil {
+				c.mirror.Update(u.ports)
+			}
+			c.writeMirrors(u.id)
+		case <-c.sendDone:
+			return
+		}
+	}
+}
+
+// writeMirrors records the currently mirrored ports under the session id, so
+// `aft status` can report them; the record goes when the client exits.
+func (c *session) writeMirrors(id string) {
+	if id == "" {
 		return
 	}
 	active := c.mirror.Active()
-	path := filepath.Join(home.Sockets(), "mirrors-"+c.id+".json")
+	path := filepath.Join(home.Sockets(), "mirrors-"+id+".json")
 	if len(active) == 0 {
 		os.Remove(path)
 		return

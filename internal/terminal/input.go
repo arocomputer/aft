@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"unicode/utf8"
 )
 
@@ -33,6 +34,7 @@ type Token struct {
 type Tokenizer struct {
 	buf     []byte
 	pasting bool
+	scanned int // bytes of buf already searched for the paste end marker
 }
 
 var pasteStart = []byte("\x1b[200~")
@@ -73,13 +75,18 @@ func (z *Tokenizer) Pending() bool { return len(z.buf) > 0 }
 func (z *Tokenizer) next() (int, Token, bool) {
 	b := z.buf
 	if z.pasting {
-		if i := indexOf(b, pasteEnd); i >= 0 {
-			z.pasting = false
-			return i + len(pasteEnd), Token{Kind: TokPaste}, true
+		// Search only what has not been searched: a large paste arrives in
+		// many reads, and rescanning from the start each time is quadratic.
+		from := max(z.scanned-len(pasteEnd)+1, 0)
+		if i := bytes.Index(b[from:], pasteEnd); i >= 0 {
+			z.pasting, z.scanned = false, 0
+			return from + i + len(pasteEnd), Token{Kind: TokPaste}, true
 		}
+		z.scanned = len(b)
 		// Hold paste content until the end marker; a very large paste still
 		// flows because the marker always arrives.
 		if len(b) > 1<<20 {
+			z.scanned = 0
 			return len(b), Token{Kind: TokPaste}, true
 		}
 		return 0, Token{}, false
@@ -112,8 +119,8 @@ func (z *Tokenizer) escape(b []byte) (int, Token, bool) {
 	}
 	switch b[1] {
 	case '[':
-		if hasPrefix(b, pasteStart) {
-			z.pasting = true
+		if bytes.HasPrefix(b, pasteStart) {
+			z.pasting, z.scanned = true, 0
 			return len(pasteStart), Token{Kind: TokPaste}, true
 		}
 		// CSI: parameters and intermediates, then a final byte in 0x40..0x7E.
@@ -171,17 +178,4 @@ func (z *Tokenizer) escape(b []byte) (int, Token, bool) {
 func isKittyBackspace(params []byte) bool {
 	s := string(params)
 	return s == "127" || s == "127;1" || s == "127;1:1"
-}
-
-func hasPrefix(b, p []byte) bool {
-	return len(b) >= len(p) && string(b[:len(p)]) == string(p)
-}
-
-func indexOf(b, p []byte) int {
-	for i := 0; i+len(p) <= len(b); i++ {
-		if string(b[i:i+len(p)]) == string(p) {
-			return i
-		}
-	}
-	return -1
 }

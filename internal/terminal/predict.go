@@ -52,6 +52,10 @@ type Predictor struct {
 	// left of the caret otherwise, such as a prompt, may be nothing the
 	// application would erase.
 	typed int
+	// tail is the start of a sequence the shadow has absorbed but the real
+	// terminal has not seen, while copy mode owns the screen; a repaint
+	// replays it so the sequence completes on both.
+	tail []byte
 
 	onClip func([]byte)
 }
@@ -104,7 +108,20 @@ func (p *Predictor) Reset() {
 	p.caretValid = false
 	p.displaced = false
 	p.posKnown, p.penKnown = false, false
-	p.confident = true
+	p.typed = 0
+	p.tail = nil
+	// Nothing is drawn until the first echo matches: the session is about
+	// to repaint, and keys typed while it was away must not land on an empty
+	// shadow.
+	p.confident = false
+}
+
+// DropSequence abandons a sequence the shadow's parser is inside, when the
+// stream that was sending it is gone.
+func (p *Predictor) DropSequence() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.shadow.DropSequence()
 }
 
 // Output passes server output to the terminal and updates the shadow.
@@ -152,7 +169,22 @@ func (p *Predictor) Key(t Token) {
 		// Anything else may move the caret in ways we cannot foresee.
 		p.caretValid = false
 		p.typed = 0
+		if isEnter(t.Bytes) {
+			// What comes next may be a password prompt: draw nothing until
+			// an echo shows the application is echoing again.
+			p.confident = false
+		}
 	}
+}
+
+// isEnter reports whether b is the Enter key, in the legacy encoding or the
+// kitty keyboard protocol (CSI 13 u, with any modifiers).
+func isEnter(b []byte) bool {
+	if len(b) == 1 && (b[0] == '\r' || b[0] == '\n') {
+		return true
+	}
+	s := string(b)
+	return s == "\x1b[13u" || strings.HasPrefix(s, "\x1b[13;") && strings.HasSuffix(s, "u")
 }
 
 // shadowCaret returns where the server's caret is: the terminal cursor, or
@@ -350,6 +382,10 @@ func (p *Predictor) reconcile() {
 			// The server moved its caret past the cell without rewriting it,
 			// which is how some renderers echo a space: it handled the key.
 			p.confident = true
+		case cell.Gen <= pr.gen && !pr.drawn && caretOK && cr != pr.row:
+			// Never drawn, and the server's caret has left its row, as after
+			// a prompt that echoed nothing: it is not coming, and it must not
+			// hold up predictions on the new row.
 		case cell.Gen <= pr.gen:
 			keep = append(keep, pr)
 		case cell.Rune == pr.r:
@@ -498,24 +534,40 @@ func (p *Predictor) Tick() {
 
 // Absorb feeds server output to the shadow without writing to the terminal.
 // Copy mode uses it so the shadow stays current while the pager owns the
-// screen; Repaint then restores the live screen on exit.
+// screen; Repaint then restores the live screen on exit. The bytes of a
+// sequence still open at the end are kept, for Repaint to replay.
 func (p *Predictor) Absorb(b []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.shadow.Write(b)
+	for i := range b {
+		p.shadow.Write(b[i : i+1])
+		if p.shadow.InGround() {
+			p.tail = p.tail[:0]
+		} else {
+			p.tail = append(p.tail, b[i])
+		}
+	}
 }
 
 // Repaint clears the screen and redraws the live screen from the shadow,
 // dropping any predictions. Copy mode calls it on exit. It paints the current
 // screen only, never scrollback, so the terminal's own history is untouched.
+// A sequence the shadow is still inside is replayed, so the real terminal is
+// inside it too when the rest arrives.
 func (p *Predictor) Repaint() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// Render clears the screen itself before painting it.
+	// Render clears the screen itself before painting it, and leaves the
+	// cursor and pen as the shadow has them.
 	p.w.Write(p.shadow.Render(vt.RenderOptions{Scrollback: false, Title: true}))
+	p.w.Write(p.tail)
+	p.tail = nil
 	p.pending = nil
 	p.caretValid = false
 	p.displaced = false
+	cur := p.shadow.Cursor()
+	p.realRow, p.realCol, p.posKnown = cur.Row, cur.Col, !cur.Wrap
+	p.realPen, p.penKnown = cur.Attr, true
 }
 
 // Notice draws a one-line message in reverse video across the top row, then
@@ -573,19 +625,11 @@ func (p *Predictor) cursorBack() string {
 func (p *Predictor) RestoreRow(r int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	cols, rows := p.shadow.Size()
+	_, rows := p.shadow.Size()
 	if r < 0 || r >= rows || !p.shadow.InGround() {
 		return
 	}
-	out := vt.CUP(r, 0)
-	for c := 0; c < cols; c++ {
-		cell := p.shadow.Cell(r, c)
-		if cell.Width == 0 && c > 0 {
-			continue // the right half of a wide character drawn just before
-		}
-		out += vt.SGR(cell.Attr) + cellRune(cell)
-	}
-	p.w.Write([]byte(out + p.cursorBack()))
+	p.w.Write(append(p.shadow.RenderRow(r), p.cursorBack()...))
 	p.penKnown = false
 	p.displaced = true
 }

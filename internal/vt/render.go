@@ -174,6 +174,16 @@ func (t *Terminal) Render(o RenderOptions) []byte {
 	return b.Bytes()
 }
 
+// RenderRow returns the sequences that redraw one row of the screen in place,
+// leaving the pen reset.
+func (t *Terminal) RenderRow(r int) []byte {
+	var b bytes.Buffer
+	b.WriteString(CUP(r, 0))
+	t.paintLine(&b, t.Row(r))
+	b.WriteString("\x1b[0m")
+	return b.Bytes()
+}
+
 // gset names a G0/G1 designation: DEC special graphics or ASCII.
 func gset(graphics bool) string {
 	if graphics {
