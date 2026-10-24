@@ -55,7 +55,7 @@ it on.
 `~/.aft/config.toml` holds your hosts and preferences:
 
 ```toml
-default_host = "box"
+use = "box"
 agents = ["claude", "codex", "opencode", "pi"]
 predict = true
 detach = ""                  # for example "ctrl-]"; off by default

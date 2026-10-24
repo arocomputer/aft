@@ -76,9 +76,6 @@ func cmdSetup(args []string) int {
 			n = dest
 		}
 		cfg.Hosts[n] = config.HostConfig{SSH: dest}
-		if cfg.DefaultHost == "" {
-			cfg.DefaultHost = n
-		}
 		h, _ := cfg.Host(n)
 		fmt.Printf("Connecting to %s…\n", dest)
 		if err := transport.EnsureMaster(h); err != nil {
@@ -149,9 +146,10 @@ func chooseEditDotfiles() bool {
 	return i == 0
 }
 
-// cmdHost manages the hosts in config.toml. With no verb it lists them; add,
-// rm and default edit the [host.<name>] tables and default_host. These only
-// touch local config — removing a host leaves whatever is installed on it.
+// cmdHost manages the [host.<name>] tables in config.toml. With no verb it
+// lists them; add and rm edit the tables. Which host is used by default is the
+// separate `use` key (see cmdUse). These only touch local config — removing a
+// host leaves whatever is installed on it.
 func cmdHost(args []string) int {
 	cfg, err := config.Load()
 	if err != nil {
@@ -168,11 +166,12 @@ func cmdHost(args []string) int {
 			fmt.Println("No hosts yet. Add one with: aft host add NAME SSH-DESTINATION")
 			return 0
 		}
+		used := cfg.UsedHost()
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		for _, n := range cfg.HostNames() {
 			mark := ""
-			if n == cfg.DefaultHost {
-				mark = "(default)"
+			if n == used {
+				mark = "(used by default)"
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\n", n, cfg.Hosts[n].SSH, mark)
 		}
@@ -189,9 +188,6 @@ func cmdHost(args []string) int {
 			return fail(fmt.Errorf("host %q already exists; remove it first or edit config.toml", name))
 		}
 		cfg.Hosts[name] = config.HostConfig{SSH: dest}
-		if cfg.DefaultHost == "" {
-			cfg.DefaultHost = name
-		}
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
@@ -207,8 +203,11 @@ func cmdHost(args []string) int {
 			return fail(err)
 		}
 		fmt.Printf("Server ready on %s (%s/%s).\n", name, info.OS, info.Arch)
-		if name == cfg.DefaultHost {
-			fmt.Printf("%s is your default host.\n", name)
+		switch {
+		case cfg.UsedHost() == name:
+			fmt.Printf("%s is used by default.\n", name)
+		default:
+			fmt.Printf("Run aft use %s to make it the default, or pass --host %s per command.\n", name, name)
 		}
 		return 0
 
@@ -222,39 +221,54 @@ func cmdHost(args []string) int {
 			return fail(fmt.Errorf("unknown host %q", name))
 		}
 		delete(cfg.Hosts, name)
-		if cfg.DefaultHost == name {
-			cfg.DefaultHost = ""
-			if rest := cfg.HostNames(); len(rest) > 0 {
-				cfg.DefaultHost = rest[0]
-			}
+		if cfg.Use == name {
+			cfg.Use = "" // fall back to the only remaining host, or to aft use
 		}
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
 		fmt.Printf("Removed host %s from your config. Whatever Aft installed on it is left as is; run aft uninstall on that machine to clean it up.\n", name)
-		if cfg.DefaultHost != "" {
-			fmt.Printf("Default host is now %s.\n", cfg.DefaultHost)
+		switch used := cfg.UsedHost(); {
+		case used != "":
+			fmt.Printf("%s is now used by default.\n", used)
+		case len(cfg.Hosts) > 1:
+			fmt.Println("Pick which host to use by default with: aft use NAME")
 		}
-		return 0
-
-	case "default":
-		if len(args) != 1 {
-			fmt.Fprintln(os.Stderr, "usage: aft host default NAME")
-			return 2
-		}
-		name := args[0]
-		if _, ok := cfg.Hosts[name]; !ok {
-			return fail(fmt.Errorf("unknown host %q", name))
-		}
-		cfg.DefaultHost = name
-		if err := config.Save(cfg); err != nil {
-			return fail(err)
-		}
-		fmt.Printf("Default host is now %s.\n", name)
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "aft host: unknown verb %q (use: add, rm, default, or no verb to list)\n", verb)
+	fmt.Fprintf(os.Stderr, "aft host: unknown verb %q (use: add, rm, or no verb to list)\n", verb)
 	return 2
+}
+
+// cmdUse sets the host used when none is given (config key `use`), like
+// `docker context use`. With no name it prints the current one.
+func cmdUse(args []string) int {
+	cfg, err := config.Load()
+	if err != nil {
+		return fail(err)
+	}
+	if len(args) == 0 {
+		if used := cfg.UsedHost(); used != "" {
+			fmt.Println(used)
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, "no host is used by default; set one with: aft use NAME")
+		return 1
+	}
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: aft use NAME")
+		return 2
+	}
+	name := args[0]
+	if _, ok := cfg.Hosts[name]; !ok {
+		return fail(fmt.Errorf("unknown host %q; add it with aft host add", name))
+	}
+	cfg.Use = name
+	if err := config.Save(cfg); err != nil {
+		return fail(err)
+	}
+	fmt.Printf("Using %s by default.\n", name)
+	return 0
 }
 
 func agentsIn(m map[string]string) []string {
@@ -660,7 +674,7 @@ func cmdStatus(args []string) int {
 			state = "not connected"
 		}
 		mark := ""
-		if n == cfg.DefaultHost {
+		if n == cfg.UsedHost() {
 			mark = " (default)"
 		}
 		fmt.Printf("Host %s%s: %s, %s\n", n, mark, h.SSH, state)
@@ -801,7 +815,7 @@ func cmdDoctor(args []string) int {
 			continue
 		}
 		title := "Host " + n
-		if n == cfg.DefaultHost {
+		if n == cfg.UsedHost() {
 			title += " (default)"
 		}
 		d.section(title)

@@ -14,7 +14,8 @@ import (
 const usage = `aft — your agents on your server, your terminal on your machine
 
   aft setup                     add a host, create launchers, add the PATH block
-  aft host [add|rm|default]     list hosts, or add, remove, set the default one
+  aft host [add|rm]             list your hosts, or add or remove one
+  aft use [NAME]                show or set the host used when --host is omitted
   aft on [--host H] [--dir D]   agents started in this directory run on the host
   aft off                       run them locally again
   aft clone URL [DIR]           clone on the server, create a local handle, turn it on
@@ -76,6 +77,8 @@ func run(cmd string, args []string) int {
 		return cmdSetup(args)
 	case "host":
 		return cmdHost(args)
+	case "use":
+		return cmdUse(args)
 	case "on":
 		return cmdOn(args)
 	case "off":

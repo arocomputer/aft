@@ -25,7 +25,7 @@ var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp
 // table or a repository's aft.toml can override most of them. Keys are flat and
 // snake_case; a host is addressed by name, so its table is singular: host.mini.
 type Config struct {
-	DefaultHost  string                `toml:"default_host"`
+	Use          string                `toml:"use,omitempty"` // the host used when none is given; a lone host needs no line
 	Agents       []string              `toml:"agents"`
 	Predict      *bool                 `toml:"predict,omitempty"`
 	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
@@ -179,10 +179,17 @@ func Save(c Config) error {
 // PredictOn reports the prediction setting, on by default.
 func (c Config) PredictOn() bool { return c.Predict == nil || *c.Predict }
 
-// Host resolves a host name. "local" is always this machine.
+// Host resolves a host name. "local" is always this machine. With no name it
+// uses c.Use, falling back to the only configured host so a single-host setup
+// needs no `use` line.
 func (c Config) Host(name string) (transport.Host, error) {
 	if name == "" {
-		name = c.DefaultHost
+		name = c.Use
+	}
+	if name == "" && len(c.Hosts) == 1 {
+		for n := range c.Hosts {
+			name = n
+		}
 	}
 	if name == "local" {
 		return transport.Local, nil
@@ -198,6 +205,20 @@ func (c Config) Host(name string) (transport.Host, error) {
 		return transport.Host{}, fmt.Errorf("host %q has no ssh destination", name)
 	}
 	return transport.Host{Name: name, SSH: h.SSH, Alive: h.Alive, Persist: h.Persist}, nil
+}
+
+// UsedHost is the name of the host used when none is given: c.Use, or the only
+// host when there is exactly one, or "" when it is unset or ambiguous.
+func (c Config) UsedHost() string {
+	if c.Use != "" {
+		return c.Use
+	}
+	if len(c.Hosts) == 1 {
+		for n := range c.Hosts {
+			return n
+		}
+	}
+	return ""
 }
 
 // HostNames lists configured hosts in order.

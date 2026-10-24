@@ -21,7 +21,7 @@ If you have more than one host — a `mini`, a `studio`, a cloud box — name ea
 one and point your work at whichever you want:
 
 ```toml
-default_host = "mini"
+use = "mini"                  # the host used when you don't pass --host
 
 [host.mini]
 ssh = "mini"                  # an alias from your ~/.ssh/config
@@ -33,17 +33,20 @@ ssh = "fschr@studio.local"
 ssh = "ubuntu@1.2.3.4"
 ```
 
+With a single host you need no `use` line — that host is used by default. The
+key only appears once you have more than one to choose between.
+
 Manage these without editing the file by hand:
 
 ```sh
-aft host                 # list your hosts, marking the default
+aft host                 # list your hosts, marking the one used by default
 aft host add mini mini   # add [host.mini] with ssh = "mini", and install the server
 aft host rm studio       # remove a host from your config
-aft host default cloud   # set default_host
+aft use cloud            # use cloud when --host is omitted
 ```
 
 Pick a host per command with `--host` (`aft on --host studio`,
-`aft shell --host cloud`); with no flag, `default_host` is used.
+`aft shell --host cloud`); with no flag, the `use` host runs it.
 
 To make a project always run on the same host from any machine you type on,
 commit an `aft.toml` at its root:
@@ -113,7 +116,7 @@ nothing to undo.
 ## Global keys
 
 ```toml
-default_host = "mini"
+use          = "mini"          # host used when --host is omitted (optional with one host)
 agents       = ["claude", "codex", "opencode", "pi"]
 predict      = true
 prefix       = "ctrl-]"        # opens copy mode (prefix then [) and detach (then d); "" disables
