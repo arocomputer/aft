@@ -137,13 +137,15 @@ everything the agent prints, and a bounded scrollback.
   bracketed paste, keyboard protocol flags and cursor visibility. It paints
   the current screen, then sends the app a resize signal so it redraws
   itself.
-- **Invisible.** There is no status bar, no prefix key and no on-screen
-  chrome. Status shows only in the terminal title, for example "app ·
-  reconnecting".
+- **Invisible.** There is no status bar and no on-screen chrome while
+  things work. Status shows in the terminal title, and only while the
+  connection is down, or a pasted file could not be sent, as one line across
+  the top of the screen that goes away by itself.
 - **One client at a time.** A new attach takes over from the old one.
-- **Detaching.** Closing the window detaches, or `aft detach` from another
-  terminal. Aft does not steal a key from the agent by default. A detach key
-  can be enabled in config.
+- **Detaching.** A session detaches when its terminal goes away: the window
+  closes, another computer attaches, or the laptop sleeps. Aft does not steal
+  a key from the agent by default; a prefix key (Ctrl-] then d) is on, and a
+  direct detach key can be enabled in config.
 
 ## 5. The terminal client and prediction
 

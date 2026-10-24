@@ -26,6 +26,7 @@ cd ~/code/app
 aft on             # agents started here now run on the server
 claude             # same command as always; also codex, opencode, pi, any program
 aft off            # back to fully local
+aft server         # a terminal on the host called server: ssh that survives disconnects
 ```
 
 Close the laptop and the agent keeps working. Open it again and you are
