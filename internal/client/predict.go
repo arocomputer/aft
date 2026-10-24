@@ -40,13 +40,12 @@ type Predictor struct {
 	srtt      time.Duration
 	lastKey   time.Time
 
-	// The overlay caret: where the next predicted character goes once earlier
-	// predictions are still unconfirmed.
+	// The overlay caret: where the next predicted character goes while earlier
+	// predictions are still unconfirmed. It is only meaningful while pending
+	// is non-empty and is cleared by any key whose effect we cannot foresee.
 	caretValid bool
 	caretRow   int
 	caretCol   int
-	baseRow    int
-	baseCol    int
 
 	onClip func([]byte)
 }
@@ -155,28 +154,37 @@ func (p *Predictor) Key(t Token) {
 	}
 }
 
-// caret returns where the next typed character will appear, or ok=false.
-func (p *Predictor) caret() (row, col int, drawn bool, ok bool) {
-	var r, c int
+// shadowCaret returns where the server's caret is: the terminal cursor, or
+// the single reverse-video cell when the application hides the cursor and
+// draws its own (drawn=true). ok is false when neither can be found.
+func (p *Predictor) shadowCaret() (row, col int, drawn bool, ok bool) {
 	if p.shadow.Modes().CursorVisible {
 		cur := p.shadow.Cursor()
 		if cur.Wrap {
 			return 0, 0, false, false
 		}
-		r, c = cur.Row, cur.Col
-	} else {
-		var found bool
-		r, c, found = p.shadow.ReverseCell()
-		if !found {
+		return cur.Row, cur.Col, false, true
+	}
+	r, c, found := p.shadow.ReverseCell()
+	return r, c, true, found
+}
+
+// caret returns where the next typed character will appear, or ok=false.
+// With no predictions in flight that is the server's caret. With predictions
+// in flight it is the overlay caret, which runs ahead of the server's as the
+// echoes trail behind; if a key with an unforeseeable effect intervened, or
+// the server's caret left the row, there is no safe answer until the pending
+// predictions settle.
+func (p *Predictor) caret() (row, col int, drawn bool, ok bool) {
+	r, c, drawn, ok := p.shadowCaret()
+	if !ok {
+		return 0, 0, false, false
+	}
+	if len(p.pending) > 0 {
+		if !p.caretValid || p.caretRow != r {
 			return 0, 0, false, false
 		}
-		drawn = true
-	}
-	// Earlier predictions still waiting for their echo push the caret right.
-	if p.caretValid && p.caretRow == r && p.caretCol > c && p.baseRow == r && p.baseCol == c && len(p.pending) > 0 {
 		c = p.caretCol
-	} else {
-		p.baseRow, p.baseCol = r, c
 	}
 	cols, _ := p.shadow.Size()
 	if c >= cols-1 {
@@ -299,33 +307,74 @@ func cellRune(c vt.Cell) string {
 	return string(c.Rune)
 }
 
-// reconcile checks pending predictions against the shadow after server output.
+// reconcile checks pending predictions against the shadow after server
+// output. A prediction is confirmed when the server writes the predicted
+// character into its cell. When the server writes something else into a cell
+// it has not reached yet (at or right of its caret on the same row), it has
+// simply not processed that key: applications such as Ink-based agents redraw
+// the whole input line on every echo, erasing the cells still in flight. Such
+// predictions are kept and redrawn rather than counted as wrong, otherwise the
+// caret visibly snaps back to the server's position on every echo.
 func (p *Predictor) reconcile() {
 	if len(p.pending) == 0 {
 		return
 	}
+	cr, cc, drawnCaret, caretOK := p.shadowCaret()
 	now := time.Now()
 	keep := p.pending[:0]
+	var erased []int // indexes into keep of drawn predictions to redraw
 	for _, pr := range p.pending {
 		cell := p.shadow.Cell(pr.row, pr.col)
 		switch {
-		case cell.Gen > pr.gen && cell.Rune == pr.r:
+		case cell.Gen <= pr.gen:
+			keep = append(keep, pr)
+		case cell.Rune == pr.r:
 			// Confirmed. Learn the echo time.
 			rtt := now.Sub(pr.at)
 			p.srtt = (p.srtt*7 + rtt) / 8
 			p.confident = true
-		case cell.Gen > pr.gen:
+		case caretOK && pr.row == cr && pr.col >= cc:
+			// Overwritten ahead of the server's caret: still in flight.
+			if pr.drawn {
+				erased = append(erased, len(keep))
+			}
+			keep = append(keep, pr)
+		default:
 			// The server drew something else there; passthrough already
 			// repainted the cell, so only our trust changes.
 			p.confident = false
-		default:
-			keep = append(keep, pr)
 		}
 	}
 	p.pending = keep
 	if len(p.pending) == 0 {
 		p.caretValid = false
+		return
 	}
+	if len(erased) == 0 || !p.confident || !p.shadow.InGround() {
+		// Without a redraw the screen shows the server's cells, which is
+		// always correct; the next output or Tick settles the rest.
+		return
+	}
+	var out []byte
+	gen := p.shadow.Gen()
+	for _, i := range erased {
+		pr := &p.pending[i]
+		a := p.shadow.Cell(pr.row, pr.col).Attr
+		a.Reverse = false
+		out = append(out, vt.CUP(pr.row, pr.col)+vt.SGR(a)+string(pr.r)...)
+		pr.gen = gen // judge it again only if the server overwrites it again
+	}
+	if drawnCaret && p.caretValid && p.caretRow == cr {
+		// The server's redraw put its caret back at its own position; move
+		// the drawn caret block to the end of the predictions again.
+		next := p.shadow.Cell(p.caretRow, p.caretCol)
+		na := next.Attr
+		na.Reverse = true
+		out = append(out, vt.CUP(p.caretRow, p.caretCol)+vt.SGR(na)+cellRune(next)...)
+	}
+	p.w.Write(out)
+	p.displaced = true
+	p.posKnown, p.penKnown = false, false
 }
 
 // Tick expires predictions the server never answered and repaints them from

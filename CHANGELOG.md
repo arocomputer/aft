@@ -33,6 +33,9 @@ stays on your machine, and typing feels local.
   like native echo, with no cursor-move or style reset, so there is no flicker.
   The prediction itself costs about 12 microseconds; felt latency is the
   terminal and display, which aft draws within.
+- Typing ahead of the server's echo no longer makes the caret jump back: new
+  predictions go after the ones still in flight, and agents that redraw the
+  whole input line on each echo keep the in-flight characters on screen.
 - The client draws each predicted keystroke before sending it to the network,
   and gives keystrokes priority over output, so neither a congested link nor a
   burst of agent output can stall your typing.
@@ -42,6 +45,9 @@ stays on your machine, and typing feels local.
 - - A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
   even when the terminal blocks OSC 52. Clipboard reads from the server stay
   off by default.
+- Pasting or dragging a local file into the terminal uploads it to the server
+  and pastes the server path, so agents can open pasted screenshots,
+  recordings and documents.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
 - `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,

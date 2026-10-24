@@ -53,7 +53,7 @@ variables, and anything in `env.pass`. Your `PATH` never reaches the server.
 
 The working directory on the server is the project's mapped directory plus
 your current subdirectory. Code lives only on the server and moves with git;
-Aft never syncs or copies files.
+Aft never syncs or copies files, except a file you paste (see below).
 
 ## Copy and paste
 
@@ -69,6 +69,14 @@ owns the screen, the selection and the clipboard; aft does not get in the way.
 - **Paste.** Cmd+V (Ctrl+Shift+V) pastes as always. aft forwards the paste
   whole, using bracketed paste when the application asked for it, so editors
   and agents treat it as pasted text rather than typed keystrokes.
+- **Paste a file.** Drag a file into the terminal, or copy it in Finder and
+  paste, and the terminal pastes its local path. When a paste is nothing but
+  paths to files on your machine, aft uploads them to `~/.aft/drop` on the
+  server over the existing connection and pastes the server paths instead, so
+  the agent can open a screenshot, recording or document. The window title
+  shows the upload; keys you type meanwhile are sent after it, in order.
+  Uploads older than a week are removed. A paste of ordinary text, or of a
+  path that does not exist on your machine, is sent unchanged.
 - **Copy from the agent.** When the agent or a tool on the server copies to the
   clipboard with the OSC 52 escape, aft sets your laptop clipboard directly,
   so it works even when your terminal blocks OSC 52 by default. Reading your

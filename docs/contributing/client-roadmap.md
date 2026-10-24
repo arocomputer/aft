@@ -59,11 +59,10 @@ cancel them. Small, because the plumbing exists.
 
 ### 2. File transfer (medium)
 
-Getting a file to or from the server without leaving aft. Two shapes: `aft cp`
-over the existing connection, and, richer, dragging a file into the terminal
-uploads it and pastes the server path, and an OSC 52-style or server path for
-the reverse. The clipboard-image bridge already proves the transport can carry
-bytes both ways. Start with `aft cp`.
+Getting a file to or from the server without leaving aft. Pasting or dragging
+a local file into the terminal now uploads it to `~/.aft/drop` and pastes the
+server path (client/upload.go, server drop). Still open: `aft cp` over the
+existing connection, and the reverse direction, a server file to the laptop.
 
 ### 3. Activity and completion signals (medium, small)
 

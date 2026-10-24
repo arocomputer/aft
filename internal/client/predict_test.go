@@ -184,3 +184,51 @@ func TestPredictionMinimalBytes(t *testing.T) {
 		t.Fatalf("shadow unexpectedly changed: %q", p.Shadow().Line(0))
 	}
 }
+
+func typeKeys(p *Predictor, s string) {
+	for _, r := range s {
+		p.Key(Token{Kind: TokText, Rune: r, Bytes: []byte(string(r))})
+	}
+}
+
+// TestCaretRunsAheadOfTrailingEchoes pins the fix for the caret snapping
+// back: a key typed while earlier echoes are still arriving goes after the
+// earlier predictions, not at the server's lagging cursor.
+func TestCaretRunsAheadOfTrailingEchoes(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "abc")
+	p.Output([]byte("a")) // only the first echo has arrived
+	typeKeys(p, "d")
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> abcd" || s.Cursor().Col != 6 {
+		t.Fatalf("mid-echo: %q cursor col %d", s.Line(0), s.Cursor().Col)
+	}
+	p.Output([]byte("bcd"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> abcd" || len(p.pending) != 0 || !p.confident {
+		t.Fatalf("after echo: %q pending %d confident %v", s.Line(0), len(p.pending), p.confident)
+	}
+}
+
+// TestLineRedrawKeepsInflightPredictions covers Ink-style agents, which hide
+// the cursor, draw a reverse-video caret and rewrite the whole input line on
+// each echo. Predictions the server has not reached survive the redraw, and
+// the drawn caret stays at their end.
+func TestLineRedrawKeepsInflightPredictions(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[?25l\x1b[1;1H> \x1b[7m \x1b[0m"))
+	typeKeys(p, "abc")
+	p.Output([]byte("\r\x1b[2K> a\x1b[7m \x1b[0m")) // echo of "a" only
+	s := screenOf(&out, 40, 5)
+	if s.Line(0) != "> abc" || !p.confident {
+		t.Fatalf("after redraw: %q confident %v", s.Line(0), p.confident)
+	}
+	if r, c, ok := s.ReverseCell(); !ok || r != 0 || c != 5 {
+		t.Fatalf("drawn caret at %d,%d ok=%v, want 0,5", r, c, ok)
+	}
+	p.Output([]byte("\r\x1b[2K> abc\x1b[7m \x1b[0m"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> abc" || len(p.pending) != 0 {
+		t.Fatalf("after echo: %q pending %d", s.Line(0), len(p.pending))
+	}
+}

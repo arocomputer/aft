@@ -86,6 +86,7 @@ func Run(o Options) int {
 
 	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID}
 	c.outbound = make(chan []byte, 4096)
+	c.uploads = make(chan uploadResult, 1)
 	c.sendDone = make(chan struct{})
 	defer close(c.sendDone)
 	go c.writer()
@@ -149,6 +150,10 @@ type session struct {
 	copy          *copyMode // non-nil while the scrollback pager is open
 	prefixPending bool      // the prefix key was pressed; the next key is a command
 	awaitSnap     bool      // a snapshot was requested to open copy mode
+
+	holding bool              // a pasted file is uploading; input is held
+	held    []Token           // keys typed during the upload, sent after it
+	uploads chan uploadResult // finished paste uploads (upload.go)
 }
 
 // open starts or attaches to the session and performs the handshake.
@@ -294,6 +299,10 @@ func (c *session) loop(proc *transport.Proc) int {
 			}
 		case <-tick.C:
 			c.pred.Tick()
+		case u := <-c.uploads:
+			if !c.finishUpload(u) {
+				return 0
+			}
 		case fe := <-frames:
 			if fe.err != nil {
 				// The connection dropped without the application ending.
@@ -349,11 +358,14 @@ func (c *session) readFrames(proc *transport.Proc) <-chan frameOrErr {
 }
 
 // handleKeys routes input: to copy mode when open, to a prefix command when the
-// prefix was just pressed, otherwise to the application with prediction. It
+// prefix was just pressed, otherwise to the application with prediction. While
+// a pasted file uploads, every key is held and replayed after the paste. It
 // returns false when the client should leave (the user detached).
 func (c *session) handleKeys(toks []Token) bool {
 	for _, t := range toks {
 		switch {
+		case c.holding:
+			c.held = append(c.held, t)
 		case c.copy != nil:
 			exit, copied := c.copy.key(t)
 			if copied != nil {
@@ -379,6 +391,9 @@ func (c *session) handleKeys(toks []Token) bool {
 			// Draw the local prediction first, so your echo is never delayed by
 			// a slow or congested link, then forward the keystroke.
 			c.pred.Key(t)
+			if t.Kind == TokPaste && c.startUpload(t) {
+				continue
+			}
 			if err := c.send(proto.Input, t.Bytes); err != nil {
 				return true
 			}

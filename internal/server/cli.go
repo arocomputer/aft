@@ -45,7 +45,7 @@ var Version = "dev"
 // binary by itself, or the aft binary followed by "server".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|kick|setup|info|listeners")
+		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|kick|setup|info|listeners|drop")
 		return 2
 	}
 	self, err := os.Executable()
@@ -129,6 +129,18 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "info":
 		json.NewEncoder(stdout).Encode(GatherInfo())
+		return 0
+	case "drop":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: server drop NAME < file")
+			return 2
+		}
+		path, err := Drop(args[1], stdin)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, path)
 		return 0
 	case "sharepath":
 		if len(args) != 2 {

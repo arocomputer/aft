@@ -49,6 +49,10 @@ func Sockets() string { return filepath.Join(Dir(), "sockets") }
 // Logs holds per-session logs on a host.
 func Logs() string { return filepath.Join(Dir(), "logs") }
 
+// Drops holds files pasted from the machine you type on, one directory per
+// upload, so a pasted local path can be replaced by a path on the host.
+func Drops() string { return filepath.Join(Dir(), "drop") }
+
 // ShimNames are the commands a session intercepts on the host so a remote
 // application can reach the machine you are typing on.
 var ShimNames = []string{"open", "xdg-open", "pbpaste", "wl-paste", "xclip", "xsel"}
