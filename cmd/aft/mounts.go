@@ -243,7 +243,7 @@ func cmdMount(args []string) int {
 			return 0
 		}
 		for _, m := range cfg.Mounts {
-			fmt.Printf("%s  ->  %s:%s\n", m.Local, m.Host, m.Remote)
+			fmt.Printf("%s  ->  %s:%s\n", m.Local, m.Host, m.Path)
 		}
 		return 0
 	}
@@ -268,7 +268,7 @@ func cmdMount(args []string) int {
 		if _, err := cfg.Host(*host); err != nil {
 			return fail(err)
 		}
-		cfg.Mounts = addMount(cfg.Mounts, config.Mount{Local: abs, Host: *host, Remote: strings.TrimRight(*remote, "/")})
+		cfg.Mounts = addMount(cfg.Mounts, config.Mount{Local: abs, Host: *host, Path: strings.TrimRight(*remote, "/")})
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
@@ -360,7 +360,7 @@ func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool)
 	if !ui.Confirm("Map it so aft uses the files in place (no clone, no sync)?", false) {
 		return "", "", false
 	}
-	cfg.Mounts = addMount(cfg.Mounts, config.Mount{Local: d.Point, Host: hostName, Remote: serverPath})
+	cfg.Mounts = addMount(cfg.Mounts, config.Mount{Local: d.Point, Host: hostName, Path: serverPath})
 	if err := config.Save(*cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 	}

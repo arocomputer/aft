@@ -40,10 +40,10 @@ aft mount remove /Volumes/Room
 The mapping lives in `~/.aft/config.toml`:
 
 ```toml
-[[mounts]]
+[[mount]]
 local = "/Volumes/Room"
-host = "server"
-remote = "/home/fschr/room"
+host = "mini"
+path = "/home/fschr/room"
 ```
 
 Because the files are shared, not copied, editing in a Mac GUI editor and

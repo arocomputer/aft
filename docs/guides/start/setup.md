@@ -58,16 +58,12 @@ it on.
 default_host = "box"
 agents = ["claude", "codex", "opencode", "pi"]
 predict = true
-detach_key = ""              # for example "ctrl-]"; off by default
+detach = ""                  # for example "ctrl-]"; off by default
+env = []                     # extra variables allowed to cross to the host
+ports = "3000-9999"          # mirror range
 
-[hosts.box]
-ssh = "box"               # the destination given to ssh
-
-[env]
-pass = []                    # extra variables allowed to cross to the server
-
-[ports]
-mirror = "3000-9999"
+[host.box]
+ssh = "box"                  # the destination given to ssh
 ```
 
 A repository may commit an optional `aft.toml` with `host`, `dir` and

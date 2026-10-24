@@ -90,8 +90,8 @@ func TestEnvironmentAllowlist(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("SECRET_TOKEN", "nope")
 	t.Setenv("DATABASE_URL", "postgres://x")
-	cfg := config.Config{Env: config.EnvConfig{Pass: []string{"DATABASE_URL"}}}
-	env := Environment(cfg.Env.Pass)
+	cfg := config.Config{Env: []string{"DATABASE_URL"}}
+	env := Environment(cfg.Env)
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "TERM=xterm-256color") || !strings.Contains(joined, "DATABASE_URL=postgres://x") {
 		t.Fatalf("missing allowed vars: %v", env)

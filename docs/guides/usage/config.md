@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Per-host and per-project settings, and the launch wrapper
+description: Hosts, per-project settings, and the launch wrapper
 order: 5
 ---
 
@@ -8,19 +8,63 @@ order: 5
 
 Aft ships with defaults that need no configuration. Everything below is
 optional, and every key has a sensible default, so the one-command path stays
-the same until you want to change something. Global keys set defaults; a host
-overrides them for one server; a repository's `aft.toml` overrides them for one
-project. Project wins over host wins over global.
+the same until you want to change something. Top-level keys set defaults; a
+`[host.<name>]` table overrides them for one host; a repository's `aft.toml`
+overrides them for one project. Project wins over host wins over global.
+
+Keys are flat and `snake_case`. A host is addressed by name, so its table is
+singular: `[host.mini]`, not `[hosts.mini]`.
+
+## Multiple machines
+
+If you have more than one host — a `mini`, a `studio`, a cloud box — name each
+one and point your work at whichever you want:
+
+```toml
+default_host = "mini"
+
+[host.mini]
+ssh = "mini"                  # an alias from your ~/.ssh/config
+
+[host.studio]
+ssh = "fschr@studio.local"
+
+[host.cloud]
+ssh = "ubuntu@1.2.3.4"
+```
+
+Manage these without editing the file by hand:
+
+```sh
+aft host                 # list your hosts, marking the default
+aft host add mini mini   # add [host.mini] with ssh = "mini", and install the server
+aft host rm studio       # remove a host from your config
+aft host default cloud   # set default_host
+```
+
+Pick a host per command with `--host` (`aft on --host studio`,
+`aft shell --host cloud`); with no flag, `default_host` is used.
+
+To make a project always run on the same host from any machine you type on,
+commit an `aft.toml` at its root:
+
+```toml
+# aft.toml — this repo runs on mini wherever it is cloned
+host = "mini"
+```
+
+Because a session lives on the host, you can start it from one machine and
+reattach the same running session from another.
 
 ## The launch wrapper
 
 The wrapper is how you bring your own environment. By default aft runs the
-agent in a login shell on the server. A wrapper replaces that, running the
-agent as `wrapper + command`, so you decide the environment it starts in:
+agent in a login shell on the host. A wrapper replaces that, running the agent
+as `wrapper + command`, so you decide the environment it starts in:
 
 ```toml
-# ~/.aft/config.toml — a whole server runs agents inside a dev container
-[hosts.box]
+# ~/.aft/config.toml — a whole host runs agents inside a dev container
+[host.box]
 ssh = "box"
 wrapper = ["docker", "exec", "-i", "dev"]
 ```
@@ -36,12 +80,12 @@ keep working when the wrapper inherits the environment.
 
 ## Per-host settings
 
-A host entry can override the global defaults for that server:
+A `[host.<name>]` table can override the global defaults for that host:
 
 ```toml
-[hosts.box]
-ssh     = "-p 2222 fschr@box"   # destination, with ssh options if needed
-home    = "~/.aft"                 # server home on the host
+[host.box]
+ssh     = "-p 2222 fschr@box"      # destination, with ssh options if needed
+home    = "~/.aft"                 # Aft's home on the host
 wrapper = ["nix", "develop", "-c"] # command wrapper
 predict = true                     # typing prediction for this host
 ports   = "3000-3999"              # mirror range
@@ -59,24 +103,22 @@ dotfiles, pick the option that prints the line and apply it yourself. That is
 recorded as:
 
 ```toml
-path_integration = "manual"   # aft prints the line and never edits a file
+edit_dotfiles = false   # aft prints the line and never edits a file
 ```
 
-The default is `"edit"`, which adds a marked block to your shell config and
-removes it on `aft uninstall`. Manual mode edits nothing, so there is nothing
-to undo.
+The default is `true`, which adds a marked block to your shell config and
+removes it on `aft uninstall`. With it off aft edits nothing, so there is
+nothing to undo.
 
 ## Global keys
 
 ```toml
-default_host = "box"
+default_host = "mini"
 agents       = ["claude", "codex", "opencode", "pi"]
 predict      = true
 prefix       = "ctrl-]"        # opens copy mode (prefix then [) and detach (then d); "" disables
-detach_key   = ""              # a second, direct detach key; off by default
+detach       = ""              # a second, direct detach key; off by default
 wrapper      = []              # default wrapper for every host
-[env]
-pass = []                      # variables to pass to every host
-[ports]
-mirror = "3000-9999"
+env          = []              # variables to pass to every host
+ports        = "3000-9999"     # default mirror range
 ```

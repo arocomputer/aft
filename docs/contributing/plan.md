@@ -338,16 +338,12 @@ The server runs on the host as `aft server attach`, `new`, `ls`, `end`,
 default_host = "box"
 agents = ["claude", "codex", "opencode", "pi"]
 predict = true
-detach_key = ""              # off by default; nothing is stolen from agents
+detach = ""                  # off by default; nothing is stolen from agents
+env = []
+ports = "3000-9999"
 
-[hosts.box]
-ssh = "box"               # alias from ~/.ssh/config
-
-[env]
-pass = []
-
-[ports]
-mirror = "3000-9999"
+[host.box]
+ssh = "box"                  # alias from ~/.ssh/config
 ```
 
 Which projects are on, and where each maps, is local state in `~/.aft/`.

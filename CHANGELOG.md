@@ -52,6 +52,14 @@ stays on your machine, and typing feels local.
   scripts, and `--host` limits the checks to one host.
 - macOS and Linux hosts are supported; the server is embedded (gzipped) for both
   on amd64 and arm64.
+- Multiple hosts are first class. Name each in `~/.aft/config.toml` under a
+  singular `[host.<name>]` table, set `default_host`, and manage them with
+  `aft host` (list), `aft host add NAME DEST` (add and install), `aft host rm`
+  and `aft host default`. Pick one per command with `--host`, or pin a project
+  to a host for every machine by committing `host = "..."` in `aft.toml`.
+- The config is flat and `snake_case`: top-level `env`, `ports` and `detach`
+  replace the old `[env] pass`, `[ports] mirror` and `detach_key`, and
+  `edit_dotfiles` (a boolean) replaces `path_integration`.
 - Configure per host and per project, with project over host over global. A
   launch wrapper runs the agent inside any environment you name (a container, a
   nix or mise shell, a custom shell); per-host home, prediction, port range,

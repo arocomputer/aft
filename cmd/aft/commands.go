@@ -106,10 +106,11 @@ func cmdSetup(args []string) int {
 
 	// Decide how the PATH line reaches the shell. People who manage their
 	// dotfiles want to add it themselves, so ask rather than edit blindly.
-	if cfg.PathIntegration == "" && !*yes {
-		cfg.PathIntegration = choosePathIntegration()
+	if cfg.EditDotfiles == nil && !*yes {
+		b := chooseEditDotfiles()
+		cfg.EditDotfiles = &b
 	}
-	if cfg.EditDotfiles() {
+	if cfg.EditingDotfiles() {
 		changed, err := launcher.InstallShellBlock(&st)
 		if err != nil {
 			return fail(err)
@@ -134,9 +135,9 @@ func cmdSetup(args []string) int {
 	return 0
 }
 
-// choosePathIntegration asks whether aft should edit the shell config itself,
-// defaulting to manual when the shell config looks managed.
-func choosePathIntegration() string {
+// chooseEditDotfiles asks whether aft should edit the shell config itself,
+// defaulting to no when the shell config looks managed.
+func chooseEditDotfiles() bool {
 	def := 0
 	if launcher.DotfilesManaged() {
 		def = 1
@@ -145,10 +146,115 @@ func choosePathIntegration() string {
 		{Label: "Edit my shell config for me", Hint: "~/.zshrc or ~/.bashrc"},
 		{Label: "Show me the line, I manage my dotfiles", Hint: "chezmoi, stow, nix, a repo"},
 	}, def)
-	if i == 1 {
-		return "manual"
+	return i == 0
+}
+
+// cmdHost manages the hosts in config.toml. With no verb it lists them; add,
+// rm and default edit the [host.<name>] tables and default_host. These only
+// touch local config — removing a host leaves whatever is installed on it.
+func cmdHost(args []string) int {
+	cfg, err := config.Load()
+	if err != nil {
+		return fail(err)
 	}
-	return "edit"
+	verb := ""
+	if len(args) > 0 {
+		verb = args[0]
+		args = args[1:]
+	}
+	switch verb {
+	case "", "ls", "list":
+		if len(cfg.Hosts) == 0 {
+			fmt.Println("No hosts yet. Add one with: aft host add NAME SSH-DESTINATION")
+			return 0
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, n := range cfg.HostNames() {
+			mark := ""
+			if n == cfg.DefaultHost {
+				mark = "(default)"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", n, cfg.Hosts[n].SSH, mark)
+		}
+		w.Flush()
+		return 0
+
+	case "add":
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: aft host add NAME SSH-DESTINATION")
+			return 2
+		}
+		name, dest := args[0], args[1]
+		if _, ok := cfg.Hosts[name]; ok {
+			return fail(fmt.Errorf("host %q already exists; remove it first or edit config.toml", name))
+		}
+		cfg.Hosts[name] = config.HostConfig{SSH: dest}
+		if cfg.DefaultHost == "" {
+			cfg.DefaultHost = name
+		}
+		if err := config.Save(cfg); err != nil {
+			return fail(err)
+		}
+		fmt.Printf("Added host %s (%s). Installing the server…\n", name, dest)
+		h, _ := cfg.Host(name)
+		if err := transport.EnsureMaster(h); err != nil {
+			fmt.Fprintf(os.Stderr, "aft: saved, but could not connect yet: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Fix the SSH destination, then run: aft doctor --fix")
+			return 1
+		}
+		info, err := remote.Ensure(h)
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Printf("Server ready on %s (%s/%s).\n", name, info.OS, info.Arch)
+		if name == cfg.DefaultHost {
+			fmt.Printf("%s is your default host.\n", name)
+		}
+		return 0
+
+	case "rm", "remove":
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, "usage: aft host rm NAME")
+			return 2
+		}
+		name := args[0]
+		if _, ok := cfg.Hosts[name]; !ok {
+			return fail(fmt.Errorf("unknown host %q", name))
+		}
+		delete(cfg.Hosts, name)
+		if cfg.DefaultHost == name {
+			cfg.DefaultHost = ""
+			if rest := cfg.HostNames(); len(rest) > 0 {
+				cfg.DefaultHost = rest[0]
+			}
+		}
+		if err := config.Save(cfg); err != nil {
+			return fail(err)
+		}
+		fmt.Printf("Removed host %s from your config. Whatever Aft installed on it is left as is; run aft uninstall on that machine to clean it up.\n", name)
+		if cfg.DefaultHost != "" {
+			fmt.Printf("Default host is now %s.\n", cfg.DefaultHost)
+		}
+		return 0
+
+	case "default":
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, "usage: aft host default NAME")
+			return 2
+		}
+		name := args[0]
+		if _, ok := cfg.Hosts[name]; !ok {
+			return fail(fmt.Errorf("unknown host %q", name))
+		}
+		cfg.DefaultHost = name
+		if err := config.Save(cfg); err != nil {
+			return fail(err)
+		}
+		fmt.Printf("Default host is now %s.\n", name)
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "aft host: unknown verb %q (use: add, rm, default, or no verb to list)\n", verb)
+	return 2
 }
 
 func agentsIn(m map[string]string) []string {
@@ -654,7 +760,7 @@ func cmdDoctor(args []string) int {
 	switch {
 	case launcher.OnPath():
 		d.ok("launchers on PATH")
-	case cfg.EditDotfiles():
+	case cfg.EditingDotfiles():
 		d.repair("launchers not on PATH", "run aft setup", func() error {
 			if _, err := launcher.InstallShellBlock(&st); err != nil {
 				return err
