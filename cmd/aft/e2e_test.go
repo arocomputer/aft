@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -11,12 +12,16 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/vt"
 )
 
 // TestMain lets this test binary act as the aft executable, including as the
 // local server the client spawns, so a whole session runs in-process trees.
 func TestMain(m *testing.M) {
+	if os.Getenv("AFT_TEST_AS_AFT") == "1" && filepath.Base(os.Args[0]) == home.ServerName {
+		os.Exit(serverMain(os.Args[1:]))
+	}
 	if os.Getenv("AFT_TEST_AS_AFT") == "1" && len(os.Args) > 1 {
 		os.Exit(run(os.Args[1], os.Args[2:]))
 	}

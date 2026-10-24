@@ -1,1 +1,1 @@
-# ./x servers places server-<os>-<arch>.gz builds here; they are embedded into aft.
+# ./x servers places aft-server-<os>-<arch>.gz builds here; they are embedded into aft.

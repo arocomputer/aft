@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
@@ -65,7 +64,7 @@ var meant = map[string]string{
 // isCommand reports whether name is one of aft's commands.
 func isCommand(name string) bool {
 	switch name {
-	case serverCommand, "selftest":
+	case "selftest":
 		return true
 	}
 	for _, g := range commands {
@@ -142,10 +141,6 @@ func printUsage() {
 	fmt.Println("\n" + ui.Dim("In a project that is on, run claude, codex, opencode or pi exactly as before."))
 }
 
-// serverCommand runs the session server inside the aft binary, for sessions on
-// this machine (the host "local"). It cannot be a host's name.
-const serverCommand = transport.LocalServerCommand
-
 // version is set by the build.
 var version = "dev"
 
@@ -154,6 +149,9 @@ func main() {
 	base := filepath.Base(os.Args[0])
 	if bridge.IsShim(base) {
 		os.Exit(bridge.RunShim(os.Args[0], os.Args[1:]))
+	}
+	if base == home.ServerName {
+		os.Exit(serverMain(os.Args[1:]))
 	}
 	if home.Migrate() {
 		moveShellBlocks()
@@ -202,12 +200,6 @@ func run(cmd string, args []string) int {
 	case "version":
 		fmt.Println("aft", version)
 		return 0
-	case serverCommand:
-		self, err := os.Executable()
-		if err != nil {
-			return fail(err)
-		}
-		return session.Main([]string{self, serverCommand}, args, os.Stdin, os.Stdout, os.Stderr)
 	case "setup":
 		return cmdSetup(args)
 	case "host":
@@ -263,6 +255,12 @@ func run(cmd string, args []string) int {
 		ui.Hint("aft help lists the commands")
 	}
 	return 2
+}
+
+// serverMain runs the session server: aft started as aft-server is the server
+// for sessions on this machine, the same program a host runs as aft-server.
+func serverMain(args []string) int {
+	return session.Main(nil, args, os.Stdin, os.Stdout, os.Stderr)
 }
 
 // fail reports err on stderr and returns the exit code for a failed command.

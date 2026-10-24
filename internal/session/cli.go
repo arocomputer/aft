@@ -1,7 +1,8 @@
-// The server CLI: the commands the terminal runs over SSH to start, attach to
-// and manage sessions, plus clipboard-put for pasted files. It is built into
-// both the full aft binary (for local sessions) and the small server binary
-// that Aft installs on servers.
+// The aft-server CLI: the commands the terminal runs over SSH to start, attach
+// to and manage sessions, plus clipboard-put for pasted files. It is built
+// into both the small aft-server binary that Aft installs on hosts and the
+// full aft binary, which is aft-server when started under that name (for
+// sessions on this machine).
 
 package session
 
@@ -43,10 +44,10 @@ var Version = "dev"
 
 // Main runs a server subcommand with stdio attached to the caller. prefix is
 // how to invoke server subcommands again from a child process: the server
-// binary by itself, or the aft binary followed by "__server".
+// binary, or the aft binary, either started as aft-server.
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|udp|remains|setup|info|listeners|clipboard-put")
+		fmt.Fprintln(stderr, "usage: aft-server new|attach|serve|ls|end|udp|remains|setup|info|listeners|clipboard-put")
 		return 2
 	}
 	self, err := os.Executable()

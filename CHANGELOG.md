@@ -135,8 +135,10 @@ stays on your machine, and typing feels local.
 - `aft detach` (detaching follows the terminal), `aft clone` (`aft on` creates
   the directory; clone with git as a tool), `aft exec` (tools), `aft shell`
   (now `aft HOST`), and `aft ports` and `aft use`, now part of `aft status` and
-  `aft host`. The hidden local server command is now `aft __server`, so a host
-  can be called `server`.
+  `aft host`. The server binary is `aft-server`, as mosh's is `mosh-server`, at
+  `~/.local/share/aft/aft-server` on each host and in process lists; the aft
+  binary is the server when started under that name, so no hidden command
+  can clash with a host called `server`.
 
 - Workspaces, project records, `connect`, `open`, `run`, port watch, systemd and
   launchd services, migration, the picker and the dry-run uninstall.

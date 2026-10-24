@@ -13,7 +13,7 @@
 //
 //	~/.local/share/aft/
 //	  launchers/    you:   the agent launcher symlinks
-//	  server        host:  the installed server binary
+//	  aft-server    host:  the installed server binary
 //	  shims/        host:  the bridge shims (open, clipboard)
 //	  sessions/     host:  one record per running session
 //	  sockets/      host:  session, bridge and SSH connection sockets
@@ -67,7 +67,11 @@ func Data() string {
 func Launchers() string { return filepath.Join(Data(), "launchers") }
 
 // Server is the path of the installed server binary on a host.
-func Server() string { return filepath.Join(Data(), "server") }
+func Server() string { return filepath.Join(Data(), ServerName) }
+
+// ServerName is the server binary's name, on a host and in a process list, as
+// mosh-server is mosh's. The aft binary started under this name is the server.
+const ServerName = "aft-server"
 
 // Shims holds the bridge shims a session puts on the host's PATH: open and the
 // clipboard readers. It is separate from Launchers so an agent name on the host
@@ -187,9 +191,18 @@ func Migrate() (launchers bool) {
 	if old == Data() {
 		return false
 	}
+	// The server binary was called server before it was aft-server.
+	if _, err := os.Lstat(Server()); err != nil {
+		os.Rename(filepath.Join(Data(), "server"), Server())
+	} else {
+		os.Remove(filepath.Join(Data(), "server"))
+	}
 	busy := false
 	for _, n := range []string{"server", "launchers", "shims", "sessions", "sockets"} {
 		src, dst := filepath.Join(old, n), filepath.Join(Data(), n)
+		if n == "server" {
+			dst = Server()
+		}
 		fi, err := os.Lstat(src)
 		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
 			continue
@@ -219,9 +232,15 @@ func Migrate() (launchers bool) {
 		InstallShims(Server())
 	}
 	links := []string{"server", "shims", "sessions", "sockets"}
+	target := func(n string) string {
+		if n == "server" {
+			return Server()
+		}
+		return filepath.Join(Data(), n)
+	}
 	if busy {
 		for _, n := range links {
-			os.Symlink(filepath.Join(Data(), n), filepath.Join(old, n))
+			os.Symlink(target(n), filepath.Join(old, n))
 		}
 	} else if entries, _ := os.ReadDir(Sessions()); len(entries) == 0 {
 		for _, n := range links {
@@ -229,6 +248,10 @@ func Migrate() (launchers bool) {
 				os.Remove(filepath.Join(old, n))
 			}
 		}
+	} else if cur, err := os.Readlink(filepath.Join(old, "server")); err == nil && cur != Server() {
+		// A link left for older clients still names the binary's old name.
+		os.Remove(filepath.Join(old, "server"))
+		os.Symlink(Server(), filepath.Join(old, "server"))
 	}
 	return launchers
 }
