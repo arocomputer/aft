@@ -891,9 +891,13 @@ func request(id string, t proto.Type, payload []byte) (proto.Frame, error) {
 		return proto.Frame{}, err
 	}
 	wait := 5 * time.Second
-	if t == proto.ReqUDP {
+	if t == proto.ReqUDP || t == proto.Rename {
 		wait = time.Second // a session from an older server never answers
 	}
 	conn.SetReadDeadline(time.Now().Add(wait))
-	return proto.Read(bufio.NewReader(conn))
+	f, err := proto.Read(bufio.NewReader(conn))
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = fmt.Errorf("session %s did not answer; it may have been started by an older server, which a fresh session would not be", id)
+	}
+	return f, err
 }

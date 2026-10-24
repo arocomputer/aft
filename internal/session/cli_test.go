@@ -488,3 +488,29 @@ func TestTakeoverNamesTheMachine(t *testing.T) {
 		}
 	}
 }
+
+// TestMuteSessionIsExplained turns a request a session never answers, as one
+// from an older server does with a frame it does not know, into a sentence
+// rather than an I/O timeout.
+func TestMuteSessionIsExplained(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	ln, err := net.Listen("unix", SocketPath("t-mute"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // hold it open, say nothing
+		}
+	}()
+	err = Rename("t-mute", "t-loud")
+	if err == nil || !strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("got %v", err)
+	}
+}
