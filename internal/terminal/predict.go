@@ -1,4 +1,4 @@
-package client
+package terminal
 
 import (
 	"io"
@@ -194,7 +194,7 @@ func (p *Predictor) caret() (row, col int, drawn bool, ok bool) {
 }
 
 func (p *Predictor) predictText(r rune, now time.Time) {
-	if !p.shadow.InGround() || runewidth.RuneWidth(r) != 1 || p.shadow.Modes().AltScreen && false {
+	if !p.shadow.InGround() || runewidth.RuneWidth(r) != 1 {
 		p.caretValid = false
 		return
 	}

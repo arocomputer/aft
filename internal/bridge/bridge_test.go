@@ -8,7 +8,7 @@ import (
 
 	"encoding/json"
 
-	"github.com/arocomputer/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/bridge/proto"
 )
 
 // TestOpenURLRejectsNonHTTP ensures the bridge only opens web URLs, never an
@@ -16,11 +16,11 @@ import (
 func TestOpenURLRejectsNonHTTP(t *testing.T) {
 	for _, u := range []string{"ftp://x", "file:///etc/passwd", "vnc://x", "javascript:alert(1)"} {
 		req := proto.BridgeRequest{Kind: "open-url", Args: mustJSON(map[string]string{"url": u})}
-		if r := Handle(req); r.OK {
+		if r := Handle(req, true); r.OK {
 			t.Errorf("opened a non-web URL: %q", u)
 		}
 	}
-	if r := Handle(proto.BridgeRequest{Kind: "nope"}); r.OK || r.Error == "" {
+	if r := Handle(proto.BridgeRequest{Kind: "nope"}, true); r.OK || r.Error == "" {
 		t.Error("unknown kind should fail with a message")
 	}
 }
@@ -50,4 +50,14 @@ func TestClipboardReadsLocalTool(t *testing.T) {
 func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// TestClipboardReadNeedsPaste pins the privacy rule: outside the moments
+// right after the user pastes, the server cannot read the clipboard.
+func TestClipboardReadNeedsPaste(t *testing.T) {
+	for _, kind := range []string{"clipboard-get", "clipboard-types"} {
+		if r := Handle(proto.BridgeRequest{Kind: kind}, false); r.OK {
+			t.Errorf("%s served without a paste", kind)
+		}
+	}
 }

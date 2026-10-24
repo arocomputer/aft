@@ -13,13 +13,13 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/arocomputer/aft/internal/client"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
-	"github.com/arocomputer/aft/internal/remote"
 	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/session/install"
+	"github.com/arocomputer/aft/internal/terminal"
 	"github.com/arocomputer/aft/internal/ui"
 )
 
@@ -81,7 +81,7 @@ func cmdSetup(args []string) int {
 		if err := transport.EnsureMaster(h); err != nil {
 			return fail(err)
 		}
-		info, err := remote.Ensure(h)
+		info, err := install.Ensure(h)
 		if err != nil {
 			return fail(err)
 		}
@@ -198,7 +198,7 @@ func cmdHost(args []string) int {
 			fmt.Fprintln(os.Stderr, "Fix the SSH destination, then run: aft doctor --fix")
 			return 1
 		}
-		info, err := remote.Ensure(h)
+		info, err := install.Ensure(h)
 		if err != nil {
 			return fail(err)
 		}
@@ -337,7 +337,7 @@ func cmdOn(args []string) int {
 	if err := transport.EnsureMaster(h); err != nil {
 		return fail(err)
 	}
-	if _, err := remote.Ensure(h); err != nil {
+	if _, err := install.Ensure(h); err != nil {
 		return fail(err)
 	}
 	if !mounted {
@@ -429,7 +429,7 @@ func cmdClone(args []string) int {
 	if err := transport.EnsureMaster(h); err != nil {
 		return fail(err)
 	}
-	if _, err := remote.Ensure(h); err != nil {
+	if _, err := install.Ensure(h); err != nil {
 		return fail(err)
 	}
 	dir, err := resolveRemoteDir(h, config.DefaultRemoteDir(local))
@@ -484,7 +484,7 @@ func cmdShell(args []string) int {
 	if on {
 		opts.Dir = config.RemoteDir(root, p, cwd)
 	}
-	return client.Run(opts)
+	return terminal.Run(opts)
 }
 
 type hostSessions struct {
@@ -618,7 +618,7 @@ func cmdAttach(args []string) int {
 	}
 	opts.Host = h
 	opts.SessionID = id
-	return client.Run(opts)
+	return terminal.Run(opts)
 }
 
 // cmdControl ends a session or detaches its client.
@@ -825,15 +825,15 @@ func cmdDoctor(args []string) int {
 			continue
 		}
 		d.ok("connected (" + h.SSH + ")")
-		info, err := remote.Info(h)
+		info, err := install.Info(h)
 		switch {
 		case err != nil || info.Version == "":
-			d.repair("server not installed", "run aft setup", func() error { _, e := remote.Ensure(h); return e }, "installed the server")
+			d.repair("server not installed", "run aft setup", func() error { _, e := install.Ensure(h); return e }, "installed the server")
 		case !info.Shims:
-			d.repair("bridge shims missing", "run aft setup", func() error { _, e := remote.Ensure(h); return e }, "reinstalled the server")
+			d.repair("bridge shims missing", "run aft setup", func() error { _, e := install.Ensure(h); return e }, "reinstalled the server")
 		default:
-			if ok, e := remote.UpToDate(info); e == nil && !ok {
-				d.repair("server out of date ("+info.Version+")", "run aft setup", func() error { _, e := remote.Ensure(h); return e }, "updated the server")
+			if ok, e := install.UpToDate(info); e == nil && !ok {
+				d.repair("server out of date ("+info.Version+")", "run aft setup", func() error { _, e := install.Ensure(h); return e }, "updated the server")
 			} else {
 				d.ok("server ready (" + info.OS + "/" + info.Arch + ", " + info.Version + ")")
 			}
@@ -1033,7 +1033,7 @@ func cmdUninstall(args []string) int {
 	}
 	fmt.Println("This will:")
 	for _, n := range cfg.HostNames() {
-		fmt.Printf("  end Aft sessions and remove ~/.aft on %s\n", n)
+		fmt.Printf("  end Aft sessions and remove ~/.aft and pasted files on %s\n", n)
 	}
 	for _, b := range st.ShellBlocks {
 		fmt.Printf("  remove the aft block from %s\n", b.File)
@@ -1076,6 +1076,7 @@ func cmdUninstall(args []string) int {
 	if err := os.RemoveAll(home.Dir()); err != nil {
 		return fail(err)
 	}
+	os.RemoveAll(home.Temp()) // pasted files, if the local host received any
 	fmt.Printf("Removed %s.\n", home.Dir())
 	if self, err := os.Executable(); err == nil {
 		fmt.Printf("The aft binary itself is at %s; delete it however you installed it.\n", self)

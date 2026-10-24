@@ -6,12 +6,11 @@ import (
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/client"
-	"github.com/arocomputer/aft/internal/ports"
-	"github.com/arocomputer/aft/internal/proto"
-	"github.com/arocomputer/aft/internal/server"
+	"github.com/arocomputer/aft/internal/bridge/ports"
+	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/terminal"
 )
 
 // cmdSelftest is a guided, hands-on test harness. It runs everything on this
@@ -128,7 +127,7 @@ func runShell(startup string, predict bool, latency int, prefix byte) {
 	if startup != "" {
 		cmd = []string{"sh", "-c", startup + `; exec "${SHELL:-/bin/sh}"`}
 	}
-	client.Run(client.Options{
+	terminal.Run(terminal.Options{
 		Host:      transport.Local,
 		Command:   cmd,
 		Dir:       homeDir(),
@@ -175,7 +174,7 @@ Then press  Ctrl-]  then  d  to detach. The session keeps running.
 	fmt.Printf("\nStill running: %s. Reattaching now — your loop kept going.\n", id)
 	fmt.Println("Type  exit  (after Ctrl-C) to stop it and come back.")
 	pause()
-	client.Run(client.Options{Host: transport.Local, SessionID: id, Predict: true, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
+	terminal.Run(terminal.Options{Host: transport.Local, SessionID: id, Predict: true, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
 	pause()
 }
 
@@ -215,7 +214,7 @@ When the session closes, paste (Cmd+V / Ctrl+Shift+V) somewhere to check.
 }
 
 func selftestAgent(prefix byte) {
-	info := server.GatherInfo()
+	info := session.GatherInfo()
 	var found []string
 	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"} {
 		if _, ok := info.Agents[a]; ok {
@@ -239,7 +238,7 @@ func selftestAgent(prefix byte) {
 	}
 	fmt.Printf("\nRunning %s through aft. Everything it does runs on this machine.\nTry copy mode (Ctrl-] [) and the clipboard. Exit the agent to come back.\n", choice)
 	pause()
-	client.Run(client.Options{
+	terminal.Run(terminal.Options{
 		Host:    transport.Local,
 		Command: []string{choice},
 		Dir:     homeDir(),

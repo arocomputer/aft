@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/arocomputer/aft/internal/bridge"
 	"github.com/arocomputer/aft/internal/launcher"
-	"github.com/arocomputer/aft/internal/server"
+	"github.com/arocomputer/aft/internal/session"
 )
 
 const usage = `aft — your agents on your server, your terminal on your machine
@@ -41,10 +42,10 @@ In a project that is on, run claude, codex, opencode or pi exactly as before.
 var version = "dev"
 
 func main() {
-	server.Version = version
+	session.Version = version
 	base := filepath.Base(os.Args[0])
-	if server.IsShim(base) {
-		os.Exit(server.RunShim(os.Args[0], os.Args[1:]))
+	if bridge.IsShim(base) {
+		os.Exit(bridge.RunShim(os.Args[0], os.Args[1:]))
 	}
 	// Invoked under an agent's name (via a launcher symlink), run that agent
 	// on the server; invoked as aft (or a dev build whose name starts with
@@ -72,7 +73,7 @@ func run(cmd string, args []string) int {
 		if err != nil {
 			return fail(err)
 		}
-		return server.Main([]string{self, "server"}, args, os.Stdin, os.Stdout, os.Stderr)
+		return session.Main([]string{self, "server"}, args, os.Stdin, os.Stdout, os.Stderr)
 	case "setup":
 		return cmdSetup(args)
 	case "host":

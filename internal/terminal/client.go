@@ -1,8 +1,9 @@
-// Package client is the Aft terminal client. It runs on the user's machine,
+// Package terminal is the part of Aft on the user's machine, one of its three
+// parts beside the session and the bridge. It runs in the user's terminal,
 // attaches to a session on a server, passes the application's output through
 // to the real terminal, predicts typed characters so typing feels local, and
 // reconnects when the connection drops.
-package client
+package terminal
 
 import (
 	"bufio"
@@ -22,11 +23,11 @@ import (
 	"golang.org/x/term"
 
 	"github.com/arocomputer/aft/internal/bridge"
+	"github.com/arocomputer/aft/internal/bridge/ports"
+	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/ports"
-	"github.com/arocomputer/aft/internal/proto"
-	"github.com/arocomputer/aft/internal/remote"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/session/install"
 	"github.com/arocomputer/aft/internal/vt"
 )
 
@@ -78,7 +79,7 @@ func Run(o Options) int {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 		return 1
 	}
-	if _, err := remote.Ensure(o.Host); err != nil {
+	if _, err := install.Ensure(o.Host); err != nil {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 		return 1
 	}
@@ -151,9 +152,10 @@ type session struct {
 	prefixPending bool      // the prefix key was pressed; the next key is a command
 	awaitSnap     bool      // a snapshot was requested to open copy mode
 
-	holding bool              // a pasted file is uploading; input is held
-	held    []Token           // keys typed during the upload, sent after it
-	uploads chan uploadResult // finished paste uploads (upload.go)
+	holding  bool              // a pasted file is uploading; input is held
+	held     []Token           // keys typed during the upload, sent after it
+	uploads  chan uploadResult // finished paste uploads (paste.go)
+	pastedAt time.Time         // last paste or paste key; opens clipboard reads
 }
 
 // open starts or attaches to the session and performs the handshake.
@@ -391,6 +393,7 @@ func (c *session) handleKeys(toks []Token) bool {
 			// Draw the local prediction first, so your echo is never delayed by
 			// a slow or congested link, then forward the keystroke.
 			c.pred.Key(t)
+			c.notePaste(t)
 			if t.Kind == TokPaste && c.startUpload(t) {
 				continue
 			}
@@ -510,8 +513,9 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 	case proto.BridgeReq:
 		var req proto.BridgeRequest
 		if json.Unmarshal(f.Payload, &req) == nil {
+			ok := c.clipboardOK()
 			go func() {
-				resp := bridge.Handle(req)
+				resp := bridge.Handle(req, ok)
 				b, _ := json.Marshal(resp)
 				c.send(proto.BridgeReply, b)
 			}()

@@ -14,8 +14,8 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/transport"
 )
 
 // DefaultAgents are the launchers setup creates when they are installed.

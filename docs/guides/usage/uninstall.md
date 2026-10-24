@@ -12,7 +12,9 @@ aft uninstall
 
 After confirming, Aft:
 
-1. Ends its sessions and removes `~/.aft` on every configured server.
+1. Ends its sessions and removes `~/.aft` on every configured server, along
+   with any files you pasted into a session (see
+   [Sessions](sessions.md#copy-and-paste)).
 2. Removes the `# >>> aft >>>` block from each shell file it edited, but only if
    the block is still exactly what Aft wrote. An edited block is left in place
    and reported for you to remove by hand. The fish drop-in file is deleted.

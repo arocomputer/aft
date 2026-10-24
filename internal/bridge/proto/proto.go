@@ -36,7 +36,6 @@ const (
 const (
 	Output    Type = 0x11 // terminal output bytes from the application
 	Exit      Type = 0x12 // the application exited; payload is a JSON ExitInfo
-	Title     Type = 0x13 // reserved: session-set title
 	BridgeReq Type = 0x14 // a shim on the server needs the client; JSON BridgeRequest
 	Listeners Type = 0x15 // listening TCP ports on the server, uint16 each
 	Hello     Type = 0x16 // sent on attach; JSON HelloInfo
@@ -44,6 +43,7 @@ const (
 	Detached  Type = 0x18 // another client took over, or aft detach was run
 	Error     Type = 0x19 // human-readable error text; the connection then closes
 	Snapshot  Type = 0x1a // gob-encoded vt.SnapshotData, answering ReqSnapshot
+	// 0x13 was a reserved title frame and is retired; do not reuse it.
 )
 
 // MaxPayload bounds a single frame.
@@ -75,7 +75,7 @@ type ExitInfo struct {
 // BridgeRequest asks the client to do something on the user's machine.
 type BridgeRequest struct {
 	ID   uint32          `json:"id"`
-	Kind string          `json:"kind"` // "open-url", "clipboard-get"
+	Kind string          `json:"kind"` // "open-url", "clipboard-get", "clipboard-types"
 	Args json.RawMessage `json:"args,omitempty"`
 }
 

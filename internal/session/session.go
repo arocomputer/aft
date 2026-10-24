@@ -1,4 +1,5 @@
-// Package session keeps one application running on the server inside a
+// Package session is the part of Aft on the server, one of its three parts
+// beside the terminal and the bridge. It keeps one application running inside a
 // pseudo-terminal, tracks its screen, and lets one client at a time attach to
 // it. It is Aft's replacement for tmux: it has no appearance of its own, passes
 // bytes through untouched while a client is attached, answers the terminal's
@@ -25,8 +26,8 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/arocomputer/aft/internal/bridge/proto"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/proto"
 	"github.com/arocomputer/aft/internal/vt"
 )
 

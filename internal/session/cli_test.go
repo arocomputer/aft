@@ -1,20 +1,18 @@
-package server
+package session
 
 import (
 	"bufio"
 	"encoding/json"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/arocomputer/aft/internal/proto"
-	"github.com/arocomputer/aft/internal/session"
+	"github.com/arocomputer/aft/internal/bridge/proto"
 )
 
-// TestMain lets the test binary act as the server executable, so session.Start
+// TestMain lets the test binary act as the server executable, so Start
 // can spawn real detached sessions during tests.
 func TestMain(m *testing.M) {
 	if os.Getenv("AFT_TEST_AS_SERVER") == "1" {
@@ -44,7 +42,7 @@ type conn struct {
 
 func attach(t *testing.T, id string, cols, rows int) *conn {
 	t.Helper()
-	c, err := net.Dial("unix", session.SocketPath(id))
+	c, err := net.Dial("unix", SocketPath(id))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +90,11 @@ func TestSessionLifecycle(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
 	serverCmd := []string{self}
-	o := session.Options{ID: "t-shell", Command: []string{"sh", "-c", `printf 'ready> '; read line; printf 'got:%s\n' "$line"; read again`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := session.Start(serverCmd, o); err != nil {
+	o := Options{ID: "t-shell", Command: []string{"sh", "-c", `printf 'ready> '; read line; printf 'got:%s\n' "$line"; read again`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start(serverCmd, o); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Control("t-shell", proto.End)
+	defer Control("t-shell", proto.End)
 
 	c := attach(t, "t-shell", 40, 10)
 	if f := c.read(t); f.Type != proto.Hello {
@@ -106,7 +104,7 @@ func TestSessionLifecycle(t *testing.T) {
 	proto.Write(c.c, proto.Input, []byte("hello\r"))
 	c.collect(t, "got:hello")
 
-	list, err := session.List()
+	list, err := List()
 	if err != nil || len(list) != 1 || list[0].ID != "t-shell" {
 		t.Fatalf("list %+v %v", list, err)
 	}
@@ -114,7 +112,7 @@ func TestSessionLifecycle(t *testing.T) {
 	// Drop the connection: the session must survive.
 	c.c.Close()
 	time.Sleep(100 * time.Millisecond)
-	if list, _ := session.List(); len(list) != 1 {
+	if list, _ := List(); len(list) != 1 {
 		t.Fatal("session died with its client")
 	}
 
@@ -145,7 +143,7 @@ func TestSessionLifecycle(t *testing.T) {
 		}
 	}
 	time.Sleep(100 * time.Millisecond)
-	if list, _ := session.List(); len(list) != 0 {
+	if list, _ := List(); len(list) != 0 {
 		t.Fatalf("session still listed: %+v", list)
 	}
 }
@@ -157,11 +155,11 @@ func TestDetachedQueriesAreAnswered(t *testing.T) {
 	self, _ := os.Executable()
 	// The program asks for the cursor position and prints the reply it gets.
 	script := `stty raw -echo; printf '\033[6n'; reply=$(head -c 6 | tr -d '\033'); stty sane; printf 'reply=%s\n' "$reply"; sleep 30`
-	o := session.Options{ID: "t-query", Command: []string{"sh", "-c", script}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := session.Start([]string{self}, o); err != nil {
+	o := Options{ID: "t-query", Command: []string{"sh", "-c", script}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Control("t-query", proto.End)
+	defer Control("t-query", proto.End)
 	time.Sleep(300 * time.Millisecond) // the query happens with no client
 	c := attach(t, "t-query", 40, 10)
 	c.read(t) // hello
@@ -176,11 +174,11 @@ func TestDetachedQueriesAreAnswered(t *testing.T) {
 func TestSecondClientTakesOver(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
-	o := session.Options{ID: "t-two", Command: []string{"sh", "-c", "printf 'x> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
-	if err := session.Start([]string{self}, o); err != nil {
+	o := Options{ID: "t-two", Command: []string{"sh", "-c", "printf 'x> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Control("t-two", proto.End)
+	defer Control("t-two", proto.End)
 	a := attach(t, "t-two", 40, 10)
 	a.read(t)
 	a.collect(t, "x>")
@@ -200,69 +198,23 @@ func TestSecondClientTakesOver(t *testing.T) {
 	}
 }
 
-// TestShimPassthroughOutsideSession checks a shim without a session falls back
-// to the real command rather than failing.
-func TestShimPassthroughOutsideSession(t *testing.T) {
-	isolate(t)
-	t.Setenv("AFT_BRIDGE", "")
-	if !IsShim("/x/.aft/shims/xdg-open") || IsShim("/usr/bin/server") {
-		t.Fatal("shim detection")
-	}
-}
-
-// TestOpenShimSendsBridgeRequest checks the `open` shim turns a URL into an
-// open-url bridge request to the session's bridge socket.
-func TestOpenShimSendsBridgeRequest(t *testing.T) {
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "b.sock")
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	got := make(chan proto.BridgeRequest, 1)
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer c.Close()
-		var req proto.BridgeRequest
-		json.NewDecoder(c).Decode(&req)
-		got <- req
-		json.NewEncoder(c).Encode(proto.BridgeResponse{ID: req.ID, OK: true})
-	}()
-	t.Setenv("AFT_BRIDGE", sock)
-	if code := RunShim("/x/bridge/open", []string{"https://example.com/login"}); code != 0 {
-		t.Fatalf("shim exit %d", code)
-	}
-	select {
-	case req := <-got:
-		if req.Kind != "open-url" || !strings.Contains(string(req.Args), "example.com/login") {
-			t.Fatalf("wrong request: %s %s", req.Kind, req.Args)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("no bridge request received")
-	}
-}
-
 // TestWrapperWrapsCommand checks a configured wrapper runs the agent inside it:
 // the wrapper writes a marker, then execs the command, and the session shows
 // both. This is the knob that lets users bring their own environment.
 func TestWrapperWrapsCommand(t *testing.T) {
 	isolate(t)
 	self, _ := os.Executable()
-	o := session.Options{
+	o := Options{
 		ID:      "t-wrap",
 		Command: []string{"sh", "-c", "echo COMMAND-RAN; sleep 30"},
 		Wrapper: []string{"sh", "-c", `echo WRAPPER-RAN; exec "$@"`, "sh"},
 		Dir:     t.TempDir(),
 		Cols:    40, Rows: 10,
 	}
-	if err := session.Start([]string{self}, o); err != nil {
+	if err := Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Control("t-wrap", proto.End)
+	defer Control("t-wrap", proto.End)
 	c := attach(t, "t-wrap", 40, 10)
 	c.read(t) // hello
 	out := c.collect(t, "COMMAND-RAN")

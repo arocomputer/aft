@@ -71,16 +71,25 @@ owns the screen, the selection and the clipboard; aft does not get in the way.
   and agents treat it as pasted text rather than typed keystrokes.
 - **Paste a file.** Drag a file into the terminal, or copy it in Finder and
   paste, and the terminal pastes its local path. When a paste is nothing but
-  paths to files on your machine, aft uploads them to `~/.aft/drop` on the
-  server over the existing connection and pastes the server paths instead, so
-  the agent can open a screenshot, recording or document. The window title
-  shows the upload; keys you type meanwhile are sent after it, in order.
-  Uploads older than a week are removed. A paste of ordinary text, or of a
-  path that does not exist on your machine, is sent unchanged.
+  paths to files on your machine, aft uploads them over the existing
+  connection and pastes the server paths instead, so the agent can open a
+  screenshot, recording or document. The window title shows the upload; keys
+  you type meanwhile are sent after it, in order. A paste of ordinary text, or
+  of a path that does not exist on your machine, is sent unchanged.
+
+  Pasted files are temporary. They go in a private `aft-<uid>/clipboard`
+  directory in the server's temporary space: `/var/tmp` on Linux, which is on
+  disk and survives a reboot, and your own temporary directory on macOS,
+  which only you can read. Aft removes them after a week, the system may
+  clear them sooner (macOS after three days unused), and `aft uninstall`
+  removes them.
 - **Copy from the agent.** When the agent or a tool on the server copies to the
   clipboard with the OSC 52 escape, aft sets your laptop clipboard directly,
-  so it works even when your terminal blocks OSC 52 by default. Reading your
-  clipboard from the server is not allowed unless you turn it on.
+  so it works even when your terminal blocks OSC 52 by default.
+- **Paste an image.** Agents paste an image by reading the clipboard when you
+  press Ctrl-V. The server may read your laptop clipboard only in the few
+  seconds after you paste or press Ctrl-V; at any other time the read is
+  refused, so nothing on the server can watch your clipboard.
 - **Scrollback.** For ordinary command output your terminal keeps the history
   and scrolls as usual. A full-screen agent draws its own screen, so scrolling
   is the application's, reached with its keys or the mouse wheel. For history
@@ -113,9 +122,9 @@ Ctrl-] then `d` leaves the session running.
 Inside a session, `~/.aft/shims` on the host comes first on `PATH` and
 provides `open`, `xdg-open`, `pbpaste`, `wl-paste`, `xclip` and `xsel`. When
 the application opens an `http` or `https` URL, such as a login page, it opens
-in your local browser. When it reads the clipboard, for example to paste an
-image, it gets your local clipboard. Anything else is passed to the real
-command on the server.
+in your local browser. When it reads the clipboard right after you paste, for
+example to paste an image, it gets your local clipboard. Anything else is
+passed to the real command on the server.
 
 Remote commands run with your full permissions on the server. An agent's
 sandbox protects only the machine it runs on.

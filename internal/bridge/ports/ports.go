@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 )
 
 // Range is an inclusive port range.

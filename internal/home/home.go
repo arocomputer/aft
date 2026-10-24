@@ -1,5 +1,6 @@
-// Package home locates Aft's private directory on either machine. Everything
-// Aft writes lives under it, which is what makes uninstall exact. The layout:
+// Package home locates the directories Aft writes on either machine. Aft
+// writes only these and the recorded shell block, which is what makes
+// uninstall exact. Its own directory, Dir, holds:
 //
 //	~/.aft/
 //	  config.toml   you:   hosts and preferences
@@ -10,11 +11,19 @@
 //	  sessions/     host:  one record per running session
 //	  sockets/      host:  session and bridge sockets
 //	  logs/         host:  per-session logs
+//
+// Disposable files, such as pasted files, go to Temp instead, in the
+// platform's temporary directory.
 package home
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
 )
 
 // Dir returns $AFT_HOME, or ~/.aft.
@@ -49,9 +58,61 @@ func Sockets() string { return filepath.Join(Dir(), "sockets") }
 // Logs holds per-session logs on a host.
 func Logs() string { return filepath.Join(Dir(), "logs") }
 
-// Drops holds files pasted from the machine you type on, one directory per
-// upload, so a pasted local path can be replaced by a path on the host.
-func Drops() string { return filepath.Join(Dir(), "drop") }
+// Temp is Aft's private directory for disposable files, such as files pasted
+// from the machine you type on. It is not under Dir: it lives where each
+// platform keeps larger temporary files. On macOS that is the per-user
+// temporary directory, which only you can read and which the system clears
+// of files unused for three days; over SSH $TMPDIR is often unset, so it is
+// asked of the system. On Linux it is $TMPDIR when set, else /var/tmp, which
+// is on disk (/tmp is often memory), survives reboots and is cleaned by the
+// system after about a month. The aft-<uid> name keeps users apart in a
+// shared directory; EnsureTemp creates it safely. With AFT_HOME set (tests,
+// the selftest) it is $AFT_HOME/tmp, so nothing leaves the throwaway home.
+func Temp() string {
+	if d := os.Getenv("AFT_HOME"); d != "" {
+		return filepath.Join(d, "tmp")
+	}
+	return filepath.Join(tempRoot(), fmt.Sprintf("aft-%d", os.Getuid()))
+}
+
+func tempRoot() string {
+	if d := os.Getenv("TMPDIR"); d != "" {
+		return d
+	}
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("getconf", "DARWIN_USER_TEMP_DIR").Output(); err == nil {
+			if d := strings.TrimSpace(string(out)); d != "" {
+				return d
+			}
+		}
+		return "/tmp"
+	}
+	return "/var/tmp"
+}
+
+// EnsureTemp creates Temp with private permissions and returns it. Because
+// the parent may be shared by every user, it refuses a path that is a
+// symlink or belongs to someone else instead of writing into it.
+func EnsureTemp() (string, error) {
+	d := Temp()
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		return "", err
+	}
+	fi, err := os.Lstat(d)
+	if err != nil {
+		return "", err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() {
+		return "", fmt.Errorf("%s is not a directory owned by you; remove it and try again", d)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		if err := os.Chmod(d, 0o700); err != nil {
+			return "", err
+		}
+	}
+	return d, nil
+}
 
 // ShimNames are the commands a session intercepts on the host so a remote
 // application can reach the machine you are typing on.

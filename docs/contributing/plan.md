@@ -361,17 +361,21 @@ ported. These principles carry over from the current code:
 - reaping owned child processes
 - fake-executable tests
 
+Three parts, terminal, session and bridge, plus supporting packages:
+
 ```
-cmd/aft/             CLI dispatch, argv0 launcher entry
-internal/config/     config, aft.toml, state
-internal/ssh/        OpenSSH master, channels, forwards, server install
-internal/vt/         shared terminal emulation wrapper around the chosen library
-internal/client/     passthrough, shadow screen, prediction, reconnect, title
-internal/session/     server sessions: pty, emulator, scrollback, query answering, reattach
-internal/server/     server entry: session control, shims, listeners
-internal/launcher/   shims, on/off decision, shell block install and removal
-internal/bridge/     local open-URL and clipboard
-internal/ports/      mirror
+internal/terminal/          on your machine: passthrough, shadow screen, prediction, reconnect, pasting, copy mode
+internal/session/           on the server: pty, emulator, scrollback, query answering, reattach, server CLI, listeners
+internal/session/install/   embedded server builds and their install on a host
+internal/bridge/            between the two: clipboard (copy, read on paste, pasted files), open-URL, shims
+internal/bridge/transport/  OpenSSH master, channels, forwards
+internal/bridge/proto/      frames between terminal and session
+internal/bridge/ports/      port mirror
+cmd/aft/                    CLI dispatch, argv0 launcher entry
+internal/config/            config, aft.toml, state
+internal/vt/                shared terminal emulation
+internal/launcher/          on/off decision, shell block install and removal
+internal/home/              where Aft writes on each machine
 ```
 
 Removed from the current code entirely:

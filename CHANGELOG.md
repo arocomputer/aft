@@ -25,7 +25,8 @@ stays on your machine, and typing feels local.
   adds a marked PATH block to the shell config. `aft uninstall` removes all of
   it, on every machine, and leaves edited blocks alone.
 - Bridges: URLs opened on the server open in the local browser; the local
-  clipboard, including images, is readable from the server through shims.
+  clipboard, including images, is readable from the server through shims,
+  only in the seconds after you paste or press Ctrl-V.
 - Copy mode: the prefix (Ctrl-] by default) then `[` opens a scrollback pager in
   the client over a snapshot from the server, with keyboard scroll, search and
   selection that copies to the local clipboard, and native drag-select.
@@ -42,12 +43,11 @@ stays on your machine, and typing feels local.
 - `aft selftest`, opened with `./x try`, is a guided, isolated harness to try
   typing feel, reattach,
   copy mode, the clipboard and a real agent, with no SSH or setup.
-- - A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
-  even when the terminal blocks OSC 52. Clipboard reads from the server stay
-  off by default.
-- Pasting or dragging a local file into the terminal uploads it to the server
-  and pastes the server path, so agents can open pasted screenshots,
-  recordings and documents.
+- A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
+  even when the terminal blocks OSC 52.
+- Pasting or dragging a local file into the terminal uploads it to the
+  server's temporary directory and pastes the server path, so agents can open
+  pasted screenshots, recordings and documents.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
 - `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,

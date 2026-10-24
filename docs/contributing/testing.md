@@ -13,16 +13,16 @@ a build. Tests need no server and no credentials.
   on output recorded from Claude Code, Codex, opencode, pi and a shell.
   Recordings live in `internal/vt/testdata`; regenerate them with a pseudo-
   terminal harness when agents change materially.
-- **Input tokenizer** (`internal/client`): escape sequences, bracketed paste,
+- **Input tokenizer** (`internal/terminal`): escape sequences, bracketed paste,
   multibyte characters and split sequences are never mistaken for typed text,
   and every byte is forwarded in order.
-- **Prediction** (`internal/client`): a typed character is visible before the
+- **Prediction** (`internal/terminal`): a typed character is visible before the
   echo and the echo leaves the screen as if nothing had been predicted; the
   cursor is restored before server output; a prediction the server never
   confirms is repainted and lowers confidence; Backspace undoes a prediction;
   the drawn caret used by pi moves correctly; passthrough is exact when
   prediction is off.
-- **session** (`internal/server`): a real detached session is started, typed
+- **Session** (`internal/session`): a real detached session is started, typed
   into, dropped, reattached at a new size with a repaint carrying earlier
   output, and ended with an Exit frame. A detached application's cursor-position
   query is answered. A second client takes over and the first is told.
@@ -32,12 +32,14 @@ a build. Tests need no server and no credentials.
   shell is alive. Detach from another terminal and reattach with `aft attach`.
   A shell prints a marker that scrolls off, the prefix opens copy mode, `g`
   jumps to the top, and the marker is back on screen with the status bar.
-- **Prediction timing** (`internal/client`): a predicted character is written
+- **Prediction timing** (`internal/terminal`): a predicted character is written
   before `Key` returns, so typing is drawn at local speed with no wait on the
   network.
-- **Bridges** (`internal/bridge`, `internal/server`): the open-url bridge
-  rejects non-web schemes; the clipboard reader runs the local tool; and the
-  `open` shim turns a URL into an open-url request on the session bridge socket.
+- **Bridge** (`internal/bridge`): the open-url bridge rejects non-web schemes;
+  the clipboard reader runs the local tool, and only right after a paste; the
+  `open` shim turns a URL into an open-url request on the session bridge
+  socket; a pasted list of local files is recognized while ordinary text is
+  left alone; and a stored pasted file stays private and is pruned after a week.
 
 ## The guided self-test
 

@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/remote"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/session/install"
 	"github.com/arocomputer/aft/internal/ui"
 )
 
@@ -345,7 +345,7 @@ func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool)
 			fmt.Fprintln(os.Stderr, "aft:", err)
 			return "", "", false
 		}
-		if _, err := remote.Ensure(h); err != nil {
+		if _, err := install.Ensure(h); err != nil {
 			fmt.Fprintln(os.Stderr, "aft:", err)
 			return "", "", false
 		}

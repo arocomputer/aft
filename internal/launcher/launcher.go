@@ -14,12 +14,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/arocomputer/aft/internal/client"
+	"github.com/arocomputer/aft/internal/bridge/ports"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/ports"
 	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/terminal"
 )
 
 // PassEnv are variables that always cross to the server.
@@ -64,7 +64,7 @@ func Launch(name string, args []string) int {
 		fmt.Fprintf(os.Stderr, "aft: reattaching to %s (aft end %s for a fresh one)\n", id, id)
 		opts.SessionID = id
 	}
-	return client.Run(opts)
+	return terminal.Run(opts)
 }
 
 // existingSession returns the id of a session running the same agent in the
@@ -88,7 +88,7 @@ func existingSession(h transport.Host, name, dir string) string {
 
 // SessionOptions builds client options for a project, resolving settings from
 // the global config, the host, and the project's aft.toml.
-func SessionOptions(cfg config.Config, host, root string, p config.Project) (client.Options, error) {
+func SessionOptions(cfg config.Config, host, root string, p config.Project) (terminal.Options, error) {
 	var repo *config.RepoConfig
 	if root != "" {
 		if r, _, ok := config.LoadRepo(root); ok {
@@ -98,17 +98,17 @@ func SessionOptions(cfg config.Config, host, root string, p config.Project) (cli
 	s := cfg.Resolve(host, repo)
 	rng, err := ports.ParseRange(s.Ports)
 	if err != nil {
-		return client.Options{}, err
+		return terminal.Options{}, err
 	}
 	detach, err := config.DetachByte(cfg.DetachKey)
 	if err != nil {
-		return client.Options{}, err
+		return terminal.Options{}, err
 	}
 	prefix, err := cfg.PrefixKey()
 	if err != nil {
-		return client.Options{}, err
+		return terminal.Options{}, err
 	}
-	return client.Options{
+	return terminal.Options{
 		Env:       Environment(s.Env),
 		Wrapper:   s.Wrapper,
 		Predict:   s.Predict,

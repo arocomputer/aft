@@ -1,8 +1,8 @@
-// Package remote installs and verifies the server on a host. The aft binary
+// Package install puts the session server on a host. The aft binary
 // embeds a server build for each supported host platform; Ensure uploads the
 // right one when the host has none or has a different one. A match is decided
 // by hashing the installed binary live, so no version file is kept on the host.
-package remote
+package install
 
 import (
 	"bytes"
@@ -15,8 +15,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/server"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/bridge/transport"
+	"github.com/arocomputer/aft/internal/session"
 )
 
 // Server binaries are placed here by ./x servers as gzipped server-<os>-<arch>
@@ -70,7 +70,7 @@ func Platform(uname string) (goos, goarch string, err error) {
 // UpToDate reports whether the server already installed on a host is the same
 // build this aft carries, by comparing the host-reported hash of its running
 // binary to the hash of the embedded blob. It contacts no host of its own.
-func UpToDate(info server.Info) (bool, error) {
+func UpToDate(info session.Info) (bool, error) {
 	blob, err := Blob(info.OS, info.Arch)
 	if err != nil {
 		return false, err
@@ -80,10 +80,10 @@ func UpToDate(info server.Info) (bool, error) {
 }
 
 // Info runs the server's info command on the host.
-func Info(h transport.Host) (server.Info, error) {
-	var info server.Info
+func Info(h transport.Host) (session.Info, error) {
+	var info session.Info
 	if h.IsLocal() {
-		return server.GatherInfo(), nil
+		return session.GatherInfo(), nil
 	}
 	out, err := transport.Output(h, nil, "info")
 	if err != nil {
@@ -94,21 +94,21 @@ func Info(h transport.Host) (server.Info, error) {
 
 // Ensure installs or updates the server on the host and prepares it. It returns
 // the server's info afterwards. Local hosts need nothing.
-func Ensure(h transport.Host) (server.Info, error) {
+func Ensure(h transport.Host) (session.Info, error) {
 	if h.IsLocal() {
-		return server.GatherInfo(), nil
+		return session.GatherInfo(), nil
 	}
 	uname, err := transport.RunRaw(h, nil, "uname -sm")
 	if err != nil {
-		return server.Info{}, fmt.Errorf("reach %s: %w", h.Dest(), err)
+		return session.Info{}, fmt.Errorf("reach %s: %w", h.Dest(), err)
 	}
 	goos, goarch, err := Platform(string(uname))
 	if err != nil {
-		return server.Info{}, err
+		return session.Info{}, err
 	}
 	blob, err := Blob(goos, goarch)
 	if err != nil {
-		return server.Info{}, err
+		return session.Info{}, err
 	}
 	sum := sha256.Sum256(blob)
 	want := hex.EncodeToString(sum[:])
@@ -122,7 +122,7 @@ func Ensure(h transport.Host) (server.Info, error) {
 	dst := transport.RemoteServer()
 	script := "mkdir -p " + dir + " && cat > " + dst + ".new && chmod 700 " + dst + ".new && mv -f " + dst + ".new " + dst + " && " + transport.RemotePrefix() + dst + " setup"
 	if _, err := transport.RunRaw(h, bytes.NewReader(blob), script); err != nil {
-		return server.Info{}, fmt.Errorf("install server on %s: %w", h.Dest(), err)
+		return session.Info{}, fmt.Errorf("install server on %s: %w", h.Dest(), err)
 	}
 	return Info(h)
 }

@@ -14,31 +14,41 @@ Read [the design](docs/contributing/plan.md) before changing architecture.
 
 ## Code map
 
+Aft has three parts. Keep new code inside one of them.
+
+- `internal/terminal` is the part on the user's machine: input tokenizer,
+  prediction, passthrough, reconnect, pasting (paste.go) and copy mode (the
+  scrollback pager, in copymode.go).
+- `internal/session` is the part on the server: one application in a
+  pseudo-terminal, one client attached at a time, repaint on reattach, the
+  server CLI (cli.go), and relaying bridge requests. `internal/session/install`
+  embeds the server build for each platform and installs it on a host.
+- `internal/bridge` is everything that crosses between the two apart from
+  the terminal stream: the clipboard in all three directions (copy from the
+  server, read on paste, pasted files), opening URLs, and the server-side
+  shims. `bridge/transport` reaches a host through the user's OpenSSH with a
+  shared master connection, or runs the server locally for the reserved host
+  `local`; `bridge/proto` frames bytes between terminal and session;
+  `bridge/ports` mirrors listening ports.
+
+Supporting packages, not parts of their own:
+
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
-  invoked under an agent's name. `cmd/server` is the server binary, cross-compiled per platform into `internal/remote/embed` (gzipped) and carried inside aft for install (there is no standalone server binary).
-- `internal/vt` is the terminal emulator both sides use: the client's shadow
+  invoked under an agent's name. `cmd/server` is the server binary,
+  cross-compiled per platform into `internal/session/install/embed` (gzipped)
+  and carried inside aft for install. `cmd/aft/selftest.go` is the guided
+  hands-on harness, isolated in a throwaway home.
+- `internal/vt` is the terminal emulator both sides use: the terminal's shadow
   screen and the session's detached screen. It renders a screen back to escape
   sequences and answers terminal queries.
-- `internal/session` runs one application in a pseudo-terminal on the host,
-  attaches one client at a time, repaints on reattach, and relays bridge
-  requests. `internal/server` is the server CLI around it plus the bridge shims.
-- `internal/client` is the terminal client: input tokenizer, prediction,
-  passthrough, reconnect, bridges, port mirroring, and copy mode (the
-  scrollback pager, in copymode.go). `cmd/aft/selftest.go` is the guided
-  hands-on harness, isolated in a throwaway home.
-- `internal/transport` reaches a host through the user's OpenSSH with a shared
-  master connection, or runs the server locally for the reserved host `local`.
-- `internal/remote` embeds and installs the server. `internal/launcher` owns
-  launchers, the on/off decision and the shell PATH block. `internal/config` reads
-  settings and state. `internal/bridge` and `internal/ports` are the local
-  sides of URL opening, clipboard and port mirroring.
+- `internal/launcher` owns launchers, the on/off decision and the shell PATH
+  block. `internal/home` locates every directory Aft writes.
 - `internal/ui` holds raw-mode interactive prompts for setup and config. It
   never uses a TUI framework, because Bubble Tea probes the terminal on import,
   which would corrupt the session client that shares it.
 - `internal/config` resolves settings as project over host over global, and
   carries the launch wrapper that lets a user run the agent inside any
   environment (a container, a nix or mise shell).
-- `internal/proto` is the framed protocol between client and session.
 
 Tests live beside the code. The server and end-to-end tests spawn the test
 binary itself as the server and drive the client under a real pseudo-terminal.
@@ -56,8 +66,10 @@ binary itself as the server and drive the client under a real pseudo-terminal.
   captures the mouse, so native selection still works.
 - Sessions survive a lost client. Aft never stops a session on its own.
 - Only allowlisted environment variables cross to the server.
-- Everything Aft writes lives under `~/.aft` on each machine plus the recorded
-  shell block, and `aft uninstall` removes exactly that.
+- Aft writes only the directories `internal/home` names on each machine (its
+  own directory, and a private `aft-<uid>` directory in the platform's
+  temporary space for disposable files such as pasted files) plus the
+  recorded shell block, and `aft uninstall` removes exactly that.
 - Aft installs nothing but its own server, edits nothing but the shell block,
   and never runs sudo. Setup asks before editing dotfiles and can print the
   line instead.

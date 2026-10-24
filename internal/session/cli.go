@@ -1,9 +1,9 @@
-// Package server is the server side of Aft: the commands the client runs over
-// SSH to start, attach to and manage sessions, plus the bridge shims that give
-// an application on the server access to the user's machine. It is built into
+// The server CLI: the commands the terminal runs over SSH to start, attach to
+// and manage sessions, plus clipboard-put for pasted files. It is built into
 // both the full aft binary (for local sessions) and the small server binary
 // that Aft installs on servers.
-package server
+
+package session
 
 import (
 	"crypto/sha256"
@@ -18,9 +18,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/arocomputer/aft/internal/bridge"
+	"github.com/arocomputer/aft/internal/bridge/proto"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/proto"
-	"github.com/arocomputer/aft/internal/session"
 )
 
 // Info is what `server info` prints for doctor and version checks. SHA is the
@@ -45,7 +45,7 @@ var Version = "dev"
 // binary by itself, or the aft binary followed by "server".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|kick|setup|info|listeners|drop")
+		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|kick|setup|info|listeners|clipboard-put")
 		return 2
 	}
 	self, err := os.Executable()
@@ -64,31 +64,31 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			return 2
 		}
 		if args[0] == "serve" {
-			if err := session.Serve(o); err != nil {
+			if err := Serve(o); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
 			return 0
 		}
-		if err := session.Start(prefix, o); err != nil {
+		if err := Start(prefix, o); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return relay(o.ID, stdin, stdout, stderr)
 	case "attach":
-		if len(args) != 2 || !session.ValidID(args[1]) {
+		if len(args) != 2 || !ValidID(args[1]) {
 			fmt.Fprintln(stderr, "usage: server attach ID")
 			return 2
 		}
 		return relay(args[1], stdin, stdout, stderr)
 	case "ls":
-		list, err := session.List()
+		list, err := List()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		if list == nil {
-			list = []session.Record{}
+			list = []Record{}
 		}
 		json.NewEncoder(stdout).Encode(list)
 		return 0
@@ -99,7 +99,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		var ids []string
 		if args[1] == "--all" {
-			list, _ := session.List()
+			list, _ := List()
 			for _, r := range list {
 				ids = append(ids, r.ID)
 			}
@@ -108,13 +108,13 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		code := 0
 		for _, id := range ids {
-			if !session.ValidID(id) {
+			if !ValidID(id) {
 				fmt.Fprintf(stderr, "invalid session id %q\n", id)
 				code = 2
 				continue
 			}
 			t := kindFor(args[0])
-			if err := session.Control(id, t); err != nil {
+			if err := Control(id, t); err != nil {
 				fmt.Fprintln(stderr, err)
 				code = 1
 			}
@@ -130,12 +130,12 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	case "info":
 		json.NewEncoder(stdout).Encode(GatherInfo())
 		return 0
-	case "drop":
+	case "clipboard-put":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "usage: server drop NAME < file")
+			fmt.Fprintln(stderr, "usage: server clipboard-put NAME < file")
 			return 2
 		}
-		path, err := Drop(args[1], stdin)
+		path, err := bridge.Store(args[1], stdin)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -155,7 +155,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		fmt.Fprintln(stdout, path)
 		return 0
 	case "listeners":
-		ports, err := session.Listeners()
+		ports, err := Listeners()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -164,25 +164,27 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "uninstall":
 		// Ends every session and removes Aft's directory on this machine.
-		list, _ := session.List()
+		list, _ := List()
 		for _, r := range list {
-			session.Control(r.ID, kindFor("end"))
+			Control(r.ID, kindFor("end"))
 		}
-		if err := os.RemoveAll(home.Dir()); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+		for _, d := range []string{home.Dir(), home.Temp()} {
+			if err := os.RemoveAll(d); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			fmt.Fprintln(stdout, "removed", d)
 		}
-		fmt.Fprintln(stdout, "removed", home.Dir())
 		return 0
 	}
 	fmt.Fprintf(stderr, "unknown server command %q\n", args[0])
 	return 2
 }
 
-func parseSessionArgs(name string, args []string) (session.Options, error) {
+func parseSessionArgs(name string, args []string) (Options, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var o session.Options
+	var o Options
 	fs.StringVar(&o.ID, "id", "", "session id")
 	fs.StringVar(&o.Dir, "dir", "", "working directory")
 	fs.IntVar(&o.Cols, "cols", 80, "columns")
@@ -200,9 +202,9 @@ func parseSessionArgs(name string, args []string) (session.Options, error) {
 		return o, fmt.Errorf("%s requires -- COMMAND", name)
 	}
 	if o.ID == "" {
-		o.ID = session.NewID(o.Command[0])
+		o.ID = NewID(o.Command[0])
 	}
-	if !session.ValidID(o.ID) {
+	if !ValidID(o.ID) {
 		return o, fmt.Errorf("invalid session id %q", o.ID)
 	}
 	if o.Dir == "" {
@@ -223,7 +225,7 @@ func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
 
 func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if err := session.Attach(id, struct {
+	if err := Attach(id, struct {
 		io.Reader
 		io.Writer
 	}{stdin, stdout}); err != nil {

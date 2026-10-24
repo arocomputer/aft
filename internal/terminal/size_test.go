@@ -1,4 +1,4 @@
-package client
+package terminal
 
 import (
 	"errors"

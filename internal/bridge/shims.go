@@ -1,4 +1,4 @@
-package server
+package bridge
 
 import (
 	"encoding/json"
@@ -11,9 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arocomputer/aft/internal/bridge/proto"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/proto"
 )
+
+// The server half of the bridge: shims a session puts first on PATH, so a
+// program on the server that opens a URL or reads the clipboard reaches the
+// machine you type on through the session's bridge socket.
 
 // IsShim reports whether argv0 names a bridge shim.
 func IsShim(argv0 string) bool {
@@ -35,7 +39,7 @@ func RunShim(argv0 string, args []string) int {
 	switch name {
 	case "open", "xdg-open":
 		if len(args) == 1 && isURL(args[0]) {
-			if _, err := bridge("open-url", map[string]string{"url": args[0]}); err != nil {
+			if _, err := ask("open-url", map[string]string{"url": args[0]}); err != nil {
 				fmt.Fprintln(os.Stderr, name+":", err)
 				return 1
 			}
@@ -90,7 +94,7 @@ func isURL(s string) bool {
 }
 
 func listTypes() int {
-	resp, err := bridge("clipboard-types", nil)
+	resp, err := ask("clipboard-types", nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -100,7 +104,7 @@ func listTypes() int {
 }
 
 func clipboardTo(w io.Writer, mime string) int {
-	resp, err := bridge("clipboard-get", map[string]string{"mime": mime})
+	resp, err := ask("clipboard-get", map[string]string{"mime": mime})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -109,8 +113,8 @@ func clipboardTo(w io.Writer, mime string) int {
 	return 0
 }
 
-// bridge sends one request to the session's bridge socket and waits.
-func bridge(kind string, args any) (proto.BridgeResponse, error) {
+// ask sends one request to the session's bridge socket and waits.
+func ask(kind string, args any) (proto.BridgeResponse, error) {
 	sock := os.Getenv("AFT_BRIDGE")
 	if sock == "" {
 		return proto.BridgeResponse{}, fmt.Errorf("not inside an Aft session")
@@ -137,9 +141,9 @@ func bridge(kind string, args any) (proto.BridgeResponse, error) {
 
 // passthrough runs the real command of the same name, skipping the shim dir.
 func passthrough(name string, args []string) int {
-	bridge := home.Shims()
+	shims := home.Shims()
 	for _, dir := range strings.Split(os.Getenv("PATH"), string(os.PathListSeparator)) {
-		if dir == "" || sameDir(dir, bridge) {
+		if dir == "" || sameDir(dir, shims) {
 			continue
 		}
 		p := filepath.Join(dir, name)

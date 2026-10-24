@@ -1,4 +1,4 @@
-package client
+package terminal
 
 import (
 	"testing"
@@ -58,5 +58,20 @@ func TestTokenizerForwardsEveryByte(t *testing.T) {
 	}
 	if string(out) != in {
 		t.Fatalf("bytes changed:\n got %q\nwant %q", out, in)
+	}
+}
+
+// TestPasteKeys checks the keys that open the clipboard window: Ctrl-V and
+// Cmd-V in legacy and kitty encodings, but not a plain v or Alt-V.
+func TestPasteKeys(t *testing.T) {
+	for _, k := range []string{"\x16", "\x1b[118;5u", "\x1b[118;9u", "\x1b[118;5:1u"} {
+		if !isPasteKey([]byte(k)) {
+			t.Errorf("%q should be a paste key", k)
+		}
+	}
+	for _, k := range []string{"v", "\x1b[118;3u", "\x1b[118u"} {
+		if isPasteKey([]byte(k)) {
+			t.Errorf("%q is not a paste key", k)
+		}
 	}
 }
