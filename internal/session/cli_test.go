@@ -351,7 +351,13 @@ func TestStaleOrMissingSocketIsNotRunning(t *testing.T) {
 	if _, err := dial("nobody"); !errors.As(err, &gone) {
 		t.Fatalf("missing socket: %v, want not running", err)
 	}
-	os.WriteFile(SocketPath("stale"), nil, 0o600)
+	// A session that died leaves its socket file behind, which refuses.
+	ln, err := net.Listen("unix", SocketPath("stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
 	if _, err := dial("stale"); !errors.As(err, &gone) {
 		t.Fatalf("stale socket: %v, want not running", err)
 	}
