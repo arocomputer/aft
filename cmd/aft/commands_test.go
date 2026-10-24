@@ -18,3 +18,13 @@ func TestExpandHome(t *testing.T) {
 		}
 	}
 }
+
+// TestSuggest points an unknown word at the command meant: a flag form of a
+// command, a near spelling, a retired name, or nothing.
+func TestSuggest(t *testing.T) {
+	for in, want := range map[string]string{"--help": "help", "-h": "help", "--version": "version", "lst": "ls", "atach": "attach", "end": "kill", "shell": "HOST", "xyz": ""} {
+		if got := suggest(in); got != want {
+			t.Errorf("suggest(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

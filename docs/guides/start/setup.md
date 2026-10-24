@@ -13,15 +13,15 @@ first, then:
 aft setup --host box
 ```
 
-Setup connects, installs Aft's server under `~/.aft` on the host, reports
-which agents it finds there, creates launchers for your agents under
-`~/.aft/launchers`, and asks how to put that directory first on your `PATH`. If you
+Setup connects, installs Aft's server under `~/.local/share/aft` on the host,
+reports which agents it finds there, creates launchers for your agents under
+`~/.local/share/aft/launchers`, and asks how to put that directory first on your `PATH`. If you
 manage your dotfiles, choose the option that prints the line for you to add;
 otherwise aft adds a marked block to your shell config:
 
 ```sh
 # >>> aft >>>
-export PATH="$HOME/.aft/launchers:$PATH"
+export PATH="$HOME/.local/share/aft/launchers:$PATH"
 # <<< aft <<<
 ```
 
@@ -37,18 +37,19 @@ cd ~/code/app
 aft on
 ```
 
-The project maps to the same path relative to home, on the host, here
-`~/code/app`. If that directory does not exist there and your project is a git
-repository, `aft on` offers to clone it, on the host from the same remote.
-Pass `--dir` for a different server path, or `--host` for a different server.
+The project is exactly the folder you are in. It maps to the same path
+relative to home, on the host, here `~/code/app`. If that folder does not exist
+there, `aft on` says so and stops. Pass `--dir` to name the server folder
+yourself; Aft creates a folder you name. Pass `--host` for a different server.
 
 From then on, starting `claude`, `codex`, `opencode`, `pi` or any program with a
 launcher from inside that directory runs it, on the host. `aft off` turns it
 back off. Nothing else changes.
 
-To start from a repository that only exists remotely, `aft clone URL` clones
-it, on the host, creates an empty local directory to stand for it, and turns
-it on.
+To start from a repository that only exists remotely, make an empty local
+directory for it and run `aft on` there. With `git` set up as a tool (see
+[Launchers](../usage/launchers.md)), `git clone URL .` then clones it on the
+host.
 
 ## Settings
 

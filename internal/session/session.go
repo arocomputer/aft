@@ -1,4 +1,5 @@
-// Package session keeps one application running on the server inside a
+// Package session is the part of Aft on the server, one of its three parts
+// beside the terminal and the bridge. It keeps one application running inside a
 // pseudo-terminal, tracks its screen, and lets one client at a time attach to
 // it. It is Aft's replacement for tmux: it has no appearance of its own, passes
 // bytes through untouched while a client is attached, answers the terminal's
@@ -25,8 +26,9 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/bridge/udp"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/proto"
 	"github.com/arocomputer/aft/internal/vt"
 )
 
@@ -51,7 +53,17 @@ type Record struct {
 	Started string   `json:"started"` // RFC 3339
 	Cols    int      `json:"cols"`
 	Rows    int      `json:"rows"`
+	Title   string   `json:"title,omitempty"` // what the application says it is doing, from its window title
+	// Attached is whether a terminal is showing the session. A detached session
+	// keeps running on the server with no terminal.
+	Attached bool `json:"attached,omitempty"`
+	// Ended is set on the remains of a session that ended unseen.
+	Ended *Ending `json:"ended,omitempty"`
 }
+
+// clientGone is how long an attached client that sends heartbeats may stay
+// silent before the session counts it as gone and detaches it.
+const clientGone = 30 * time.Second
 
 // SocketPath is where clients attach to a session.
 func SocketPath(id string) string { return filepath.Join(home.Sockets(), id+".sock") }
@@ -151,6 +163,37 @@ type Session struct {
 
 	exited chan struct{}
 	exit   proto.ExitInfo
+
+	udpMu sync.Mutex
+	udp   *udp.Listener // opened on the first ReqUDP, closed when the session ends
+
+	dirty  bool // output arrived since the screen was last saved
+	killed bool // aft kill ended it, so it leaves no remains
+}
+
+// saveScreen keeps the screen as plain text, so it outlives the session.
+// The caller holds mu.
+func (s *Session) saveScreen() {
+	os.WriteFile(ScreenPath(s.opts.ID), []byte(screenText(s.term.Snapshot())), 0o600)
+	s.dirty = false
+}
+
+// keepScreen saves the screen every half minute while output changes it.
+func (s *Session) keepScreen() {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.exited:
+			return
+		case <-t.C:
+			s.mu.Lock()
+			if s.dirty {
+				s.saveScreen()
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 // Serve runs the session until the application exits. It is the body of the
@@ -201,15 +244,29 @@ func Serve(o Options) error {
 	go s.acceptClients(ln)
 	go s.acceptBridge(bln)
 	go s.pollListeners()
+	go s.keepScreen()
 
 	err = cmd.Wait()
 	s.exit = exitInfo(err)
 	close(s.exited)
+	s.udpMu.Lock()
+	if s.udp != nil {
+		s.udp.Close()
+	}
+	s.udpMu.Unlock()
 	s.mu.Lock()
-	if s.cur != nil {
+	switch {
+	case s.cur != nil:
 		s.cur.sendJSON(proto.Exit, s.exit)
 		s.cur.close()
 		<-s.cur.done
+		ClearRemains(o.ID) // whoever was attached saw it end
+	case s.killed:
+		ClearRemains(o.ID)
+	default:
+		// It ended unseen: keep how, and its last screen, for aft ls and attach.
+		s.saveScreen()
+		leaveRemains(s.record, Ending{At: time.Now().UTC().Format(time.RFC3339), Code: s.exit.Code, Signal: s.exit.Signal})
 	}
 	s.mu.Unlock()
 	log.Printf("session %s: %s exited: %+v", o.ID, o.Command[0], s.exit)
@@ -290,6 +347,11 @@ func (s *Session) readPTY() {
 		if n > 0 {
 			s.mu.Lock()
 			s.term.Write(buf[:n])
+			s.dirty = true
+			if t := cleanTitle(s.term.Title()); t != s.record.Title {
+				s.record.Title = t
+				writeJSON(RecordPath(s.opts.ID), s.record)
+			}
 			if s.cur != nil {
 				s.cur.send(proto.Output, buf[:n])
 			}
@@ -342,9 +404,12 @@ func (s *Session) serveClient(conn net.Conn) {
 	}
 	s.cur = c
 	s.attached = true
+	s.record.Attached = true
 	resized := cols != s.record.Cols || rows != s.record.Rows
 	if resized {
 		s.resize(cols, rows)
+	} else {
+		writeJSON(RecordPath(s.opts.ID), s.record)
 	}
 	c.sendJSON(proto.Hello, proto.HelloInfo{ID: s.opts.ID, Command: s.opts.Command, Dir: s.opts.Dir, PID: s.record.PID, Cols: cols, Rows: rows, Started: s.record.Started})
 	c.send(proto.Output, s.term.Render(vt.RenderOptions{Scrollback: true, Title: true}))
@@ -355,7 +420,13 @@ func (s *Session) serveClient(conn net.Conn) {
 	}
 	log.Printf("session %s: client attached (%dx%d)", s.opts.ID, cols, rows)
 
+	// A client that sends heartbeats and then goes quiet has gone, even if its
+	// connection has not closed yet, as when a laptop sleeps.
+	heartbeat := false
 	for {
+		if heartbeat {
+			conn.SetReadDeadline(time.Now().Add(clientGone))
+		}
 		f, err := proto.Read(r)
 		if err != nil {
 			break
@@ -373,6 +444,7 @@ func (s *Session) serveClient(conn net.Conn) {
 			c.send(proto.Detached, nil)
 			goto done
 		case proto.Ping:
+			heartbeat = true
 			c.send(proto.Pong, nil)
 		case proto.ReqSnapshot:
 			s.mu.Lock()
@@ -395,10 +467,6 @@ func (s *Session) serveClient(conn net.Conn) {
 			}
 		case proto.End:
 			s.end()
-		case proto.Kick:
-			// A kick through the attached connection is just a detach.
-			c.send(proto.Detached, nil)
-			goto done
 		}
 	}
 done:
@@ -406,10 +474,42 @@ done:
 	if s.cur == c {
 		s.cur = nil
 		s.attached = false
+		s.record.Attached = false
+		select {
+		case <-s.exited: // the record is being removed; do not write it back
+		default:
+			writeJSON(RecordPath(s.opts.ID), s.record)
+			s.saveScreen()
+		}
 	}
 	s.mu.Unlock()
 	c.close()
 	log.Printf("session %s: client detached", s.opts.ID)
+}
+
+// openUDP starts the session's UDP listener, once, and returns how to reach
+// it. Clients it admits are served exactly like those on the unix socket.
+func (s *Session) openUDP() (udp.Offer, error) {
+	s.udpMu.Lock()
+	defer s.udpMu.Unlock()
+	if s.udp == nil {
+		l, err := udp.Listen()
+		if err != nil {
+			return udp.Offer{}, err
+		}
+		s.udp = l
+		go func() {
+			for {
+				conn, err := l.Accept()
+				if err != nil {
+					return
+				}
+				go s.serveClient(conn)
+			}
+		}()
+		log.Printf("session %s: listening on UDP %d", s.opts.ID, l.Offer.Port)
+	}
+	return s.udp.Offer, nil
 }
 
 // control serves a connection that only sends control frames.
@@ -424,16 +524,12 @@ func (s *Session) control(c *client, r *bufio.Reader) {
 		case proto.End:
 			s.end()
 			c.send(proto.Pong, nil)
-		case proto.Kick:
-			s.mu.Lock()
-			if s.cur != nil {
-				s.cur.send(proto.Detached, nil)
-				s.cur.close()
-				s.cur = nil
-				s.attached = false
+		case proto.ReqUDP:
+			if o, err := s.openUDP(); err != nil {
+				c.send(proto.Error, []byte(err.Error()))
+			} else {
+				c.sendJSON(proto.UDPOffer, o)
 			}
-			s.mu.Unlock()
-			c.send(proto.Pong, nil)
 		case proto.Ping:
 			c.send(proto.Pong, nil)
 		}
@@ -449,6 +545,9 @@ func (s *Session) resize(cols, rows int) {
 
 // end stops the application: hang up, then kill if it lingers.
 func (s *Session) end() {
+	s.mu.Lock()
+	s.killed = true
+	s.mu.Unlock()
 	pid := s.record.PID
 	syscall.Kill(-pid, syscall.SIGHUP)
 	go func() {
@@ -580,6 +679,10 @@ func List() ([]Record, error) {
 			continue
 		}
 		if syscall.Kill(r.Server, 0) != nil {
+			// Its server died without cleaning up, so how it ended is unknown.
+			if _, err := os.Stat(remainsPath(r.ID)); err != nil {
+				leaveRemains(r, Ending{At: time.Now().UTC().Format(time.RFC3339), Lost: true})
+			}
 			os.Remove(filepath.Join(home.Sessions(), e.Name()))
 			os.Remove(SocketPath(r.ID))
 			os.Remove(BridgePath(r.ID))
@@ -618,18 +721,40 @@ func Attach(id string, rw io.ReadWriter) error {
 
 // Control opens a control connection to a session and sends one frame.
 func Control(id string, t proto.Type) error {
+	_, err := request(id, t)
+	return err
+}
+
+// OfferUDP asks a session to listen on UDP and returns how to reach it.
+func OfferUDP(id string) (udp.Offer, error) {
+	f, err := request(id, proto.ReqUDP)
+	var o udp.Offer
+	if err == nil && f.Type == proto.Error {
+		err = errors.New(string(f.Payload))
+	}
+	if err == nil {
+		err = json.Unmarshal(f.Payload, &o)
+	}
+	return o, err
+}
+
+// request sends one control frame to a session and returns its answer.
+func request(id string, t proto.Type) (proto.Frame, error) {
 	conn, err := net.Dial("unix", SocketPath(id))
 	if err != nil {
-		return fmt.Errorf("session %s is not running", id)
+		return proto.Frame{}, fmt.Errorf("session %s is not running", id)
 	}
 	defer conn.Close()
 	if err := proto.Write(conn, proto.Resize, proto.EncodeResize(0, 0)); err != nil {
-		return err
+		return proto.Frame{}, err
 	}
 	if err := proto.Write(conn, t, nil); err != nil {
-		return err
+		return proto.Frame{}, err
 	}
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, err = proto.Read(bufio.NewReader(conn))
-	return err
+	wait := 5 * time.Second
+	if t == proto.ReqUDP {
+		wait = time.Second // a session from an older server never answers
+	}
+	conn.SetReadDeadline(time.Now().Add(wait))
+	return proto.Read(bufio.NewReader(conn))
 }

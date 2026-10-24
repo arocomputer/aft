@@ -183,14 +183,12 @@ All work lives on the server. Aft has no sync logic and none is planned.
 
 - **Commits and pushes happen on the server.** The agent or you make them
   there, with the server's git credentials, as in any remote dev setup.
-- **Code reaches the server once, by git.** When `aft on` finds no server
-  directory and the local directory is a git repository, it offers to
-  `git clone` the same remote on the server. That is a single command run
-  on the server, not a copy from your machine.
+- **Code reaches the server once, by git.** `git clone` runs on the server,
+  as a tool or from `aft HOST`, never as a copy from your machine.
 - **The local directory is only a handle.** It tells Aft which server
   project to use. It can be a full local checkout or an empty folder.
-  `aft clone URL` creates both: an empty local handle and a server clone,
-  already on.
+  `aft on` is exactly the current folder. It never creates a server folder
+  it guessed, only one named with `--dir`.
 - **The server path defaults to the same path relative to home.** For
   example, `~/code/app` maps to `~/code/app`. `aft on --dir` overrides it.
 
@@ -216,7 +214,7 @@ Keys, ProxyJump, agent, config and host trust all come from the user's
 setup. The connection carries four things:
 
 - **A session channel,** opened as
-  `ssh -tt host ~/.aft/server attach ID`.
+  `ssh -tt host ~/.local/share/aft/server attach ID`.
 - **The bridge socket,** a Unix socket forwarded back to your machine.
 - **Port mirrors,** added on the live connection with `ssh -O forward`.
 - **Short server calls,** such as listing sessions.
@@ -225,7 +223,7 @@ The transport is TCP. Prediction hides network stalls for typing, but not
 for output. UDP can be considered later if lossy networks prove a problem.
 
 **Server install.** Aft copies its own static binary for the server's OS and
-architecture to `~/.aft/server` on the server. It verifies the hash and pins
+architecture to `~/.local/share/aft/server` on the server. It verifies the hash and pins
 the binary to the client's version. macOS arm64 builds are signed ad hoc by
 the Go linker. A binary copied over SSH carries no quarantine flag.
 
@@ -234,7 +232,7 @@ macOS, it parses the built-in `lsof`.
 
 ## 8. Launchers, on/off, and the shell line
 
-**Launchers.** `~/.aft/launchers/` holds one symlink per agent name, each
+**Launchers.** `~/.local/share/aft/launchers/` holds one symlink per agent name, each
 pointing at `aft`. When `aft` is invoked as `claude`, it checks whether the
 current directory is inside a project that is on. If it is, it starts
 `claude` on the server, in the matching directory, with the arguments passed
@@ -243,7 +241,7 @@ with the shims directory skipped. The local path adds a few milliseconds.
 
 `aft setup` detects installed agents: Claude Code, Codex, opencode, pi, and
 others such as Gemini CLI, Amp, Aider and Goose. `aft agents add NAME`
-covers any other program. `aft shell` starts your login shell on the server
+covers any other program. `aft HOST` starts your login shell on the server
 the same way, as a lag-free replacement for SSH and mosh.
 
 **The shell line.** `aft setup` adds a marked block to each shell config it
@@ -251,7 +249,7 @@ finds:
 
 ```sh
 # >>> aft >>>
-export PATH="$HOME/.aft/launchers:$PATH"
+export PATH="$HOME/.local/share/aft/launchers:$PATH"
 # <<< aft <<<
 ```
 
@@ -273,14 +271,14 @@ Everything else comes from the server login environment.
 1. Lists everything it will remove and every running Aft session, then asks
    for confirmation.
 2. Ends the Aft sessions on every known host. These are sessions Aft created.
-3. Removes `~/.aft/` on every known host. That holds the server, session
-   state and sockets.
+3. Removes `~/.aft/` and `~/.local/share/aft/` on every known host. They hold
+   the logs, the server, session records and sockets.
 4. Removes the shell block from each recorded file. It removes the block only
    if it still matches exactly what Aft wrote. If the user edited it, Aft
    shows the block and leaves it for the user to remove. It deletes the
    fish drop-in file.
-5. Removes the local `~/.aft/`, which holds the shims, config, state and
-   control sockets.
+5. Removes the local `~/.aft/`, which holds config and state, and
+   `~/.local/share/aft/`, which holds the launchers and control sockets.
 6. Tells the user how they installed the `aft` binary, so they can remove it.
 
 What stays: code on the server, your SSH config and known hosts, and each
@@ -313,22 +311,20 @@ flow, through the URL and port bridges. Aft never installs agents.
 aft setup                    add a server, create launchers, add the PATH block
 aft on [--host H] [--dir D]  agents started here run on the server
 aft off                      agents started here run locally
-aft clone URL [DIR]          clone on the server, create a local handle, turn it on
-aft shell                    a lag-free shell on the server
+aft HOST [CMD...]            a lag-free terminal on that host, or one command
 aft ls                       sessions on all hosts
-aft attach [ID]              reattach
-aft detach [ID]              detach a session from another terminal
-aft status                   connection, sessions, mirrors
+aft attach [NAME]            reattach
+aft kill NAME                stop a session
+aft status                   connection, sessions, mirrored ports
 aft doctor                   SSH, server, agents on the host, launchers, shell block
-aft exec -- CMD              one command on the server, no session
-aft ports                    active mirrors
 aft agents add NAME          launch another program this way
 aft uninstall                remove everything Aft added, everywhere
 aft completion bash|zsh|fish
 ```
 
-The server runs on the host as `aft server attach`, `new`, `ls`, `end`,
-`listeners`, plus the bridge shims.
+The server runs on the host as its own binary with the subcommands `attach`,
+`new`, `udp`, `ls`, `end` and `listeners`, plus the bridge shims. For the host
+`local`, the aft binary runs it as the hidden `aft __server`.
 
 ## 12. Settings
 
@@ -361,17 +357,21 @@ ported. These principles carry over from the current code:
 - reaping owned child processes
 - fake-executable tests
 
+Three parts, terminal, session and bridge, plus supporting packages:
+
 ```
-cmd/aft/             CLI dispatch, argv0 launcher entry
-internal/config/     config, aft.toml, state
-internal/ssh/        OpenSSH master, channels, forwards, server install
-internal/vt/         shared terminal emulation wrapper around the chosen library
-internal/client/     passthrough, shadow screen, prediction, reconnect, title
-internal/session/     server sessions: pty, emulator, scrollback, query answering, reattach
-internal/server/     server entry: session control, shims, listeners
-internal/launcher/   shims, on/off decision, shell block install and removal
-internal/bridge/     local open-URL and clipboard
-internal/ports/      mirror
+internal/terminal/          on your machine: passthrough, shadow screen, prediction, reconnect, pasting, copy mode
+internal/session/           on the server: pty, emulator, scrollback, query answering, reattach, server CLI, listeners
+internal/session/install/   embedded server builds and their install on a host
+internal/bridge/            between the two: clipboard (copy, read on paste, pasted files), open-URL, shims
+internal/bridge/transport/  OpenSSH master, channels, forwards
+internal/bridge/proto/      frames between terminal and session
+internal/bridge/ports/      port mirror
+cmd/aft/                    CLI dispatch, argv0 launcher entry
+internal/config/            config, aft.toml, state
+internal/vt/                shared terminal emulation
+internal/launcher/          on/off decision, shell block install and removal
+internal/home/              where Aft writes on each machine
 ```
 
 Removed from the current code entirely:
@@ -434,7 +434,7 @@ with a Linux server, and a macOS client with a macOS server.
 |---|---|---|
 | 1 | SSH master, server install, session with passthrough, attach, detach, ls, reconnect | `claude` runs on a server, detaches, survives a killed connection, and reattaches with the screen restored. Typing still has full latency |
 | 2 | Terminal library choice, shadow screen, prediction, query answering | Typing and fidelity tests pass. **Go or no-go:** a person types into Claude Code at a 120 ms round trip and it feels local |
-| 3 | Launchers, shell block, `aft setup`, `on`, `off`, `clone`, `shell` | The same `claude` command runs locally or remotely depending on on/off |
+| 3 | Launchers, shell block, `aft setup`, `on`, `off`, `ssh` | The same `claude` command runs locally or remotely depending on on/off |
 | 4 | Bridges and port mirror | Browser login, image paste and a dev server on local `localhost` all work |
 | 5 | `uninstall`, `doctor`, `status`, docs, macOS server, release checks | The uninstall test passes on both platforms. Docs describe only this model |
 

@@ -35,7 +35,9 @@ clipboard without OSC 52.
   preserving bracketed paste.
 - **OSC 52 copy from the server now sets the laptop clipboard** even when the
   terminal blocks OSC 52, because the client decodes it and writes the local
-  clipboard itself. Clipboard reads from the server stay disabled by default.
+  clipboard itself. The server may read the laptop clipboard only for a few
+  seconds after the user pastes or presses Ctrl-V, which is how agents paste
+  images; otherwise reads are refused.
 
 ### Copy mode (scrollback)
 
@@ -59,11 +61,10 @@ cancel them. Small, because the plumbing exists.
 
 ### 2. File transfer (medium)
 
-Getting a file to or from the server without leaving aft. Two shapes: `aft cp`
-over the existing connection, and, richer, dragging a file into the terminal
-uploads it and pastes the server path, and an OSC 52-style or server path for
-the reverse. The clipboard-image bridge already proves the transport can carry
-bytes both ways. Start with `aft cp`.
+Getting a file to or from the server without leaving aft. Pasting or dragging
+a local file into the terminal now uploads it to the server's temporary
+directory and pastes the server path (terminal/paste.go, bridge/files.go). Still open: `aft cp` over the
+existing connection, and the reverse direction, a server file to the laptop.
 
 ### 3. Activity and completion signals (medium, small)
 

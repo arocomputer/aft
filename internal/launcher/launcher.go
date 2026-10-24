@@ -14,26 +14,33 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/arocomputer/aft/internal/client"
+	"github.com/arocomputer/aft/internal/bridge/ports"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/ports"
 	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/terminal"
+	"github.com/arocomputer/aft/internal/ui"
 )
 
 // PassEnv are variables that always cross to the server.
 var PassEnv = []string{"TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "LANG", "LC_ALL", "LC_CTYPE"}
 
-// Launch runs when aft is invoked through a shim named after an agent.
+// Launch runs when aft is invoked through a launcher named after an agent or a
+// tool. In a project that is on, an agent starts in a session on the host and a
+// tool runs there once; elsewhere either runs locally. Inside a session it
+// always runs the real program, so a session never nests.
 func Launch(name string, args []string) int {
+	if os.Getenv("AFT_SESSION") != "" {
+		return execReal(name, args)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return execReal(name, args)
 	}
 	st, err := config.LoadState()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return execReal(name, args)
 	}
 	root, p, on := st.FindProject(cwd)
@@ -42,34 +49,67 @@ func Launch(name string, args []string) int {
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	h, err := cfg.Host(p.Host)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	opts, err := SessionOptions(cfg, p.Host, root, p)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
+	}
+	if cfg.IsTool(name) {
+		if h.IsLocal() {
+			return execReal(name, args)
+		}
+		return RunTool(h, config.RemoteDir(root, p, cwd), opts.Wrapper, append([]string{name}, args...))
 	}
 	opts.Host = h
 	opts.Command = append([]string{name}, args...)
 	opts.Dir = config.RemoteDir(root, p, cwd)
 	// Reattach to an existing detached session for this agent in this directory
 	// rather than starting a second one.
-	if id := existingSession(h, name, opts.Dir); id != "" {
-		fmt.Fprintf(os.Stderr, "aft: reattaching to %s (aft end %s for a fresh one)\n", id, id)
+	if id := ExistingSession(h, opts.Dir, func(r session.Record) bool { return r.Command[0] == name }); id != "" {
+		ui.Note("reattaching to %s %s", id, ui.Dim("· aft kill "+id+" starts a fresh one"))
 		opts.SessionID = id
 	}
-	return client.Run(opts)
+	return terminal.Run(opts)
 }
 
-// existingSession returns the id of a session running the same agent in the
-// same server directory, or empty. Errors mean "start fresh".
-func existingSession(h transport.Host, name, dir string) string {
+// RunTool runs argv once on h in dir (none for the login directory), inside
+// wrapper if one is set, with this terminal or these pipes, and returns its
+// exit code.
+func RunTool(h transport.Host, dir string, wrapper, argv []string) int {
+	if err := transport.EnsureMaster(h); err != nil {
+		ui.Error("%v", err)
+		return 255
+	}
+	words := append(append([]string{}, wrapper...), argv...)
+	for i, w := range words {
+		words[i] = transport.Quote(w)
+	}
+	script := "exec " + strings.Join(words, " ")
+	if dir != "" {
+		script = "cd " + transport.Quote(dir) + " && " + script
+	}
+	if err := transport.Shell(h, script); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode()
+		}
+		ui.Error("%v", err)
+		return 255
+	}
+	return 0
+}
+
+// ExistingSession returns the id of a session in dir on h that match accepts,
+// or empty. Errors mean "start fresh".
+func ExistingSession(h transport.Host, dir string, match func(session.Record) bool) string {
 	out, err := transport.Output(h, nil, "ls")
 	if err != nil {
 		return ""
@@ -79,7 +119,7 @@ func existingSession(h transport.Host, name, dir string) string {
 		return ""
 	}
 	for _, r := range recs {
-		if len(r.Command) > 0 && r.Command[0] == name && r.Dir == dir {
+		if len(r.Command) > 0 && r.Dir == dir && match(r) {
 			return r.ID
 		}
 	}
@@ -88,7 +128,7 @@ func existingSession(h transport.Host, name, dir string) string {
 
 // SessionOptions builds client options for a project, resolving settings from
 // the global config, the host, and the project's aft.toml.
-func SessionOptions(cfg config.Config, host, root string, p config.Project) (client.Options, error) {
+func SessionOptions(cfg config.Config, host, root string, p config.Project) (terminal.Options, error) {
 	var repo *config.RepoConfig
 	if root != "" {
 		if r, _, ok := config.LoadRepo(root); ok {
@@ -98,20 +138,21 @@ func SessionOptions(cfg config.Config, host, root string, p config.Project) (cli
 	s := cfg.Resolve(host, repo)
 	rng, err := ports.ParseRange(s.Ports)
 	if err != nil {
-		return client.Options{}, err
+		return terminal.Options{}, err
 	}
 	detach, err := config.DetachByte(cfg.DetachKey)
 	if err != nil {
-		return client.Options{}, err
+		return terminal.Options{}, err
 	}
 	prefix, err := cfg.PrefixKey()
 	if err != nil {
-		return client.Options{}, err
+		return terminal.Options{}, err
 	}
-	return client.Options{
+	return terminal.Options{
 		Env:       Environment(s.Env),
 		Wrapper:   s.Wrapper,
 		Predict:   s.Predict,
+		UDP:       s.UDP,
 		Ports:     rng,
 		DetachKey: detach,
 		Prefix:    prefix,
@@ -202,14 +243,41 @@ func RemoveLaunchers(st *config.State) {
 const blockStart = "# >>> aft >>>"
 const blockEnd = "# <<< aft <<<"
 
+// PathDir is home.Launchers as the shell writes it.
+const PathDir = "$HOME/.local/share/aft/launchers"
+
 // Block returns the lines added to a POSIX shell config.
 func Block() string {
-	return blockStart + "\nexport PATH=\"$HOME/.aft/launchers:$PATH\"\n" + blockEnd + "\n"
+	return blockStart + "\nexport PATH=\"" + PathDir + ":$PATH\"\n" + blockEnd + "\n"
 }
 
 // FishBlock is the content of the fish drop-in file.
 func FishBlock() string {
-	return blockStart + "\nfish_add_path --prepend --move $HOME/.aft/launchers\n" + blockEnd + "\n"
+	return blockStart + "\nfish_add_path --prepend --move " + PathDir + "\n" + blockEnd + "\n"
+}
+
+// MoveShellBlocks rewrites each recorded block to the current PATH line, after
+// home.Migrate moved the launchers. It returns the files whose block was
+// edited by hand and still needs the new line. Remove it with home.Migrate.
+func MoveShellBlocks(st *config.State) (kept []string) {
+	for i, b := range st.ShellBlocks {
+		want := Block()
+		if filepath.Base(b.File) == "aft.fish" {
+			want = FishBlock()
+		}
+		existing, err := os.ReadFile(b.File)
+		if b.Block == want || err != nil {
+			continue
+		}
+		if !strings.Contains(string(existing), b.Block) {
+			kept = append(kept, b.File)
+			continue
+		}
+		if os.WriteFile(b.File, []byte(strings.Replace(string(existing), b.Block, want, 1)), 0o644) == nil {
+			st.ShellBlocks[i].Block = want
+		}
+	}
+	return kept
 }
 
 // ShellFiles returns the config files Aft should put the block in, based on

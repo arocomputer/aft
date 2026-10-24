@@ -1,8 +1,6 @@
 package session
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,31 +19,18 @@ var idOK = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 // ValidID reports whether a session id is safe to use in paths.
 func ValidID(id string) bool { return idOK.MatchString(id) }
 
-// NewID derives a readable session id from the command name.
-func NewID(command string) string {
-	base := filepath.Base(command)
-	base = regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(base, "-")
-	base = strings.Trim(base, "-")
-	if base == "" {
-		base = "session"
-	}
-	if len(base) > 20 {
-		base = base[:20]
-	}
-	var b [2]byte
-	rand.Read(b[:])
-	return base + "-" + hex.EncodeToString(b[:])
-}
-
 // Start launches a detached session process for o and waits until its socket
 // accepts connections. server is the argv prefix that runs server
-// subcommands: the server binary alone, or the aft binary plus "server".
+// subcommands: the server binary alone, or the aft binary plus "__server".
 func Start(server []string, o Options) error {
 	if len(server) == 0 {
 		return fmt.Errorf("no server command")
 	}
 	if !ValidID(o.ID) {
 		return fmt.Errorf("invalid session id %q", o.ID)
+	}
+	if fi, err := os.Stat(o.Dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("the folder %s is gone on this host; recreate it there, or run aft on --dir PATH in the project to point it at another", o.Dir)
 	}
 	if err := home.Ensure(); err != nil {
 		return err

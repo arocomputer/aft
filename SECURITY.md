@@ -17,10 +17,14 @@ currently offered.
 
 Aft uses your existing SSH authentication and host trust. Applications in a
 session run with your remote account's full permissions; an agent's sandbox
-protects only the machine it runs on. Aft's own files live under `~/.aft` on
-each machine with private permissions, and its sockets are Unix sockets owned
+protects only the machine it runs on. Aft's own files live under `~/.aft` and
+`~/.local/share/aft` on each machine with private permissions, and its sockets are Unix sockets owned
 by you, so other processes running as you can reach your sessions. Mirrored
-ports listen on loopback only but are reachable by other local users. The
+ports listen on loopback only but are reachable by other local users. A
+session reached over UDP listens on one port in 60000-61000 on every interface
+of the host, like mosh; it admits only a client that pins the session's
+certificate and presents the token sent over SSH, and closes with the session.
+The
 bridge shims let an application on the server open URLs in your browser and
 read your clipboard; they are available only inside sessions you started.
 

@@ -14,11 +14,12 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/transport"
 )
 
 // DefaultAgents are the launchers setup creates when they are installed.
+// Agents run in sessions; tools, which people add themselves, run once.
 var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
 
 // Config is ~/.aft/config.toml. Top-level keys set defaults; a [host.<name>]
@@ -27,7 +28,9 @@ var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp
 type Config struct {
 	Use          string                `toml:"use,omitempty"` // the host used when none is given; a lone host needs no line
 	Agents       []string              `toml:"agents"`
+	Tools        []string              `toml:"tools,omitempty"` // commands like git and gh that run once on the host, not in a session
 	Predict      *bool                 `toml:"predict,omitempty"`
+	UDP          *bool                 `toml:"udp,omitempty"`           // reach sessions over UDP when the host allows it; nil means yes
 	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
 	DetachKey    string                `toml:"detach,omitempty"`        // key after the prefix that detaches
 	EditDotfiles *bool                 `toml:"edit_dotfiles,omitempty"` // let setup edit the shell config; nil means yes
@@ -41,9 +44,9 @@ type Config struct {
 // HostConfig describes one host and overrides the top-level settings for it.
 type HostConfig struct {
 	SSH     string   `toml:"ssh"`               // destination, may carry ssh options
-	Home    string   `toml:"home,omitempty"`    // Aft's home on the host, default ~/.aft
 	Wrapper []string `toml:"wrapper,omitempty"` // command wrapper on the host
 	Predict *bool    `toml:"predict,omitempty"` // prediction for sessions on this host
+	UDP     *bool    `toml:"udp,omitempty"`     // UDP for sessions on this host
 	Ports   string   `toml:"ports,omitempty"`   // mirror range for this host
 	Env     []string `toml:"env,omitempty"`     // extra variables to pass to this host
 	Alive   int      `toml:"alive,omitempty"`   // ServerAlive interval seconds, 0 = default
@@ -95,6 +98,7 @@ type RepoConfig struct {
 type Settings struct {
 	Wrapper []string
 	Predict bool
+	UDP     bool
 	Ports   string
 	Env     []string
 	Alive   int
@@ -107,6 +111,7 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 	s := Settings{
 		Wrapper: c.Wrapper,
 		Predict: c.PredictOn(),
+		UDP:     c.UDP == nil || *c.UDP,
 		Ports:   c.Ports,
 		Env:     append([]string(nil), c.Env...),
 		Alive:   h.Alive,
@@ -117,6 +122,9 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 	}
 	if h.Predict != nil {
 		s.Predict = *h.Predict
+	}
+	if h.UDP != nil {
+		s.UDP = *h.UDP
 	}
 	if h.Ports != "" {
 		s.Ports = h.Ports
@@ -140,6 +148,20 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 func (c Config) EditingDotfiles() bool { return c.EditDotfiles == nil || *c.EditDotfiles }
 
 // Path is the config file.
+// Launched is every name with a launcher: the agents, then the tools.
+func (c Config) Launched() []string { return append(append([]string{}, c.Agents...), c.Tools...) }
+
+// IsTool reports whether name is a tool, which runs once rather than in a
+// session.
+func (c Config) IsTool(name string) bool {
+	for _, t := range c.Tools {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
 func Path() string { return filepath.Join(home.Dir(), "config.toml") }
 
 // StatePath is the state file.
@@ -276,10 +298,8 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 	dir = filepath.Clean(dir)
 	best := ""
 	for r := range s.Projects {
-		if dir == r || strings.HasPrefix(dir, r+string(filepath.Separator)) {
-			if len(r) > len(best) {
-				best = r
-			}
+		if within(dir, r) && len(r) > len(best) {
+			best = r
 		}
 	}
 	if best == "" {
@@ -288,10 +308,39 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 	return best, s.Projects[best], true
 }
 
+// within reports whether dir is root or inside it, spelled either way: a
+// project turned on through a symlink (~/room is /Volumes/Room) matches the
+// real path too.
+func within(dir, root string) bool {
+	if _, ok := relInside(dir, root); ok {
+		return true
+	}
+	_, ok := relInside(resolve(dir), resolve(root))
+	return ok
+}
+
+func relInside(dir, root string) (string, bool) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
+func resolve(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
 // RemoteDir maps a local directory inside a project to its server directory.
 func RemoteDir(root string, p Project, dir string) string {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel == "." {
+	rel, ok := relInside(dir, root)
+	if !ok {
+		rel, _ = relInside(resolve(dir), resolve(root))
+	}
+	if rel == "" || rel == "." {
 		return p.Dir
 	}
 	return p.Dir + "/" + filepath.ToSlash(rel)

@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/remote"
-	"github.com/arocomputer/aft/internal/transport"
+	"github.com/arocomputer/aft/internal/session/install"
 	"github.com/arocomputer/aft/internal/ui"
 )
 
@@ -239,12 +239,14 @@ func cmdMount(args []string) int {
 			return fail(err)
 		}
 		if len(cfg.Mounts) == 0 {
-			fmt.Println("No mounts configured.")
+			fmt.Println(ui.Dim("No mounts configured."))
 			return 0
 		}
+		var rows [][]string
 		for _, m := range cfg.Mounts {
-			fmt.Printf("%s  ->  %s:%s\n", m.Local, m.Host, m.Path)
+			rows = append(rows, []string{m.Local, ui.Bold(m.Host) + ui.Dim(":"+m.Path)})
 		}
+		ui.Table([]string{"LOCAL", "ON THE SERVER"}, rows)
 		return 0
 	}
 	switch args[0] {
@@ -272,7 +274,7 @@ func cmdMount(args []string) int {
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Mapped %s -> %s:%s\n", abs, *host, strings.TrimRight(*remote, "/"))
+		ui.OK("Mapped %s %s %s", abs, ui.Dim("→"), ui.Bold(*host)+ui.Dim(":"+strings.TrimRight(*remote, "/")))
 		return 0
 	case "remove":
 		if len(args) != 2 {
@@ -294,7 +296,7 @@ func cmdMount(args []string) int {
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
-		fmt.Println("Removed mount", abs)
+		ui.OK("Removed mount %s", abs)
 		return 0
 	}
 	fmt.Fprintln(os.Stderr, "usage: aft mount list | add ... | remove LOCAL")
@@ -342,17 +344,17 @@ func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool)
 	}
 	if d.Kind == "smb" {
 		if err := transport.EnsureMaster(h); err != nil {
-			fmt.Fprintln(os.Stderr, "aft:", err)
+			ui.Error("%v", err)
 			return "", "", false
 		}
-		if _, err := remote.Ensure(h); err != nil {
-			fmt.Fprintln(os.Stderr, "aft:", err)
+		if _, err := install.Ensure(h); err != nil {
+			ui.Error("%v", err)
 			return "", "", false
 		}
 	}
 	serverPath, err := serverPathFor(h, d)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		fmt.Printf("Register it once with: aft mount add --local %s --host %s --remote /server/path\n", d.Point, hostName)
 		return "", "", false
 	}
@@ -362,7 +364,7 @@ func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool)
 	}
 	cfg.Mounts = addMount(cfg.Mounts, config.Mount{Local: d.Point, Host: hostName, Path: serverPath})
 	if err := config.Save(*cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 	}
 	h2, r, _ := cfg.MapLocal(phys)
 	return h2, r, true

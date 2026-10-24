@@ -53,7 +53,7 @@ func BenchmarkTypingLatency(b *testing.B) {
 	}
 }
 
-// startLatencySession launches the test binary as a local aft shell with the
+// startLatencySession launches the test binary as an aft local session with the
 // given simulated one-way delay and prediction setting, under a pseudo-terminal.
 func startLatencySession(b *testing.B, oneWayMS int, predict bool) (fd *os.File, done <-chan struct{}, kill func()) {
 	b.Helper()
@@ -68,7 +68,7 @@ func startLatencySession(b *testing.B, oneWayMS int, predict bool) (fd *os.File,
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { os.RemoveAll(home) })
-	cmd := exec.Command(self, "shell", "--host", "local")
+	cmd := exec.Command(self, "local")
 	cmd.Env = append(os.Environ(),
 		"AFT_TEST_AS_AFT=1",
 		"AFT_HOME="+home,

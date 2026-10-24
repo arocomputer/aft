@@ -1,24 +1,35 @@
-// Package bridge performs, on the user's machine, the requests a remote
-// application makes through the shims on the server: opening a URL in the
-// local browser and reading the local clipboard.
+// Package bridge is everything that crosses between the machine you type on
+// and the server, apart from the terminal stream itself. It is one of Aft's
+// three parts, beside the terminal (internal/terminal, on your machine) and
+// the session (internal/session, on the server):
+//
+//   - the connection: transport reaches a host over your OpenSSH, and proto
+//     frames the bytes between terminal and session;
+//   - the clipboard, all three directions: a copy on the server (OSC 52)
+//     sets your clipboard, the server reads your clipboard right after you
+//     paste, and a pasted local file is uploaded and pasted as a server path;
+//   - opening URLs from the server in your browser;
+//   - mirroring the server's listening ports (ports).
+//
+// The server half lives in shims.go and Store; everything else here runs on
+// your machine.
 package bridge
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
-	"github.com/arocomputer/aft/internal/proto"
+	"github.com/arocomputer/aft/internal/bridge/proto"
 )
 
-// Handle performs one request and returns the response to send back.
-func Handle(req proto.BridgeRequest) proto.BridgeResponse {
+// Handle performs one request from the server on this machine and returns
+// the response to send back. clipboardOK says whether the user just pasted;
+// clipboard reads are refused otherwise, so a program on the server cannot
+// read the clipboard behind the user's back.
+func Handle(req proto.BridgeRequest, clipboardOK bool) proto.BridgeResponse {
 	resp := proto.BridgeResponse{ID: req.ID}
 	var args map[string]string
 	if len(req.Args) > 0 {
@@ -26,15 +37,18 @@ func Handle(req proto.BridgeRequest) proto.BridgeResponse {
 	}
 	switch req.Kind {
 	case "open-url":
-		url := args["url"]
-		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			return fail(resp, "only http and https URLs are opened")
-		}
-		if err := OpenURL(url); err != nil {
+		if err := OpenURL(args["url"]); err != nil {
 			return fail(resp, err.Error())
 		}
 		resp.OK = true
-	case "clipboard-get":
+	case "clipboard-get", "clipboard-types":
+		if !clipboardOK {
+			return fail(resp, "aft lets the server read your clipboard only right after you paste")
+		}
+		if req.Kind == "clipboard-types" {
+			resp.OK, resp.Data = true, []byte(strings.Join(ClipboardTypes(), "\n")+"\n")
+			return resp
+		}
 		mime := args["mime"]
 		if mime == "" {
 			mime = "text/plain"
@@ -44,9 +58,6 @@ func Handle(req proto.BridgeRequest) proto.BridgeResponse {
 			return fail(resp, err.Error())
 		}
 		resp.OK, resp.Data, resp.Mime = true, data, mime
-	case "clipboard-types":
-		resp.OK = true
-		resp.Data = []byte(strings.Join(ClipboardTypes(), "\n") + "\n")
 	default:
 		return fail(resp, "unknown request "+req.Kind)
 	}
@@ -58,6 +69,7 @@ func fail(r proto.BridgeResponse, msg string) proto.BridgeResponse {
 	return r
 }
 
+// run executes a local tool with a timeout and returns its stdout.
 func run(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -66,121 +78,7 @@ func run(name string, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-// OpenURL opens a URL in the default browser.
-func OpenURL(url string) error {
-	var err error
-	if runtime.GOOS == "darwin" {
-		_, err = run("open", url)
-	} else {
-		_, err = run("xdg-open", url)
-	}
-	if err != nil {
-		return fmt.Errorf("could not open the browser: %w", err)
-	}
-	return nil
-}
-
-// SetClipboard writes data to the local clipboard with the platform tool.
-func SetClipboard(data []byte) error {
-	name, args := "", []string(nil)
-	switch {
-	case runtime.GOOS == "darwin":
-		name = "pbcopy"
-	case hasTool("wl-copy") && os.Getenv("WAYLAND_DISPLAY") != "":
-		name = "wl-copy"
-	case hasTool("xclip"):
-		name, args = "xclip", []string{"-selection", "clipboard"}
-	case hasTool("xsel"):
-		name, args = "xsel", []string{"--clipboard", "--input"}
-	default:
-		return fmt.Errorf("no clipboard tool found")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdin = bytes.NewReader(data)
-	return cmd.Run()
-}
-
 func hasTool(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
-}
-
-// ClipboardAvailable reports whether a local clipboard tool exists.
-func ClipboardAvailable() bool {
-	if runtime.GOOS == "darwin" {
-		return hasTool("pbcopy")
-	}
-	return hasTool("wl-copy") || hasTool("xclip") || hasTool("xsel")
-}
-
-// Clipboard returns clipboard contents of the given MIME type.
-func Clipboard(mime string) ([]byte, error) {
-	image := strings.HasPrefix(mime, "image/")
-	if runtime.GOOS == "darwin" {
-		if !image {
-			return run("pbpaste")
-		}
-		return macImage()
-	}
-	if _, err := exec.LookPath("wl-paste"); err == nil && os.Getenv("WAYLAND_DISPLAY") != "" {
-		return run("wl-paste", "--no-newline", "-t", mime)
-	}
-	if _, err := exec.LookPath("xclip"); err == nil {
-		return run("xclip", "-selection", "clipboard", "-t", mime, "-o")
-	}
-	if _, err := exec.LookPath("xsel"); err == nil && !image {
-		return run("xsel", "--clipboard", "--output")
-	}
-	return nil, fmt.Errorf("no clipboard tool found (install wl-clipboard or xclip)")
-}
-
-// ClipboardTypes lists the MIME types available, best effort.
-func ClipboardTypes() []string {
-	types := []string{"text/plain", "UTF8_STRING", "STRING"}
-	if runtime.GOOS == "darwin" {
-		if out, err := run("osascript", "-e", "clipboard info"); err == nil && strings.Contains(string(out), "PNGf") || strings.Contains(string(out), "TIFF") {
-			types = append(types, "image/png")
-		}
-		return types
-	}
-	if _, err := exec.LookPath("wl-paste"); err == nil && os.Getenv("WAYLAND_DISPLAY") != "" {
-		if out, err := run("wl-paste", "-l"); err == nil && strings.Contains(string(out), "image/png") {
-			types = append(types, "image/png")
-		}
-		return types
-	}
-	if _, err := exec.LookPath("xclip"); err == nil {
-		if out, err := run("xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"); err == nil && strings.Contains(string(out), "image/png") {
-			types = append(types, "image/png")
-		}
-	}
-	return types
-}
-
-// macImage reads a PNG from the macOS clipboard through AppleScript, since
-// pbpaste only returns text.
-func macImage() ([]byte, error) {
-	f, err := os.CreateTemp("", "aft-clip-*.png")
-	if err != nil {
-		return nil, err
-	}
-	path := f.Name()
-	f.Close()
-	defer os.Remove(path)
-	script := fmt.Sprintf(`set f to open for access POSIX file %q with write permission
-try
-  set eof f to 0
-  write (the clipboard as «class PNGf») to f
-end try
-close access f`, path)
-	if _, err := run("osascript", "-e", script); err != nil {
-		return nil, fmt.Errorf("no image on the clipboard")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return nil, fmt.Errorf("no image on the clipboard")
-	}
-	return data, nil
 }
