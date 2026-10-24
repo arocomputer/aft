@@ -1,7 +1,7 @@
 // Package ui is how aft's commands talk to people: small interactive prompts
 // for setup and configuration, and the shared output styles, spinner and
-// tables in out.go. None of it is used by the session client, which must pass
-// the terminal through untouched. Each prompt falls back to a default when there is no terminal, so
+// tables in out.go. The session client, which must pass the terminal through
+// untouched, uses only the output, and only once it has restored the terminal. Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
 //
 // The prompts are driven directly in raw mode rather than with a TUI framework:

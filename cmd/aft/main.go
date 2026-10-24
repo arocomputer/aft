@@ -215,9 +215,9 @@ func run(cmd string, args []string) int {
 	case "completion":
 		return cmdCompletion(args)
 	}
-	ui.Error("Unknown command: '%s'", cmd)
+	ui.Error("unknown command %q", cmd)
 	if m := suggest(cmd); m != "" {
-		fmt.Fprintln(os.Stderr, "Did you mean: "+ui.Command("`aft "+m+"`")+"?")
+		ui.Hint("did you mean %s?", ui.Command("aft "+m))
 	} else {
 		ui.Hint("aft help lists the commands")
 	}

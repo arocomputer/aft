@@ -40,7 +40,7 @@ func Launch(name string, args []string) int {
 	}
 	st, err := config.LoadState()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return execReal(name, args)
 	}
 	root, p, on := st.FindProject(cwd)
@@ -49,17 +49,17 @@ func Launch(name string, args []string) int {
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	h, err := cfg.Host(p.Host)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	opts, err := SessionOptions(cfg, p.Host, root, p)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	if cfg.IsTool(name) {

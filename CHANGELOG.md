@@ -79,9 +79,9 @@ stays on your machine, and typing feels local.
   directory.
 - `aft on` is exactly the folder you are in, with no search for a project
   root, and creates the server directory when it is missing.
-- An unknown command, including a flag such as `--help`, answers with
-  `Did you mean: `aft help`?`: commands are words, and slips, near spellings
-  and retired names point to the command meant.
+- An unknown command, including a flag such as `--help`, names the command
+  meant: commands are words, and flags, near spellings and retired names get
+  a "did you mean aft help?" hint.
 - A session detaches when its terminal goes away: a closed tab, another
   computer attaching, or a laptop that sleeps, which the client's heartbeat
   reveals within thirty seconds. `aft ls` shows which sessions are attached.

@@ -28,6 +28,7 @@ import (
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/session/install"
+	"github.com/arocomputer/aft/internal/ui"
 	"github.com/arocomputer/aft/internal/vt"
 )
 
@@ -72,15 +73,15 @@ func Run(o Options) int {
 	}
 	in, out := os.Stdin, os.Stdout
 	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
-		fmt.Fprintln(os.Stderr, "aft: a terminal is required")
+		ui.Error("a terminal is required")
 		return 2
 	}
 	if err := transport.EnsureMaster(o.Host); err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	if _, err := install.Ensure(o.Host); err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	cols, rows := saneSize(term.GetSize(int(out.Fd())))
@@ -101,12 +102,12 @@ func Run(o Options) int {
 
 	proc, err := c.open(true)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	state, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "aft:", err)
+		ui.Error("%v", err)
 		return 1
 	}
 	restore := func() { term.Restore(int(in.Fd()), state) }
@@ -123,8 +124,8 @@ func Run(o Options) int {
 	}()
 	code := c.loop(proc)
 	restore()
-	if c.message != "" {
-		fmt.Fprintln(os.Stderr, c.message)
+	if c.message != nil {
+		c.message()
 	}
 	return code
 }
@@ -136,7 +137,7 @@ type session struct {
 	id         string
 	pred       *Predictor
 	mirror     *ports.Mirror
-	message    string
+	message    func() // prints why the client left, after the terminal is restored
 
 	wmu sync.Mutex
 	wr  io.Writer
@@ -321,7 +322,7 @@ func (c *session) loop(proc *transport.Proc) int {
 				c.awaitSnap = false
 				msg, _ := proc.Wait()
 				if c.id == "" {
-					c.message = "aft: could not start the session: " + msg
+					c.message = func() { ui.Error("could not start the session: %s", msg) }
 					return 1
 				}
 				c.title("aft · reconnecting")
@@ -329,7 +330,7 @@ func (c *session) loop(proc *transport.Proc) int {
 				var err error
 				proc, typed, err = c.reconnect(keys)
 				if err != nil {
-					c.message = "aft: " + err.Error()
+					c.message = func() { ui.Error("%v", err) }
 					return 1
 				}
 				connected = true
@@ -394,7 +395,7 @@ func (c *session) handleKeys(toks []Token) bool {
 			c.prefixPending = true
 		case c.o.DetachKey != 0 && len(t.Bytes) == 1 && t.Bytes[0] == c.o.DetachKey:
 			c.send(proto.Detach, nil)
-			c.message = c.detachMessage()
+			c.message = c.detachMessage("detached from %s; it keeps running")
 			return false
 		default:
 			// Draw the local prediction first, so your echo is never delayed by
@@ -423,7 +424,7 @@ func (c *session) handleBatch(b []byte, ok, connected bool) (leave bool, code in
 	if !connected {
 		// While disconnected, only Ctrl-C leaves; other keys are dropped.
 		if len(b) == 1 && b[0] == 0x03 {
-			c.message = fmt.Sprintf("aft: left session %s while disconnected; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+			c.message = c.detachMessage("left %s while disconnected; it keeps running")
 			return true, 1
 		}
 		return false, 0
@@ -452,14 +453,20 @@ func (c *session) prefixCommand(t Token) bool {
 		c.enterCopy()
 	case string(t.Bytes) == "d":
 		c.send(proto.Detach, nil)
-		c.message = c.detachMessage()
+		c.message = c.detachMessage("detached from %s; it keeps running")
 		return false
 	}
 	return true
 }
 
-func (c *session) detachMessage() string {
-	return fmt.Sprintf("aft: detached from %s; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+// detachMessage says the session runs on without this terminal, and how to
+// come back to it. format names the session with %s.
+func (c *session) detachMessage(format string) func() {
+	id := c.id
+	return func() {
+		ui.Note(format, id)
+		ui.Hint("aft attach %s", id)
+	}
 }
 
 // enterCopy requests a snapshot; copy mode opens when it arrives.
@@ -508,14 +515,17 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		var e proto.ExitInfo
 		json.Unmarshal(f.Payload, &e)
 		if e.Signal != "" && !c.o.Quiet {
-			c.message = "aft: the session ended by signal " + e.Signal
+			c.message = func() { ui.Warn("the session ended by signal %s", e.Signal) }
 		}
 		return e.Code, true
 	case proto.Detached:
-		c.message = fmt.Sprintf("aft: detached from %s; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+		if c.message == nil { // not our own detach: another terminal took the session
+			c.message = c.detachMessage("detached from %s; another terminal took it, and it keeps running")
+		}
 		return 0, true
 	case proto.Error:
-		c.message = "aft: " + string(f.Payload)
+		msg := string(f.Payload)
+		c.message = func() { ui.Error("%s", msg) }
 		return 1, true
 	case proto.BridgeReq:
 		var req proto.BridgeRequest
