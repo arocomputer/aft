@@ -8,6 +8,7 @@ package transport
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -125,6 +126,7 @@ func sshOptions(h Host, batch bool) []string {
 		"-o", "ControlPath=" + controlPath(),
 		"-o", fmt.Sprintf("ControlPersist=%d", persist),
 		"-o", fmt.Sprintf("ServerAliveInterval=%d", alive),
+		"-o", "ConnectTimeout=10", // an offline host fails in seconds, not minutes
 		"-o", "ServerAliveCountMax=3",
 	}
 	if batch {
@@ -180,9 +182,38 @@ func EnsureMasterBatch(h Host) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("reconnect to %s: %s", h.Dest(), strings.TrimSpace(stderr.String()))
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return &ConnectError{Host: h.Dest(), Msg: msg}
 	}
 	return nil
+}
+
+// ConnectError is a failed connection without a terminal. NeedsTerminal says
+// whether SSH wanted to ask something (a passphrase, a new host key), so a
+// caller with a terminal can retry interactively; otherwise the host is
+// simply unreachable and asking would not help.
+type ConnectError struct{ Host, Msg string }
+
+func (e *ConnectError) Error() string { return "cannot reach " + e.Host + ": " + e.Msg }
+
+// NeedsTerminal reports whether SSH stopped because it needed to ask.
+func (e *ConnectError) NeedsTerminal() bool {
+	for _, s := range []string{"Permission denied", "Host key verification failed", "passphrase", "password"} {
+		if strings.Contains(e.Msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// NeedsTerminal reports whether err is a connection that SSH could complete
+// only by asking in the terminal.
+func NeedsTerminal(err error) bool {
+	var ce *ConnectError
+	return errors.As(err, &ce) && ce.NeedsTerminal()
 }
 
 // controlArgs addresses the master connection for -O commands.
