@@ -13,51 +13,9 @@ the same until you want to change something. Top-level keys set defaults; a
 overrides them for one project. Project wins over host wins over global.
 
 Keys are flat and `snake_case`. A host is addressed by name, so its table is
-singular: `[host.mini]`, not `[hosts.mini]`.
-
-## Multiple machines
-
-If you have more than one host — a `mini`, a `studio`, a cloud box — name each
-one and point your work at whichever you want:
-
-```toml
-use = "mini"                  # the host used when you don't pass --host
-
-[host.mini]
-ssh = "mini"                  # an alias from your ~/.ssh/config
-
-[host.studio]
-ssh = "fschr@studio.local"
-
-[host.cloud]
-ssh = "ubuntu@1.2.3.4"
-```
-
-With a single host you need no `use` line — that host is used by default. The
-key only appears once you have more than one to choose between.
-
-Manage these without editing the file by hand:
-
-```sh
-aft host                 # list your hosts, marking the one used by default
-aft host add mini mini   # add [host.mini] with ssh = "mini", and install the server
-aft host rm studio       # remove a host from your config
-aft use cloud            # use cloud when --host is omitted
-```
-
-Pick a host per command with `--host` (`aft on --host studio`,
-`aft shell --host cloud`); with no flag, the `use` host runs it.
-
-To make a project always run on the same host from any machine you type on,
-commit an `aft.toml` at its root:
-
-```toml
-# aft.toml — this repo runs on mini wherever it is cloned
-host = "mini"
-```
-
-Because a session lives on the host, you can start it from one machine and
-reattach the same running session from another.
+singular: `[host.mini]`, not `[hosts.mini]`. Naming hosts, the `ssh`
+destination, choosing between several, and using more than one machine all live
+in [Hosts](hosts.md); this page is the settings reference.
 
 ## The launch wrapper
 
