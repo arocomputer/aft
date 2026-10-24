@@ -26,9 +26,9 @@ const (
 	Resize      Type = 0x02 // cols, rows as two uint16
 	Detach      Type = 0x03 // the client is leaving on purpose
 	BridgeReply Type = 0x04 // answer to a BridgeReq
-	Ping        Type = 0x05
+	Ping        Type = 0x05 // a heartbeat; after one, the session expects one every few seconds
 	End         Type = 0x06 // stop the application and the session
-	Kick        Type = 0x07 // drop whichever client is attached (sent by aft detach)
+	// 0x07 was Kick, sent by the retired aft detach; do not reuse it.
 	ReqSnapshot Type = 0x08 // ask the session for its scrollback and screen (copy mode)
 )
 

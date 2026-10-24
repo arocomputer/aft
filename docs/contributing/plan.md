@@ -189,8 +189,7 @@ All work lives on the server. Aft has no sync logic and none is planned.
   on the server, not a copy from your machine.
 - **The local directory is only a handle.** It tells Aft which server
   project to use. It can be a full local checkout or an empty folder.
-  `aft clone URL` creates both: an empty local handle and a server clone,
-  already on.
+  `aft on` in an empty folder offers to create the server directory.
 - **The server path defaults to the same path relative to home.** For
   example, `~/code/app` maps to `~/code/app`. `aft on --dir` overrides it.
 
@@ -313,16 +312,13 @@ flow, through the URL and port bridges. Aft never installs agents.
 aft setup                    add a server, create launchers, add the PATH block
 aft on [--host H] [--dir D]  agents started here run on the server
 aft off                      agents started here run locally
-aft clone URL [DIR]          clone on the server, create a local handle, turn it on
 aft shell                    a lag-free shell on the server
 aft ls                       sessions on all hosts
 aft attach [NAME]            reattach
-aft detach NAME              detach a session from another terminal
 aft kill NAME                stop a session
-aft status                   connection, sessions, mirrors
+aft status                   connection, sessions, mirrored ports
 aft doctor                   SSH, server, agents on the host, launchers, shell block
 aft exec -- CMD              one command on the server, no session
-aft ports                    active mirrors
 aft agents add NAME          launch another program this way
 aft uninstall                remove everything Aft added, everywhere
 aft completion bash|zsh|fish

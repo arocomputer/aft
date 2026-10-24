@@ -17,7 +17,6 @@ never blocks waiting for a terminal.
 aft ls                 # sessions on every host
 aft attach fox         # reattach to the session called fox
 aft attach             # reattach; picks from a list when several are running
-aft detach fox         # detach whoever is attached, from another terminal
 aft kill fox           # stop the application and the session
 aft shell              # a login shell on the server in a session
 aft status             # here on/off, hosts, sessions
@@ -47,7 +46,18 @@ If the connection drops, the terminal title shows "aft · reconnecting" and the
 client reconnects with backoff. The session is untouched. On reattach the
 server repaints the screen, restores terminal modes, and asks the application
 to redraw. Ctrl-C while disconnected leaves the client; the session keeps
-running and `aft attach` returns to it. Closing the terminal window detaches.
+running and `aft attach` returns to it.
+
+A session detaches when its terminal goes away and keeps running on the server
+with no terminal. That happens when you close the tab or window, when another
+computer attaches (one terminal shows a session at a time), and when a laptop
+sleeps or drops off the network: the client sends a heartbeat every ten
+seconds, and after thirty silent seconds the session lets it go. `aft ls` says
+which sessions are attached.
+
+`aft shell` opens a login shell on the server in a session, in the project's
+directory when the project is on. Run it again in the same place and it comes
+back to that shell.
 
 Aft never stops a session on its own. `aft kill` does, and so does the
 application exiting.

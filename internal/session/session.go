@@ -53,7 +53,14 @@ type Record struct {
 	Cols    int      `json:"cols"`
 	Rows    int      `json:"rows"`
 	Title   string   `json:"title,omitempty"` // what the application says it is doing, from its window title
+	// Attached is whether a terminal is showing the session. A detached session
+	// keeps running on the server with no terminal.
+	Attached bool `json:"attached,omitempty"`
 }
+
+// clientGone is how long an attached client that sends heartbeats may stay
+// silent before the session counts it as gone and detaches it.
+const clientGone = 30 * time.Second
 
 // SocketPath is where clients attach to a session.
 func SocketPath(id string) string { return filepath.Join(home.Sockets(), id+".sock") }
@@ -348,9 +355,12 @@ func (s *Session) serveClient(conn net.Conn) {
 	}
 	s.cur = c
 	s.attached = true
+	s.record.Attached = true
 	resized := cols != s.record.Cols || rows != s.record.Rows
 	if resized {
 		s.resize(cols, rows)
+	} else {
+		writeJSON(RecordPath(s.opts.ID), s.record)
 	}
 	c.sendJSON(proto.Hello, proto.HelloInfo{ID: s.opts.ID, Command: s.opts.Command, Dir: s.opts.Dir, PID: s.record.PID, Cols: cols, Rows: rows, Started: s.record.Started})
 	c.send(proto.Output, s.term.Render(vt.RenderOptions{Scrollback: true, Title: true}))
@@ -361,7 +371,13 @@ func (s *Session) serveClient(conn net.Conn) {
 	}
 	log.Printf("session %s: client attached (%dx%d)", s.opts.ID, cols, rows)
 
+	// A client that sends heartbeats and then goes quiet has gone, even if its
+	// connection has not closed yet, as when a laptop sleeps.
+	heartbeat := false
 	for {
+		if heartbeat {
+			conn.SetReadDeadline(time.Now().Add(clientGone))
+		}
 		f, err := proto.Read(r)
 		if err != nil {
 			break
@@ -379,6 +395,7 @@ func (s *Session) serveClient(conn net.Conn) {
 			c.send(proto.Detached, nil)
 			goto done
 		case proto.Ping:
+			heartbeat = true
 			c.send(proto.Pong, nil)
 		case proto.ReqSnapshot:
 			s.mu.Lock()
@@ -401,10 +418,6 @@ func (s *Session) serveClient(conn net.Conn) {
 			}
 		case proto.End:
 			s.end()
-		case proto.Kick:
-			// A kick through the attached connection is just a detach.
-			c.send(proto.Detached, nil)
-			goto done
 		}
 	}
 done:
@@ -412,6 +425,12 @@ done:
 	if s.cur == c {
 		s.cur = nil
 		s.attached = false
+		s.record.Attached = false
+		select {
+		case <-s.exited: // the record is being removed; do not write it back
+		default:
+			writeJSON(RecordPath(s.opts.ID), s.record)
+		}
 	}
 	s.mu.Unlock()
 	c.close()
@@ -429,16 +448,6 @@ func (s *Session) control(c *client, r *bufio.Reader) {
 		switch f.Type {
 		case proto.End:
 			s.end()
-			c.send(proto.Pong, nil)
-		case proto.Kick:
-			s.mu.Lock()
-			if s.cur != nil {
-				s.cur.send(proto.Detached, nil)
-				s.cur.close()
-				s.cur = nil
-				s.attached = false
-			}
-			s.mu.Unlock()
 			c.send(proto.Pong, nil)
 		case proto.Ping:
 			c.send(proto.Pong, nil)

@@ -195,47 +195,25 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 	}
 }
 
-// TestDetachAndReattach detaches with aft detach and reattaches with aft attach,
-// checking the application kept running in between.
-func TestDetachAndReattach(t *testing.T) {
+// TestShellReattachTakesOver runs aft shell twice in the same place: the second
+// comes back to the first's shell, which kept running, and the first client is
+// detached because another terminal took the session.
+func TestShellReattachTakesOver(t *testing.T) {
 	t.Setenv("AFT_HOME", shortHome(t))
 	s := start(t, "shell", "--host", "local")
 	defer s.cmd.Process.Kill()
 	s.typeKeys("echo first-$((1+1))\r")
 	s.waitFor("first-2", 10*time.Second)
 
-	self, _ := os.Executable()
-	ls := exec.Command(self, "ls")
-	ls.Env = append(os.Environ(), "AFT_TEST_AS_AFT=1")
-	out, err := ls.Output()
-	if err != nil || !strings.Contains(string(out), "local") {
-		t.Fatalf("ls: %v %q", err, out)
-	}
-	id := ""
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) > 2 && strings.Contains(line, " local ") {
-			id = f[0]
-		}
-	}
-	if id == "" {
-		t.Fatalf("no session id in %q", out)
-	}
-	det := exec.Command(self, "detach", id)
-	det.Env = append(os.Environ(), "AFT_TEST_AS_AFT=1")
-	if out, err := det.CombinedOutput(); err != nil {
-		t.Fatalf("detach: %v %s", err, out)
-	}
+	s2 := start(t, "shell", "--host", "local")
+	defer s2.cmd.Process.Kill()
+	s2.waitFor("first-2", 10*time.Second)
 	select {
 	case <-s.done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("client did not exit on detach")
+		t.Fatal("first client stayed attached after the second took over")
 	}
 	s.cmd.Wait()
-
-	s2 := start(t, "attach", id)
-	defer s2.cmd.Process.Kill()
-	s2.waitFor("first-2", 10*time.Second)
 	s2.typeKeys("exit\r")
 	select {
 	case <-s2.done:

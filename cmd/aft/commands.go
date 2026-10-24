@@ -125,10 +125,10 @@ func cmdSetup(args []string) int {
 	if len(cfg.Agents) == 0 {
 		cfg.Agents = config.DefaultAgents
 	}
-	if err := launcher.InstallLaunchers(self, cfg.Agents, &st); err != nil {
+	if err := launcher.InstallLaunchers(self, cfg.Launched(), &st); err != nil {
 		return fail(err)
 	}
-	ui.OK("Launchers for %s %s", strings.Join(cfg.Agents, ", "), ui.Dim("in "+ui.Path(home.Launchers())))
+	ui.OK("Launchers for %s %s", strings.Join(cfg.Launched(), ", "), ui.Dim("in "+ui.Path(home.Launchers())))
 
 	// Decide how the PATH line reaches the shell. People who manage their
 	// dotfiles want to add it themselves, so ask rather than edit blindly.
@@ -174,7 +174,7 @@ func chooseEditDotfiles() bool {
 
 // cmdHost manages the [host.<name>] tables in config.toml. With no verb it
 // lists them; add and rm edit the tables. Which host is used by default is the
-// separate `use` key (see cmdUse). These only touch local config — removing a
+// `use` key, which `aft host use` sets (see hostUse). These only touch local config — removing a
 // host leaves whatever is installed on it.
 func cmdHost(args []string) int {
 	cfg, err := config.Load()
@@ -233,9 +233,12 @@ func cmdHost(args []string) int {
 		if cfg.UsedHost() == name {
 			fmt.Println(ui.Dim(name + " is used by default."))
 		} else {
-			ui.Hint("aft use %s makes it the default, or pass --host %s per command", name, name)
+			ui.Hint("aft host use %s makes it the default, or pass --host %s per command", name, name)
 		}
 		return 0
+
+	case "use":
+		return hostUse(cfg, args)
 
 	case "rm", "remove":
 		if len(args) != 1 {
@@ -248,7 +251,7 @@ func cmdHost(args []string) int {
 		}
 		delete(cfg.Hosts, name)
 		if cfg.Use == name {
-			cfg.Use = "" // fall back to the only remaining host, or to aft use
+			cfg.Use = "" // fall back to the only remaining host, or to aft host use
 		}
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
@@ -259,33 +262,29 @@ func cmdHost(args []string) int {
 		case used != "":
 			fmt.Println(ui.Dim(used + " is now used by default."))
 		case len(cfg.Hosts) > 1:
-			ui.Hint("aft use NAME picks the default host")
+			ui.Hint("aft host use NAME picks the default host")
 		}
 		return 0
 	}
 	ui.Error("aft host: unknown verb %q", verb)
-	ui.Hint("aft host lists, aft host add NAME DEST adds, aft host rm NAME removes")
+	ui.Hint("aft host lists; add NAME DEST, rm NAME and use NAME change them")
 	return 2
 }
 
-// cmdUse sets the host used when none is given (config key `use`), like
-// `docker context use`. With no name it prints the current one.
-func cmdUse(args []string) int {
-	cfg, err := config.Load()
-	if err != nil {
-		return fail(err)
-	}
+// hostUse sets the host used when none is given (config key `use`). With no
+// name it prints the current one.
+func hostUse(cfg config.Config, args []string) int {
 	if len(args) == 0 {
 		if used := cfg.UsedHost(); used != "" {
 			fmt.Println(used)
 			return 0
 		}
 		ui.Warn("no host is used by default")
-		ui.Hint("aft use NAME")
+		ui.Hint("aft host use NAME")
 		return 1
 	}
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: aft use NAME")
+		fmt.Fprintln(os.Stderr, "usage: aft host use NAME")
 		return 2
 	}
 	name := args[0]
@@ -387,16 +386,18 @@ func cmdOn(args []string) int {
 		if mounted {
 			return fail(fmt.Errorf("the mount maps to %s on %s, but that path is missing; check aft mount list", *dir, h.Name))
 		}
-		url := gitRemote(root)
-		if url == "" || *noClone {
-			return fail(fmt.Errorf("%s does not exist on %s; create it there or pass --dir", *dir, h.Name))
-		}
 		ui.Warn("%s does not exist on %s", *dir, h.Name)
-		if !ui.Confirm(fmt.Sprintf("Clone %s there?", url), false) {
+		script := "mkdir -p " + transport.Quote(*dir)
+		if url := gitRemote(root); url != "" && !*noClone {
+			if !ui.Confirm(fmt.Sprintf("Clone %s there?", url), false) {
+				return 1
+			}
+			script = "mkdir -p " + transport.Quote(filepath.Dir(*dir)) + " && git clone " + transport.Quote(url) + " " + transport.Quote(*dir)
+		} else if !ui.Confirm("Create it?", false) {
 			return 1
 		}
-		if err := transport.Shell(h, "mkdir -p "+transport.Quote(filepath.Dir(*dir))+" && git clone "+transport.Quote(url)+" "+transport.Quote(*dir)); err != nil {
-			return fail(fmt.Errorf("clone failed: %w", err))
+		if err := transport.Shell(h, script); err != nil {
+			return fail(fmt.Errorf("could not create %s: %w", *dir, err))
 		}
 	}
 	st.Projects[root] = config.Project{Host: h.Name, Dir: *dir}
@@ -440,58 +441,11 @@ func cmdOff(args []string) int {
 	return 0
 }
 
-// cmdClone clones on the server and creates a local handle that is on.
-func cmdClone(args []string) int {
-	fs := flags("clone")
-	hostName := fs.String("host", "", "host name from aft setup")
-	if err := fs.Parse(args); err != nil || fs.NArg() < 1 || fs.NArg() > 2 {
-		fmt.Fprintln(os.Stderr, "usage: aft clone [--host H] URL [DIR]")
-		return 2
-	}
-	url := fs.Arg(0)
-	local := fs.Arg(1)
-	if local == "" {
-		local = strings.TrimSuffix(filepath.Base(strings.TrimSuffix(url, "/")), ".git")
-	}
-	local, _ = filepath.Abs(local)
-	cfg, err := config.Load()
-	if err != nil {
-		return fail(err)
-	}
-	h, err := cfg.Host(*hostName)
-	if err != nil {
-		return fail(err)
-	}
-	if err := connect(h); err != nil {
-		return fail(err)
-	}
-	if _, err := ensureServer(h); err != nil {
-		return fail(err)
-	}
-	dir, err := resolveRemoteDir(h, config.DefaultRemoteDir(local))
-	if err != nil {
-		return fail(err)
-	}
-	if err := transport.Shell(h, "mkdir -p "+transport.Quote(filepath.Dir(dir))+" && git clone "+transport.Quote(url)+" "+transport.Quote(dir)); err != nil {
-		return fail(fmt.Errorf("clone failed: %w", err))
-	}
-	if err := os.MkdirAll(local, 0o755); err != nil {
-		return fail(err)
-	}
-	st, err := config.LoadState()
-	if err != nil {
-		return fail(err)
-	}
-	st.Projects[local] = config.Project{Host: h.Name, Dir: dir}
-	if err := config.SaveState(st); err != nil {
-		return fail(err)
-	}
-	ui.OK("Cloned to %s, and it is on", ui.Bold(h.Name)+ui.Dim(":"+dir))
-	ui.Hint("cd %s and start your agent", ui.Path(local))
-	return 0
-}
+// shellCommand is the session command behind aft shell: the user's login shell.
+var shellCommand = []string{"sh", "-c", `exec "${SHELL:-/bin/sh}" -l`}
 
-// cmdShell opens a login shell on the server in a session.
+// cmdShell opens a login shell on the server in a session, or reattaches to
+// the one already open in this directory.
 func cmdShell(args []string) int {
 	fs := flags("shell")
 	hostName := fs.String("host", "", "host name from aft setup")
@@ -517,9 +471,24 @@ func cmdShell(args []string) int {
 		return fail(err)
 	}
 	opts.Host = h
-	opts.Command = []string{"sh", "-c", `exec "${SHELL:-/bin/sh}" -l`}
+	opts.Command = shellCommand
 	if on {
 		opts.Dir = config.RemoteDir(root, p, cwd)
+	} else if h.IsLocal() {
+		opts.Dir, _ = os.UserHomeDir()
+	} else {
+		if err := connect(h); err != nil {
+			return fail(err)
+		}
+		if opts.Dir, err = resolveRemoteDir(h, "~"); err != nil {
+			return fail(err)
+		}
+	}
+	// Come back to the shell already open in this directory, if there is one.
+	isShell := func(r session.Record) bool { return strings.Join(r.Command, " ") == strings.Join(shellCommand, " ") }
+	if id := launcher.ExistingSession(h, opts.Dir, isShell); id != "" {
+		ui.Note("reattaching to %s %s", id, ui.Dim("· aft kill "+id+" starts a fresh one"))
+		opts.SessionID = id
 	}
 	return terminal.Run(opts)
 }
@@ -584,7 +553,7 @@ func describe(r session.Record) string {
 	if len(r.Command) > 0 {
 		name = filepath.Base(r.Command[0])
 	}
-	if name == "sh" && strings.Contains(strings.Join(r.Command, " "), "SHELL") {
+	if strings.Join(r.Command, " ") == strings.Join(shellCommand, " ") {
 		name = "shell" // aft shell's login-shell wrapper
 	}
 	for _, a := range config.DefaultAgents {
@@ -597,6 +566,14 @@ func describe(r session.Record) string {
 		return name
 	}
 	return name + ui.Dim(" · ") + r.Title
+}
+
+// state says whether a terminal is showing the session, or it runs on with none.
+func state(r session.Record) string {
+	if r.Attached {
+		return ui.Accent("attached")
+	}
+	return ui.Dim("detached")
 }
 
 // started renders a record's start time as how long ago it was.
@@ -624,13 +601,13 @@ func cmdLs(args []string) int {
 		}
 		for _, r := range hs.list {
 			last = r.ID
-			rows = append(rows, []string{ui.Bold(r.ID) + " (" + describe(r) + ")", hs.host.Name, ui.Path(r.Dir), ui.Dim(started(r))})
+			rows = append(rows, []string{ui.Bold(r.ID) + " (" + describe(r) + ")", state(r), hs.host.Name, ui.Path(r.Dir), ui.Dim(started(r))})
 		}
 	}
 	if len(rows) == 0 {
 		fmt.Println(ui.Dim("No sessions."))
 	} else {
-		ui.Table([]string{"SESSION", "HOST", "DIRECTORY", "STARTED"}, rows)
+		ui.Table([]string{"SESSION", "STATE", "HOST", "DIRECTORY", "STARTED"}, rows)
 		if len(rows) == 1 {
 			ui.Hint("aft attach %s", last)
 		} else {
@@ -722,12 +699,12 @@ func cmdAttach(args []string) int {
 	return terminal.Run(opts)
 }
 
-// cmdControl ends a session or detaches its client.
-func cmdControl(what string, args []string) int {
-	fs := flags(what)
+// cmdKill stops a session: the application and its pseudo-terminal.
+func cmdKill(args []string) int {
+	fs := flags("kill")
 	hostName := fs.String("host", "", "host the session is on")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "usage: aft %s [--host H] ID\n", map[string]string{"kick": "detach", "end": "kill"}[what])
+		fmt.Fprintln(os.Stderr, "usage: aft kill [--host H] NAME")
 		return 2
 	}
 	cfg, err := config.Load()
@@ -744,18 +721,15 @@ func cmdControl(what string, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if _, err := transport.Output(h, nil, what, id); err != nil {
+	if _, err := transport.Output(h, nil, "end", id); err != nil {
 		return fail(err)
 	}
-	if what == "end" {
-		ui.OK("Killed %s", ui.Bold(id))
-	} else {
-		ui.OK("Detached %s %s", ui.Bold(id), ui.Dim("· it keeps running"))
-	}
+	ui.OK("Killed %s", ui.Bold(id))
 	return 0
 }
 
-// cmdStatus summarizes where you are, hosts, sessions and projects.
+// cmdStatus summarizes where you are, hosts, sessions, mirrored ports and
+// projects.
 func cmdStatus(args []string) int {
 	cfg, err := config.Load()
 	if err != nil {
@@ -781,7 +755,7 @@ func cmdStatus(args []string) int {
 	var hosts, sessions []string
 	for _, hs := range all {
 		for _, r := range hs.list {
-			sessions = append(sessions, ui.Bold(r.ID)+" ("+describe(r)+")"+ui.Dim("  on "+hs.host.Name+" · "+started(r)))
+			sessions = append(sessions, ui.Bold(r.ID)+" ("+describe(r)+")  "+state(r)+ui.Dim("  on "+hs.host.Name+" · "+started(r)))
 		}
 		if hs.host.IsLocal() {
 			continue
@@ -802,6 +776,18 @@ func cmdStatus(args []string) int {
 		sessions = []string{ui.Dim("none")}
 	}
 	row("Sessions", sessions...)
+	if m := mirrors(); len(m) > 0 {
+		var lines []string
+		for id, ports := range m {
+			list := make([]string, len(ports))
+			for i, p := range ports {
+				list[i] = fmt.Sprintf("localhost:%d", p)
+			}
+			lines = append(lines, strings.Join(list, "  ")+ui.Dim("  from "+id))
+		}
+		sort.Strings(lines)
+		row("Ports", lines...)
+	}
 	if len(st.Projects) > 0 {
 		roots := make([]string, 0, len(st.Projects))
 		for r := range st.Projects {
@@ -941,7 +927,7 @@ func cmdDoctor(args []string) int {
 		d.bad("launchers not on PATH (manual mode)", "add "+launcher.PathDir+" to your PATH")
 	}
 	var missing, hostOnly []string
-	for _, a := range cfg.Agents {
+	for _, a := range cfg.Launched() {
 		if !launcher.Installed(a) {
 			missing = append(missing, a)
 		} else if _, err := launcher.RealBinary(a); err != nil {
@@ -950,10 +936,10 @@ func cmdDoctor(args []string) int {
 	}
 	if len(missing) > 0 {
 		d.repair("launchers missing: "+strings.Join(missing, ", "), "run aft setup", func() error {
-			return launcher.InstallLaunchers(self, cfg.Agents, &st)
+			return launcher.InstallLaunchers(self, cfg.Launched(), &st)
 		}, "reinstalled launchers")
 	} else {
-		d.ok(fmt.Sprintf("%d launchers", len(cfg.Agents)))
+		d.ok(fmt.Sprintf("%d launchers", len(cfg.Launched())))
 	}
 	if len(hostOnly) > 0 {
 		d.info("no local copy, so these run only on a host: " + strings.Join(hostOnly, ", "))
@@ -1096,65 +1082,40 @@ func cmdExec(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := transport.EnsureMaster(h); err != nil {
-		return fail(err)
-	}
-	script := ""
+	dir := ""
 	if on {
-		rdir, err := resolveRemoteDir(h, config.RemoteDir(root, p, cwd))
-		if err != nil {
+		if err := transport.EnsureMaster(h); err != nil {
 			return fail(err)
 		}
-		script = "cd " + transport.Quote(rdir) + " && "
-	}
-	q := make([]string, len(rest))
-	for i, a := range rest {
-		q[i] = transport.Quote(a)
-	}
-	script += strings.Join(q, " ")
-	if err := transport.Shell(h, script); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return ee.ExitCode()
+		if dir, err = resolveRemoteDir(h, config.RemoteDir(root, p, cwd)); err != nil {
+			return fail(err)
 		}
-		return fail(err)
 	}
-	return 0
+	return launcher.RunTool(h, dir, nil, rest)
 }
 
-// cmdPorts shows the mirrored ports recorded by running clients.
-func cmdPorts(args []string) int {
+// mirrors reads the ports each running client mirrors, keyed by session.
+func mirrors() map[string][]int {
+	out := map[string][]int{}
 	entries, _ := os.ReadDir(home.Sockets())
-	var rows [][]string
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "mirrors-") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(home.Sockets(), e.Name()))
-		if err != nil {
-			continue
-		}
 		var ports []int
-		if json.Unmarshal(b, &ports) == nil && len(ports) > 0 {
-			list := make([]string, len(ports))
-			for i, p := range ports {
-				list[i] = fmt.Sprintf("localhost:%d", p)
-			}
-			rows = append(rows, []string{ui.Bold(strings.TrimSuffix(strings.TrimPrefix(e.Name(), "mirrors-"), ".json")), strings.Join(list, "  ")})
+		if err == nil && json.Unmarshal(b, &ports) == nil && len(ports) > 0 {
+			out[strings.TrimSuffix(strings.TrimPrefix(e.Name(), "mirrors-"), ".json")] = ports
 		}
 	}
-	if len(rows) == 0 {
-		fmt.Println(ui.Dim("No ports are mirrored right now."))
-		return 0
-	}
-	ui.Table([]string{"SESSION", "MIRRORED"}, rows)
-	return 0
+	return out
 }
 
-// cmdAgents adds a launcher for another program.
-func cmdAgents(args []string) int {
-	if len(args) != 2 || args[0] != "add" {
-		fmt.Fprintln(os.Stderr, "usage: aft agents add NAME")
+// cmdLaunchers adds launchers: kind "agents" run in sessions on the host,
+// kind "tools" (git, gh) run there once. Either runs locally where aft is off.
+func cmdLaunchers(kind string, args []string) int {
+	if len(args) < 2 || args[0] != "add" {
+		fmt.Fprintf(os.Stderr, "usage: aft %s add NAME...\n", kind)
 		return 2
 	}
 	cfg, err := config.Load()
@@ -1170,15 +1131,28 @@ func cmdAgents(args []string) int {
 		return fail(err)
 	}
 	self, _ = filepath.EvalSymlinks(self)
-	name := args[1]
-	for _, a := range cfg.Agents {
-		if a == name {
-			fmt.Println(ui.Dim(name + " already has a launcher."))
-			return 0
+	have := map[string]bool{}
+	for _, n := range cfg.Launched() {
+		have[n] = true
+	}
+	var added []string
+	for _, n := range args[1:] {
+		if have[n] {
+			fmt.Println(ui.Dim(n + " already has a launcher."))
+			continue
+		}
+		have[n] = true
+		added = append(added, n)
+		if kind == "tools" {
+			cfg.Tools = append(cfg.Tools, n)
+		} else {
+			cfg.Agents = append(cfg.Agents, n)
 		}
 	}
-	cfg.Agents = append(cfg.Agents, name)
-	if err := launcher.InstallLaunchers(self, []string{name}, &st); err != nil {
+	if len(added) == 0 {
+		return 0
+	}
+	if err := launcher.InstallLaunchers(self, added, &st); err != nil {
 		return fail(err)
 	}
 	if err := config.Save(cfg); err != nil {
@@ -1187,7 +1161,11 @@ func cmdAgents(args []string) int {
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	ui.OK("%s now runs on the server wherever aft is on", ui.Bold(name))
+	if kind == "tools" {
+		ui.OK("%s now run on the server wherever aft is on %s", strings.Join(added, ", "), ui.Dim("· once per command, no session"))
+	} else {
+		ui.OK("%s now run in sessions on the server wherever aft is on", strings.Join(added, ", "))
+	}
 	return 0
 }
 
@@ -1269,7 +1247,7 @@ func cmdCompletion(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: aft completion bash|zsh|fish")
 		return 2
 	}
-	words := "setup on off clone shell ls attach detach kill status doctor exec ports agents uninstall completion version help"
+	words := "setup on off shell ls attach kill host mount status doctor exec agents tools uninstall completion version help"
 	switch args[0] {
 	case "bash":
 		fmt.Printf("_aft() { COMPREPLY=( $(compgen -W '%s' -- \"${COMP_WORDS[COMP_CWORD]}\") ); }\ncomplete -F _aft aft\n", words)

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/arocomputer/aft/internal/home"
 )
 
@@ -252,13 +254,19 @@ func serverCommand(h Host, args []string) (*exec.Cmd, error) {
 	return exec.Command("ssh", append(sshArgs(h, true, "-T"), remote)...), nil
 }
 
-// Shell runs a command on the host with this process's terminal attached.
+// Shell runs a command on the host with this process's stdin, stdout and
+// stderr. It asks for a remote terminal only when stdin and stdout are one, so
+// piped input and output pass through byte for byte.
 func Shell(h Host, script string) error {
 	var cmd *exec.Cmd
 	if h.IsLocal() {
 		cmd = exec.Command("sh", "-c", script)
 	} else {
-		cmd = exec.Command("ssh", append(sshArgs(h, false, "-t"), script)...)
+		tty := "-T"
+		if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+			tty = "-t"
+		}
+		cmd = exec.Command("ssh", append(sshArgs(h, false, tty), script)...)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()

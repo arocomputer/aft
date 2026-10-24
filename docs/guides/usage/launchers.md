@@ -20,8 +20,17 @@ not configured, hooked or wrapped; any program that runs in a terminal works.
 
 ```sh
 aft agents add gemini      # a launcher for another program
+aft tools add git gh       # commands that run on the server, once each
 aft exec -- make test      # one command on the server, no session
 ```
+
+**Agents and tools.** An agent, such as `claude`, starts in a session: it
+survives disconnects and you reattach to it. A tool, such as `git` or `gh`,
+runs once: in a project that is on, `git status` runs on the server in the
+matching directory over the shared connection, with your terminal or your
+pipes, and returns the command's exit code. Elsewhere it runs the local
+command. Tools are opt-in, since a launcher sits in front of every call to that
+name on the machine.
 
 Setup creates launchers for `claude`, `codex`, `opencode`, `pi`, `gemini`,
 `amp`, `aider` and `goose`. Edit `agents` in the config to change the list.

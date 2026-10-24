@@ -46,9 +46,10 @@ From then on, starting `claude`, `codex`, `opencode`, `pi` or any program with a
 launcher from inside that directory runs it, on the host. `aft off` turns it
 back off. Nothing else changes.
 
-To start from a repository that only exists remotely, `aft clone URL` clones
-it, on the host, creates an empty local directory to stand for it, and turns
-it on.
+To start from a repository that only exists remotely, make an empty local
+directory for it and run `aft on` there; it offers to create the directory on
+the host. With `git` set up as a tool (see [Launchers](../usage/launchers.md)),
+`git clone URL .` then clones it on the host.
 
 ## Settings
 

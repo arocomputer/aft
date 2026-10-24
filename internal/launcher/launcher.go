@@ -26,8 +26,10 @@ import (
 // PassEnv are variables that always cross to the server.
 var PassEnv = []string{"TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "LANG", "LC_ALL", "LC_CTYPE"}
 
-// Launch runs when aft is invoked through a shim named after an agent. Inside
-// a session it always runs the real program, so a session never nests.
+// Launch runs when aft is invoked through a launcher named after an agent or a
+// tool. In a project that is on, an agent starts in a session on the host and a
+// tool runs there once; elsewhere either runs locally. Inside a session it
+// always runs the real program, so a session never nests.
 func Launch(name string, args []string) int {
 	if os.Getenv("AFT_SESSION") != "" {
 		return execReal(name, args)
@@ -60,21 +62,54 @@ func Launch(name string, args []string) int {
 		fmt.Fprintln(os.Stderr, "aft:", err)
 		return 1
 	}
+	if cfg.IsTool(name) {
+		if h.IsLocal() {
+			return execReal(name, args)
+		}
+		return RunTool(h, config.RemoteDir(root, p, cwd), opts.Wrapper, append([]string{name}, args...))
+	}
 	opts.Host = h
 	opts.Command = append([]string{name}, args...)
 	opts.Dir = config.RemoteDir(root, p, cwd)
 	// Reattach to an existing detached session for this agent in this directory
 	// rather than starting a second one.
-	if id := existingSession(h, name, opts.Dir); id != "" {
+	if id := ExistingSession(h, opts.Dir, func(r session.Record) bool { return r.Command[0] == name }); id != "" {
 		ui.Note("reattaching to %s %s", id, ui.Dim("· aft kill "+id+" starts a fresh one"))
 		opts.SessionID = id
 	}
 	return terminal.Run(opts)
 }
 
-// existingSession returns the id of a session running the same agent in the
-// same server directory, or empty. Errors mean "start fresh".
-func existingSession(h transport.Host, name, dir string) string {
+// RunTool runs argv once on h in dir (none for the login directory), inside
+// wrapper if one is set, with this terminal or these pipes, and returns its
+// exit code.
+func RunTool(h transport.Host, dir string, wrapper, argv []string) int {
+	if err := transport.EnsureMaster(h); err != nil {
+		ui.Error("%v", err)
+		return 255
+	}
+	words := append(append([]string{}, wrapper...), argv...)
+	for i, w := range words {
+		words[i] = transport.Quote(w)
+	}
+	script := "exec " + strings.Join(words, " ")
+	if dir != "" {
+		script = "cd " + transport.Quote(dir) + " && " + script
+	}
+	if err := transport.Shell(h, script); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode()
+		}
+		ui.Error("%v", err)
+		return 255
+	}
+	return 0
+}
+
+// ExistingSession returns the id of a session in dir on h that match accepts,
+// or empty. Errors mean "start fresh".
+func ExistingSession(h transport.Host, dir string, match func(session.Record) bool) string {
 	out, err := transport.Output(h, nil, "ls")
 	if err != nil {
 		return ""
@@ -84,7 +119,7 @@ func existingSession(h transport.Host, name, dir string) string {
 		return ""
 	}
 	for _, r := range recs {
-		if len(r.Command) > 0 && r.Command[0] == name && r.Dir == dir {
+		if len(r.Command) > 0 && r.Dir == dir && match(r) {
 			return r.ID
 		}
 	}

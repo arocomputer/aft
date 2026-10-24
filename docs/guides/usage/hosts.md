@@ -113,8 +113,8 @@ When you start an agent or open a shell, Aft decides the host in this order:
 it with a verb rather than editing the file:
 
 ```sh
-aft use studio    # use studio by default from now on
-aft use           # print the host currently used by default
+aft host use studio    # use studio by default from now on
+aft host use           # print the host currently used by default
 ```
 
 ```toml

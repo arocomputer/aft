@@ -68,9 +68,16 @@ stays on your machine, and typing feels local.
   machine that is also its own host never nests.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
-- `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft kill`, `aft clone`,
-  `aft exec`, `aft status`, `aft doctor`, `aft ports`, `aft host`, `aft use`
-  and `aft agents add`.
+- `aft shell`, `aft ls`, `aft attach`, `aft kill`, `aft exec`, `aft status`,
+  `aft doctor`, `aft host` (with `add`, `rm` and `use`), `aft agents add` and
+  `aft tools add`.
+- Tools: `aft tools add git gh` makes those commands run once on the server,
+  in the project's directory, wherever aft is on, with the terminal or pipes
+  passed through and the exit code returned. Agents still run in sessions.
+- `aft shell` comes back to the shell already open in the same directory.
+- A session detaches when its terminal goes away: a closed tab, another
+  computer attaching, or a laptop that sleeps, which the client's heartbeat
+  reveals within thirty seconds. `aft ls` shows which sessions are attached.
 - `aft doctor` groups its checks by machine and ends each problem with the exact
   command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
   stale or missing server, re-add the PATH line), `--json` prints findings for
@@ -80,7 +87,7 @@ stays on your machine, and typing feels local.
 - Multiple hosts are first class. Name each in `~/.aft/config.toml` under a
   singular `[host.<name>]` table, and manage them with `aft host` (list),
   `aft host add NAME DEST` (add and install) and `aft host rm`. The host used
-  when `--host` is omitted is the top-level `use` key, set with `aft use NAME`;
+  when `--host` is omitted is the top-level `use` key, set with `aft host use NAME`;
   with a single host it is implicit, so no `use` line is needed. Pick one per
   command with `--host`, or pin a project to a host for every machine by
   committing `host = "..."` in `aft.toml`.
@@ -101,6 +108,10 @@ stays on your machine, and typing feels local.
   `aft mount`.
 
 ### Removed
+
+- `aft detach` (detaching follows the terminal), `aft clone` (`aft on` offers
+  to clone or create the directory), and `aft ports` and `aft use`, now part of
+  `aft status` and `aft host`.
 
 - Workspaces, project records, `connect`, `open`, `run`, port watch, systemd and
   launchd services, migration, the picker and the dry-run uninstall.

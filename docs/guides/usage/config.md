@@ -75,6 +75,7 @@ nothing to undo.
 ```toml
 use          = "mini"          # host used when --host is omitted (optional with one host)
 agents       = ["claude", "codex", "opencode", "pi"]
+tools        = ["git", "gh"]   # run once on the host where aft is on; none by default
 predict      = true
 prefix       = "ctrl-]"        # opens copy mode (prefix then [) and detach (then d); "" disables
 detach       = ""              # a second, direct detach key; off by default

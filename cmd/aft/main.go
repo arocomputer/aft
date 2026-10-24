@@ -24,26 +24,25 @@ var commands = []struct {
 		{"setup", "", "add a host, create launchers, add the PATH block"},
 		{"on", "[--host H] [--dir D]", "agents started in this directory run on the host"},
 		{"off", "", "run them locally again"},
-		{"clone", "URL [DIR]", "clone on the server, create a local handle, turn it on"},
 	}},
 	{"Sessions", [][3]string{
 		{"shell", "[--host H]", "a lag-free shell on the server"},
 		{"ls", "", "sessions on every host"},
 		{"attach", "[NAME]", "reattach to a session"},
-		{"detach", "NAME", "detach whoever is attached"},
 		{"kill", "NAME", "stop a session"},
 	}},
 	{"Hosts", [][3]string{
-		{"host", "[add|rm]", "list your hosts, or add or remove one"},
-		{"use", "[NAME]", "show or set the host used when --host is omitted"},
-		{"exec", "[--host H] -- CMD", "run one command on the server"},
-		{"ports", "", "mirrored ports"},
+		{"host", "[add|rm|use]", "list your hosts, add or remove one, pick the default"},
 		{"mount", "list|add|remove", "map a network-mounted folder"},
 	}},
+	{"Launchers", [][3]string{
+		{"agents add", "NAME...", "programs that run in sessions on the server"},
+		{"tools add", "NAME...", "commands like git and gh that run there once"},
+		{"exec", "[--host H] -- CMD", "run one command on the server"},
+	}},
 	{"Maintain", [][3]string{
-		{"status", "", "where you are, hosts, sessions, projects"},
+		{"status", "", "where you are, hosts, sessions, ports, projects"},
 		{"doctor", "[--fix]", "check SSH, server, agents, launchers, shell block"},
-		{"agents add", "NAME", "launch another program through Aft"},
 		{"uninstall", "", "remove everything Aft added, everywhere"},
 		{"completion", "bash|zsh|fish", "shell completion"},
 		{"version", "", "print the version"},
@@ -134,36 +133,28 @@ func run(cmd string, args []string) int {
 		return cmdSetup(args)
 	case "host":
 		return cmdHost(args)
-	case "use":
-		return cmdUse(args)
 	case "on":
 		return cmdOn(args)
 	case "off":
 		return cmdOff(args)
-	case "clone":
-		return cmdClone(args)
 	case "shell":
 		return cmdShell(args)
 	case "ls":
 		return cmdLs(args)
 	case "attach":
 		return cmdAttach(args)
-	case "detach":
-		return cmdControl("kick", args)
 	case "kill":
-		return cmdControl("end", args)
+		return cmdKill(args)
 	case "status":
 		return cmdStatus(args)
 	case "doctor":
 		return cmdDoctor(args)
 	case "exec":
 		return cmdExec(args)
-	case "ports":
-		return cmdPorts(args)
 	case "mount":
 		return cmdMount(args)
-	case "agents":
-		return cmdAgents(args)
+	case "agents", "tools":
+		return cmdLaunchers(cmd, args)
 	case "uninstall":
 		return cmdUninstall(args)
 	case "selftest":

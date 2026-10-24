@@ -45,7 +45,7 @@ var Version = "dev"
 // binary by itself, or the aft binary followed by "server".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|kick|setup|info|listeners|clipboard-put")
+		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|setup|info|listeners|clipboard-put")
 		return 2
 	}
 	self, err := os.Executable()
@@ -92,7 +92,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		json.NewEncoder(stdout).Encode(list)
 		return 0
-	case "end", "kick":
+	case "end":
 		if len(args) != 2 {
 			fmt.Fprintf(stderr, "usage: server %s ID|--all\n", args[0])
 			return 2
@@ -113,8 +113,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				code = 2
 				continue
 			}
-			t := kindFor(args[0])
-			if err := Control(id, t); err != nil {
+			if err := Control(id, proto.End); err != nil {
 				fmt.Fprintln(stderr, err)
 				code = 1
 			}
@@ -166,7 +165,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		// Ends every session and removes Aft's directory on this machine.
 		list, _ := List()
 		for _, r := range list {
-			Control(r.ID, kindFor("end"))
+			Control(r.ID, proto.End)
 		}
 		for _, d := range []string{home.Dir(), home.Data(), home.Temp()} {
 			if err := os.RemoveAll(d); err != nil {
@@ -274,12 +273,4 @@ func FileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// kindFor maps the end and kick subcommands to their control frames.
-func kindFor(cmd string) proto.Type {
-	if cmd == "kick" {
-		return proto.Kick
-	}
-	return proto.End
 }

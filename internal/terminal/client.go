@@ -258,6 +258,9 @@ func (c *session) loop(proc *transport.Proc) int {
 	defer signal.Stop(winch)
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
+	// Heartbeats let the session tell a closed lid from a quiet terminal.
+	beat := time.NewTicker(10 * time.Second)
+	defer beat.Stop()
 
 	connected := true
 	frames := c.readFrames(proc)
@@ -301,6 +304,10 @@ func (c *session) loop(proc *transport.Proc) int {
 			}
 		case <-tick.C:
 			c.pred.Tick()
+		case <-beat.C:
+			if connected {
+				c.send(proto.Ping, nil)
+			}
 		case u := <-c.uploads:
 			if !c.finishUpload(u) {
 				return 0
@@ -563,7 +570,7 @@ func (c *session) reconnect(keys <-chan []byte) (*transport.Proc, []byte, error)
 	}
 }
 
-// writeMirrors records the currently mirrored ports so `aft ports` can report
+// writeMirrors records the currently mirrored ports so `aft status` can report
 // them. It is keyed by session id and removed when the client exits.
 func (c *session) writeMirrors() {
 	if c.id == "" {

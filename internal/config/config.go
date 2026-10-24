@@ -19,6 +19,7 @@ import (
 )
 
 // DefaultAgents are the launchers setup creates when they are installed.
+// Agents run in sessions; tools, which people add themselves, run once.
 var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
 
 // Config is ~/.aft/config.toml. Top-level keys set defaults; a [host.<name>]
@@ -27,6 +28,7 @@ var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp
 type Config struct {
 	Use          string                `toml:"use,omitempty"` // the host used when none is given; a lone host needs no line
 	Agents       []string              `toml:"agents"`
+	Tools        []string              `toml:"tools,omitempty"` // commands like git and gh that run once on the host, not in a session
 	Predict      *bool                 `toml:"predict,omitempty"`
 	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
 	DetachKey    string                `toml:"detach,omitempty"`        // key after the prefix that detaches
@@ -139,6 +141,20 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 func (c Config) EditingDotfiles() bool { return c.EditDotfiles == nil || *c.EditDotfiles }
 
 // Path is the config file.
+// Launched is every name with a launcher: the agents, then the tools.
+func (c Config) Launched() []string { return append(append([]string{}, c.Agents...), c.Tools...) }
+
+// IsTool reports whether name is a tool, which runs once rather than in a
+// session.
+func (c Config) IsTool(name string) bool {
+	for _, t := range c.Tools {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
 func Path() string { return filepath.Join(home.Dir(), "config.toml") }
 
 // StatePath is the state file.
