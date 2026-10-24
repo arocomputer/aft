@@ -82,9 +82,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		// arguments starts the session first. Either prints how to reach it,
 		// so a client needs one round trip.
 		var id string
+		started := false
 		if len(args) == 2 && ValidID(args[1]) {
 			id = args[1]
 		} else {
+			started = true
 			o, err := parseSessionArgs("udp", args[1:])
 			if err != nil {
 				fmt.Fprintln(stderr, err)
@@ -97,7 +99,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			id = o.ID
 		}
 		offer, err := OfferUDP(id)
-		if err != nil && len(args) == 2 {
+		if err != nil && !started {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

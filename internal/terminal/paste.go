@@ -61,9 +61,11 @@ func isPasteKey(b []byte) bool {
 	return err == nil && m > 0 && (m-1)&(4|8) != 0
 }
 
-// startUpload begins uploading the files named by a paste token and returns
-// true, or returns false when the paste is not a list of local files and
-// should be sent as is. The result arrives on c.uploads; keys typed meanwhile
+// startUpload handles a paste token that names local files and returns true;
+// it returns false when the paste should be sent as is: not a list of local
+// files, or one naming a path outside where files are dropped from. Files on
+// a mounted folder are pasted as their server paths at once. Others upload in
+// the background: the result arrives on c.uploads, and keys typed meanwhile
 // are held, so the input loop never waits on the network.
 func (c *session) startUpload(t Token) bool {
 	if c.o.Host.IsLocal() || !bytes.HasSuffix(t.Bytes, pasteEnd) {
@@ -112,7 +114,7 @@ func (c *session) startUpload(t Token) bool {
 	}
 	c.title("aft · uploading " + what + " · Ctrl-C cancels")
 	ctx, cancel := context.WithCancel(context.Background())
-	c.cancelUpload = cancel
+	c.uploadCtx, c.cancelUpload = ctx, cancel
 	host := c.o.Host
 	go func() {
 		defer cancel()
@@ -126,14 +128,21 @@ func (c *session) startUpload(t Token) bool {
 	return true
 }
 
+// uploading reports whether an upload is still running, so a Ctrl-C can
+// still cancel it; once it has finished, Ctrl-C is an ordinary held key.
+func (c *session) uploading() bool { return c.uploadCtx != nil && c.uploadCtx.Err() == nil }
+
 // finishUpload sends the paste an upload produced and then the keys held
 // while it ran. It returns false when a held key asks the client to leave.
 func (c *session) finishUpload(u uploadResult) bool {
 	c.holding = false
-	c.cancelUpload = nil
+	c.uploadCtx, c.cancelUpload = nil, nil
 	c.title(c.pred.Title())
 	if errors.Is(u.err, context.Canceled) {
-		// Ctrl-C: the user took the paste back; send nothing for it.
+		// Ctrl-C: the user took the paste back. Its start marker has gone
+		// out already, so close it with nothing in between, or the app would
+		// take every later key as pasted text.
+		c.send(proto.Input, pasteEnd)
 		c.flash("aft · upload cancelled")
 		held := c.held
 		c.held = nil

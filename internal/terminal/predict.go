@@ -116,7 +116,7 @@ func (p *Predictor) Output(b []byte) error {
 	if p.displaced && p.shadow.InGround() {
 		// Put the real cursor and attributes back where the server left them.
 		c := p.shadow.Cursor()
-		fix := vt.CUP(c.Row, c.Col) + vt.SGR(c.Attr)
+		fix := p.serverCursor() + vt.SGR(c.Attr)
 		if _, err := p.w.Write([]byte(fix)); err != nil {
 			return err
 		}
@@ -529,15 +529,37 @@ func (p *Predictor) Notice(text string) {
 	cols, _ := p.shadow.Size()
 	text = runewidth.Truncate(text, cols, "")
 	out := vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(cols-runewidth.StringWidth(text), 0)) + "\x1b[0m"
-	row, col := p.realRow, p.realCol
-	if !p.posKnown {
-		cur := p.shadow.Cursor()
-		row, col = cur.Row, cur.Col
-	}
-	p.w.Write([]byte(out + vt.CUP(row, col)))
-	p.realRow, p.realCol, p.posKnown = row, col, true
+	p.w.Write([]byte(out + p.cursorBack()))
 	p.penKnown = false
 	p.displaced = true
+}
+
+// serverCursor moves the real cursor to the shadow's, wrap state included:
+// at the last column with a wrap pending, the next character starts a new
+// line, which a plain move would forget. Reprinting the last cell restores
+// it, as it is how the terminal got there.
+func (p *Predictor) serverCursor() string {
+	cur := p.shadow.Cursor()
+	if !cur.Wrap {
+		return vt.CUP(cur.Row, cur.Col)
+	}
+	cols, _ := p.shadow.Size()
+	col := cols - 1
+	cell := p.shadow.Cell(cur.Row, col)
+	if cell.Width == 0 && col > 0 {
+		col-- // the last cell is the right half of a wide character
+		cell = p.shadow.Cell(cur.Row, col)
+	}
+	return vt.CUP(cur.Row, col) + vt.SGR(cell.Attr) + cellRune(cell)
+}
+
+// cursorBack returns the real cursor to where it was before an overlay was
+// drawn: where predictions left it, or the server's cursor.
+func (p *Predictor) cursorBack() string {
+	if p.posKnown {
+		return vt.CUP(p.realRow, p.realCol)
+	}
+	return p.serverCursor()
 }
 
 // RestoreRow redraws one row from the shadow, taking back a notice drawn
@@ -557,13 +579,7 @@ func (p *Predictor) RestoreRow(r int) {
 		}
 		out += vt.SGR(cell.Attr) + cellRune(cell)
 	}
-	row, col := p.realRow, p.realCol
-	if !p.posKnown {
-		cur := p.shadow.Cursor()
-		row, col = cur.Row, cur.Col
-	}
-	p.w.Write([]byte(out + vt.CUP(row, col)))
-	p.realRow, p.realCol, p.posKnown = row, col, true
+	p.w.Write([]byte(out + p.cursorBack()))
 	p.penKnown = false
 	p.displaced = true
 }

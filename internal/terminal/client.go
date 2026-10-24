@@ -8,6 +8,7 @@ package terminal
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -151,7 +152,9 @@ type session struct {
 	command []string      // what the session runs, for the leaving message
 	unflash chan struct{} // a flashed notice is due to be taken down
 
-	cancelUpload func() // stops the paste upload in progress, if any
+	greeted      bool               // the current connection got the session's hello
+	cancelUpload context.CancelFunc // stops the paste upload in progress
+	uploadCtx    context.Context    // done once the upload has finished or stopped
 
 	offer      *udp.Offer // how to reach the session over UDP, once it offered
 	udpAddr    string     // the host's address for UDP
@@ -210,6 +213,7 @@ func (c *session) open(first bool) (link, error) {
 // use makes l the connection the writer and reader use, and sends the
 // handshake.
 func (c *session) use(l link) error {
+	c.greeted = false // until this connection's hello arrives
 	c.wmu.Lock()
 	c.wr, c.rd = l, l
 	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
@@ -474,12 +478,13 @@ func (c *session) readFrames(proc link) <-chan frameOrErr {
 
 // handleKeys routes input: to copy mode when open, to a prefix command when the
 // prefix was just pressed, otherwise to the application with prediction. While
-// a pasted file uploads, every key is held and replayed after the paste. It
-// returns false when the client should leave (the user detached).
+// a pasted file uploads, keys are held and replayed after the paste, except
+// Ctrl-C, which cancels the upload. It returns false when the client should
+// leave (the user detached).
 func (c *session) handleKeys(toks []Token) bool {
 	for _, t := range toks {
 		switch {
-		case c.holding && len(t.Bytes) == 1 && t.Bytes[0] == 0x03 && c.cancelUpload != nil:
+		case c.holding && len(t.Bytes) == 1 && t.Bytes[0] == 0x03 && c.uploading():
 			c.cancelUpload() // Ctrl-C while a pasted file uploads cancels it
 		case c.holding:
 			c.held = append(c.held, t)
@@ -643,6 +648,7 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		var h proto.HelloInfo
 		if json.Unmarshal(f.Payload, &h) == nil {
 			c.id = h.ID
+			c.greeted = true
 			if len(h.Command) > 0 {
 				c.command = h.Command
 			}
@@ -716,9 +722,13 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			}
 		}
 		if err := transport.EnsureMasterBatch(c.o.Host); err == nil {
-			// The host is back; reattaching only makes sense if the session is.
-			if ended := c.ended(); ended != nil {
-				return nil, nil, ended
+			// The host is back. If the last connection ended before the
+			// session even greeted it, the session may be gone: ask, rather
+			// than reattach forever. After an ordinary drop, skip the question.
+			if !c.greeted {
+				if ended := c.ended(); ended != nil {
+					return nil, nil, ended
+				}
 			}
 			if proc, err := c.open(false); err == nil {
 				c.pred.Reset()
@@ -756,7 +766,9 @@ func (sessionEnded) Error() string { return "the session ended" }
 // ended asks the host whether this client's session still runs. It returns
 // nil when it does, or when the host cannot say, so reconnecting goes on.
 func (c *session) ended() error {
-	out, err := transport.Output(c.o.Host, nil, "ls", "--all")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := transport.OutputContext(ctx, c.o.Host, nil, "ls", "--all")
 	if err != nil {
 		return nil
 	}

@@ -106,14 +106,23 @@ func controlPath() string { return filepath.Join(home.Sockets(), "cm-%C") }
 // sshArgs builds the arguments for one ssh invocation: shared options, the
 // host's own options, then the destination.
 func sshArgs(h Host, batch bool, extra ...string) []string {
+	return sshArgsWithin(h, batch, connectTimeout, extra...)
+}
+
+// connectTimeout is how long SSH tries to reach a host, in seconds: an
+// offline host fails in seconds, not minutes.
+const connectTimeout = 10
+
+// sshArgsWithin is sshArgs giving up on connecting after secs seconds.
+func sshArgsWithin(h Host, batch bool, secs int, extra ...string) []string {
 	hostOpts, dest := h.sshDest()
-	args := append(sshOptions(h, batch), hostOpts...)
+	args := append(sshOptions(h, batch, secs), hostOpts...)
 	args = append(args, extra...)
 	return append(args, "--", dest)
 }
 
 // sshOptions are shared by every ssh invocation.
-func sshOptions(h Host, batch bool) []string {
+func sshOptions(h Host, batch bool, connectSecs int) []string {
 	persist, alive := 600, 5
 	if h.Persist > 0 {
 		persist = h.Persist
@@ -126,7 +135,7 @@ func sshOptions(h Host, batch bool) []string {
 		"-o", "ControlPath=" + controlPath(),
 		"-o", fmt.Sprintf("ControlPersist=%d", persist),
 		"-o", fmt.Sprintf("ServerAliveInterval=%d", alive),
-		"-o", "ConnectTimeout=10", // an offline host fails in seconds, not minutes
+		"-o", fmt.Sprintf("ConnectTimeout=%d", connectSecs),
 		"-o", "ServerAliveCountMax=3",
 	}
 	if batch {
@@ -169,7 +178,7 @@ func MasterAlive(h Host) bool {
 
 // EnsureMasterBatch connects without a terminal, so it never prompts: for use
 // while attached, or behind a spinner.
-func EnsureMasterBatch(h Host) error { return EnsureMasterWithin(h, 10) }
+func EnsureMasterBatch(h Host) error { return EnsureMasterWithin(h, connectTimeout) }
 
 // EnsureMasterWithin is EnsureMasterBatch giving up on an unreachable host
 // after secs seconds, for listings that should not wait on an offline machine.
@@ -182,13 +191,7 @@ func EnsureMasterWithin(h Host, secs int) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	args := sshArgs(h, true, "-fN")
-	for i, a := range args {
-		if strings.HasPrefix(a, "ConnectTimeout=") {
-			args[i] = fmt.Sprintf("ConnectTimeout=%d", secs)
-		}
-	}
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", sshArgsWithin(h, true, secs, "-fN")...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
