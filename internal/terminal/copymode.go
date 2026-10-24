@@ -225,6 +225,7 @@ func (c *copyMode) view() []byte {
 }
 
 // status is the text of the bottom bar: the mode, position and any search.
+// It names no keys: they are the usual pager keys, listed in the guide.
 func (c *copyMode) status() string {
 	if c.searching {
 		return " search: " + string(c.query)
@@ -237,9 +238,7 @@ func (c *copyMode) status() string {
 	if c.selecting {
 		mode = "SELECT"
 	}
-	hint := "  ↑↓ scroll · / search · v select · y copy · q quit"
-	left := " " + mode + " " + pos
-	return left + hint
+	return " " + mode + " " + pos
 }
 
 // writeCells draws one row with each cell's own style, padded to width. In a
@@ -253,8 +252,8 @@ func writeCells(b *bytes.Buffer, cells []vt.Cell, width int, plain bool) {
 		if cell.Width == 0 {
 			continue
 		}
-		if n >= width {
-			break
+		if n+int(cell.Width) > width {
+			break // a wide character must not spill past the last column
 		}
 		if !plain && (first || cell.Attr != cur) {
 			b.WriteString(vt.SGR(cell.Attr))

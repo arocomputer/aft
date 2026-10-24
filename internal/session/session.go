@@ -690,6 +690,9 @@ func (s *Session) bridge(req proto.BridgeRequest) proto.BridgeResponse {
 		s.bridgeMu.Unlock()
 		return proto.BridgeResponse{OK: false, Error: "the client did not answer"}
 	case <-c.done:
+		s.bridgeMu.Lock()
+		delete(s.waiting, req.ID)
+		s.bridgeMu.Unlock()
 		return proto.BridgeResponse{OK: false, Error: "the client disconnected"}
 	}
 }

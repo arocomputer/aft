@@ -296,3 +296,57 @@ func TestRenderBlankRowAfterColoredRow(t *testing.T) {
 		t.Fatal("the colored row lost its background")
 	}
 }
+
+// TestCursorMovesFreelyOutsideTheRegion keeps CUU and CUD inside the scroll
+// region when the cursor is in it, and lets a cursor placed outside it move
+// over the rest of the screen, as on a VT.
+func TestCursorMovesFreelyOutsideTheRegion(t *testing.T) {
+	v := New(20, 10)
+	v.Write([]byte("\x1b[3;6r\x1b[9;1H\x1b[2B")) // region rows 3-6; cursor on row 9, down 2
+	if r := v.Cursor().Row; r != 9 {
+		t.Fatalf("below the region, down moved to row %d, want 9 (the last row)", r)
+	}
+	v.Write([]byte("\x1b[1A"))
+	if r := v.Cursor().Row; r != 8 {
+		t.Fatalf("below the region, up moved to row %d, want 8", r)
+	}
+	v.Write([]byte("\x1b[4;1H\x1b[5A"))
+	if r := v.Cursor().Row; r != 2 {
+		t.Fatalf("inside the region, up stopped at row %d, want 2 (its top)", r)
+	}
+}
+
+// TestRepeatPrintsTheLastCharacter handles CSI b, which ncurses emits for
+// runs of one character; after a cursor move there is nothing to repeat.
+func TestRepeatPrintsTheLastCharacter(t *testing.T) {
+	v := New(20, 2)
+	v.Write([]byte("ab\x1b[3b"))
+	if got := v.Line(0); got != "abbbb" {
+		t.Fatalf("got %q, want abbbb", got)
+	}
+	v.Write([]byte("\x1b[1;1H\x1b[2b"))
+	if got := v.Line(0); got != "abbbb" {
+		t.Fatalf("a repeat after a cursor move printed: %q", got)
+	}
+}
+
+// TestLineDrawingCharset maps the DEC special graphics set that smacs
+// selects, switches with SO and SI, and survives a repaint mid-box.
+func TestLineDrawingCharset(t *testing.T) {
+	v := New(20, 2)
+	v.Write([]byte("\x1b(0lqk\x1b(Bx"))
+	if got := v.Line(0); got != "┌─┐x" {
+		t.Fatalf("G0 graphics: got %q", got)
+	}
+	v.Write([]byte("\x1b)0\x0emq\x0fq"))
+	if got := v.Line(0); got != "┌─┐x└─q" {
+		t.Fatalf("G1 via shift out: got %q", got)
+	}
+	v.Write([]byte("\x0e"))
+	again := New(20, 2)
+	again.Write(v.Render(RenderOptions{}))
+	again.Write([]byte("j"))
+	if got := again.Line(0); got != "┌─┐x└─q┘" {
+		t.Fatalf("after a repaint the shifted-in set was lost: %q", got)
+	}
+}

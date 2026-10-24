@@ -159,6 +159,12 @@ stays on your machine, and typing feels local.
   row in the color the row above had left in the pen, which showed as gray
   squares under Codex's input box when a terminal joined while it was still
   loading.
+- The shadow terminal follows ncurses applications exactly: DEC line drawing
+  (box characters through `smacs`), the repeat-character sequence that the
+  xterm terminfos advertise, and cursor movement that treats a cursor outside
+  the scroll region the way a VT does. A repaint restores the character sets
+  too, so an application drawing a box keeps drawing lines after a reattach.
+- Copy mode's status bar names no keys; the guide lists them.
 - `aft completion` completes hosts and session names, not just commands.
   `aft ls` with nothing running says how to start one, `aft` alone on a fresh
   install says to run `aft setup`, and `aft doctor` sees launchers put on PATH

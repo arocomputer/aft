@@ -107,6 +107,26 @@ type Modes struct {
 	CursorStyle    int // DECSCUSR argument, 0 default
 }
 
+// charsets is the G0/G1 designation and which of them is shifted in.
+type charsets struct {
+	g0Graphics, g1Graphics bool
+	shiftOut               bool // G1 is in use
+}
+
+// graphics reports whether printed ASCII goes through the special graphics set.
+func (c charsets) graphics() bool {
+	if c.shiftOut {
+		return c.g1Graphics
+	}
+	return c.g0Graphics
+}
+
+// decGraphics maps the DEC special graphics set, 0x60 to 0x7E, to Unicode.
+var decGraphics = [...]rune{
+	'◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺',
+	'⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
+}
+
 // Terminal is the emulator. It is not safe for concurrent use.
 type Terminal struct {
 	cols, rows int
@@ -119,6 +139,13 @@ type Terminal struct {
 	modes      Modes
 	title      string
 	gen        uint64
+	repeat     rune // the last printed character, which CSI b repeats; 0 after anything else
+
+	// Character sets: G0 and G1 may each be designated as the DEC special
+	// graphics set, which ncurses uses for box drawing (smacs is ESC ( 0),
+	// and SO/SI shift between them. Saved and restored with the cursor.
+	charset      charsets
+	savedCharset [2]charsets // main, alt
 
 	scrollback    [][]Cell
 	maxScrollback int
@@ -385,10 +412,14 @@ func (t *Terminal) set(row, col int, c Cell) {
 }
 
 func (t *Terminal) print(r rune) {
+	if r >= 0x60 && r <= 0x7E && t.charset.graphics() {
+		r = decGraphics[r-0x60]
+	}
 	w := runewidth.RuneWidth(r)
 	if w == 0 {
 		return
 	}
+	t.repeat = r
 	if t.cur.Wrap {
 		if t.modes.AutoWrap {
 			t.cur.Col = 0
@@ -616,17 +647,17 @@ func (t *Terminal) setAltScreen(on bool, saveCursor bool) {
 
 func (t *Terminal) saveCursor() {
 	if t.modes.AltScreen {
-		t.savedAlt = t.cur
+		t.savedAlt, t.savedCharset[1] = t.cur, t.charset
 	} else {
-		t.savedMain = t.cur
+		t.savedMain, t.savedCharset[0] = t.cur, t.charset
 	}
 }
 
 func (t *Terminal) restoreCursor() {
 	if t.modes.AltScreen {
-		t.cur = t.savedAlt
+		t.cur, t.charset = t.savedAlt, t.savedCharset[1]
 	} else {
-		t.cur = t.savedMain
+		t.cur, t.charset = t.savedMain, t.savedCharset[0]
 	}
 	t.clampCursor()
 	t.cur.Wrap = false
@@ -638,6 +669,8 @@ func (t *Terminal) reset() {
 	t.modes = modes
 	t.cur = Cursor{}
 	t.savedMain, t.savedAlt = Cursor{}, Cursor{}
+	t.charset, t.savedCharset = charsets{}, [2]charsets{}
+	t.repeat = 0
 	t.title = ""
 	t.resizeTo(cols, rows, true)
 }

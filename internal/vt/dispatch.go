@@ -9,9 +9,14 @@ import (
 
 // control handles a C0 control character in the ground state.
 func (t *Terminal) control(c byte) {
+	t.repeat = 0
 	switch c {
 	case 0x07:
 		t.Bells++
+	case 0x0E:
+		t.charset.shiftOut = true
+	case 0x0F:
+		t.charset.shiftOut = false
 	case 0x08:
 		if t.cur.Col > 0 {
 			t.cur.Col--
@@ -30,6 +35,7 @@ func (t *Terminal) control(c byte) {
 
 // escDispatch handles ESC sequences that are not CSI, OSC or DCS.
 func (t *Terminal) escDispatch(inter []byte, final byte) {
+	t.repeat = 0
 	if len(inter) > 0 {
 		switch {
 		case inter[0] == '#' && final == '8': // DECALN
@@ -39,8 +45,12 @@ func (t *Terminal) escDispatch(inter []byte, final byte) {
 					t.set(r, c, Cell{Rune: 'E', Width: 1})
 				}
 			}
+		case inter[0] == '(': // designate G0: 0 is DEC special graphics, anything else ASCII
+			t.charset.g0Graphics = final == '0'
+		case inter[0] == ')':
+			t.charset.g1Graphics = final == '0'
 		}
-		return // charset designations and the like are ignored
+		return
 	}
 	switch final {
 	case '7':
@@ -94,18 +104,18 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		return
 	}
 	n := param(params, 0, 1)
+	if final != 'b' {
+		t.repeat = 0
+	}
 	switch final {
 	case '@':
 		t.gen++
 		t.insertCells(t.cur.Row, t.cur.Col, n)
 	case 'A':
-		t.cur.Row = max(t.top, t.cur.Row-n)
-		if t.cur.Row < t.top && t.cur.Row > 0 { // cursor above region moves freely
-			t.cur.Row = max(0, t.cur.Row-n)
-		}
+		t.cur.Row = t.up(n)
 		t.cur.Wrap = false
 	case 'B':
-		t.cur.Row = min(t.bot, t.cur.Row+n)
+		t.cur.Row = t.down(n)
 		t.cur.Wrap = false
 	case 'C', 'a':
 		t.cur.Col = min(t.cols-1, t.cur.Col+n)
@@ -114,11 +124,11 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		t.cur.Col = max(0, t.cur.Col-n)
 		t.cur.Wrap = false
 	case 'E':
-		t.cur.Row = min(t.bot, t.cur.Row+n)
+		t.cur.Row = t.down(n)
 		t.cur.Col = 0
 		t.cur.Wrap = false
 	case 'F':
-		t.cur.Row = max(t.top, t.cur.Row-n)
+		t.cur.Row = t.up(n)
 		t.cur.Col = 0
 		t.cur.Wrap = false
 	case 'G', '`':
@@ -149,12 +159,17 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		t.eraseRegion(t.cur.Row, t.cur.Col, t.cur.Row, min(t.cols-1, t.cur.Col+n-1))
 	case 'Z':
 		t.backTab(n)
-	case 'b': // REP: repeat last printed character; approximated as spaces are rare, skip
+	case 'b': // REP: ncurses uses it for runs of one character
+		if t.repeat != 0 {
+			r := t.repeat
+			for ; n > 0; n-- {
+				t.print(r)
+			}
+		}
 	case 'c':
 		t.reply("\x1b[?62;1;2;4;6;9;15;22c")
 	case 'd':
-		t.cur.Row = min(t.rows-1, n-1)
-		t.cur.Wrap = false
+		t.moveTo(n-1, t.cur.Col) // within the region under origin mode
 	case 'g':
 		if param(params, 0, 0) == 3 {
 			for i := range t.tabs {
@@ -208,6 +223,23 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 			t.reply("\x1b[6;16;8t")
 		}
 	}
+}
+
+// up and down move the cursor by n rows, stopping at the scroll region's edge
+// when the cursor is inside the region and at the screen's edge when it is
+// outside, as a VT does.
+func (t *Terminal) up(n int) int {
+	if t.cur.Row >= t.top {
+		return max(t.top, t.cur.Row-n)
+	}
+	return max(0, t.cur.Row-n)
+}
+
+func (t *Terminal) down(n int) int {
+	if t.cur.Row <= t.bot {
+		return min(t.bot, t.cur.Row+n)
+	}
+	return min(t.rows-1, t.cur.Row+n)
 }
 
 func (t *Terminal) ansiModeState(mode int) int {

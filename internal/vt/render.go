@@ -144,6 +144,23 @@ func (t *Terminal) Render(o RenderOptions) []byte {
 	if m.CursorStyle != 0 {
 		fmt.Fprintf(&b, "\x1b[%d q", m.CursorStyle)
 	}
+	// Character sets, so an ncurses application mid-way through drawing a
+	// box keeps drawing lines rather than letters.
+	for _, d := range []struct {
+		intro    string
+		graphics bool
+	}{{"\x1b(", t.charset.g0Graphics}, {"\x1b)", t.charset.g1Graphics}} {
+		if d.graphics {
+			b.WriteString(d.intro + "0")
+		} else {
+			b.WriteString(d.intro + "B")
+		}
+	}
+	if t.charset.shiftOut {
+		b.WriteByte(0x0E)
+	} else {
+		b.WriteByte(0x0F)
+	}
 	if o.Title && t.title != "" {
 		b.WriteString("\x1b]2;" + t.title + "\x1b\\")
 	}

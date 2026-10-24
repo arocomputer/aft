@@ -511,7 +511,7 @@ func (p *Predictor) Absorb(b []byte) {
 func (p *Predictor) Repaint() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.w.Write([]byte("[H[2J"))
+	// Render clears the screen itself before painting it.
 	p.w.Write(p.shadow.Render(vt.RenderOptions{Scrollback: false, Title: true}))
 	p.pending = nil
 	p.caretValid = false
