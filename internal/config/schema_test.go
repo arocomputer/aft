@@ -12,7 +12,7 @@ import (
 // keys. These names are the user-facing contract, so a tag typo must fail here.
 func TestSchemaKeys(t *testing.T) {
 	src := `
-default_host = "mini"
+use = "mini"
 agents = ["claude"]
 detach = "ctrl-]"
 edit_dotfiles = false
@@ -32,7 +32,7 @@ path = "/home/fschr/room"
 	if err := toml.Unmarshal([]byte(src), &c); err != nil {
 		t.Fatal(err)
 	}
-	if c.DefaultHost != "mini" || c.DetachKey != "ctrl-]" {
+	if c.Use != "mini" || c.DetachKey != "ctrl-]" {
 		t.Fatalf("top-level keys wrong: %+v", c)
 	}
 	if c.EditDotfiles == nil || *c.EditDotfiles {

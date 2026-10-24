@@ -45,7 +45,8 @@ stays on your machine, and typing feels local.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
 - `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,
-  `aft exec`, `aft status`, `aft doctor`, `aft ports` and `aft agents add`.
+  `aft exec`, `aft status`, `aft doctor`, `aft ports`, `aft host`, `aft use`
+  and `aft agents add`.
 - `aft doctor` groups its checks by machine and ends each problem with the exact
   command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
   stale or missing server, re-add the PATH line), `--json` prints findings for
@@ -53,10 +54,12 @@ stays on your machine, and typing feels local.
 - macOS and Linux hosts are supported; the server is embedded (gzipped) for both
   on amd64 and arm64.
 - Multiple hosts are first class. Name each in `~/.aft/config.toml` under a
-  singular `[host.<name>]` table, set `default_host`, and manage them with
-  `aft host` (list), `aft host add NAME DEST` (add and install), `aft host rm`
-  and `aft host default`. Pick one per command with `--host`, or pin a project
-  to a host for every machine by committing `host = "..."` in `aft.toml`.
+  singular `[host.<name>]` table, and manage them with `aft host` (list),
+  `aft host add NAME DEST` (add and install) and `aft host rm`. The host used
+  when `--host` is omitted is the top-level `use` key, set with `aft use NAME`;
+  with a single host it is implicit, so no `use` line is needed. Pick one per
+  command with `--host`, or pin a project to a host for every machine by
+  committing `host = "..."` in `aft.toml`.
 - The config is flat and `snake_case`: top-level `env`, `ports` and `detach`
   replace the old `[env] pass`, `[ports] mirror` and `detach_key`, and
   `edit_dotfiles` (a boolean) replaces `path_integration`.

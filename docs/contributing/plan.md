@@ -335,7 +335,7 @@ The server runs on the host as `aft server attach`, `new`, `ls`, `end`,
 `~/.aft/config.toml`:
 
 ```toml
-default_host = "box"
+use = "box"
 agents = ["claude", "codex", "opencode", "pi"]
 predict = true
 detach = ""                  # off by default; nothing is stolen from agents
