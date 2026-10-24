@@ -81,3 +81,17 @@ func TestPastedFilesLeavesTextAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestPastedFilesKeepsMacNarrowSpace reads a dragged screen recording, whose
+// macOS name has a narrow no-break space before PM that terminals do not
+// escape, as one file.
+func TestPastedFilesKeepsMacNarrowSpace(t *testing.T) {
+	dir := t.TempDir()
+	name := "Screen Recording 2026-10-24 at 12.00.12 PM.mov"
+	os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600)
+	paste := strings.ReplaceAll(filepath.Join(dir, name), " ", `\ `)
+	got, ok := PastedFiles(paste)
+	if !ok || len(got) != 1 || filepath.Base(got[0]) != name {
+		t.Fatalf("PastedFiles(%q) = %q, %v", paste, got, ok)
+	}
+}

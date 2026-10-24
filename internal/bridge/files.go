@@ -151,7 +151,10 @@ func splitWords(s string) (words []string, ok bool) {
 			esc, in = true, true
 		case r == '\'' || r == '"':
 			quote, in = r, true
-		case unicode.IsSpace(r):
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			// Only the whitespace a terminal escapes in a dropped path; macOS
+			// names hold a narrow no-break space (before AM or PM) that it
+			// does not escape and that belongs to the name.
 			if in {
 				words = append(words, cur.String())
 				cur.Reset()
