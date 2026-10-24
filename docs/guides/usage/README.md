@@ -1,6 +1,6 @@
 ---
 title: Usage
-description: Sessions, launchers, ports and removal
+description: Sessions, launchers, hosts, ports and removal
 order: 2
 ---
 
