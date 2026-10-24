@@ -19,7 +19,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -59,6 +61,9 @@ type Record struct {
 	Attached bool `json:"attached,omitempty"`
 	// Ended is set on the remains of a session that ended unseen.
 	Ended *Ending `json:"ended,omitempty"`
+	// Bridge is the bridge socket's path, which keeps the session's first
+	// name after a rename, since the application holds it in AFT_BRIDGE.
+	Bridge string `json:"bridge,omitempty"`
 }
 
 // clientGone is how long an attached client that sends heartbeats may stay
@@ -75,8 +80,10 @@ func BridgePath(id string) string { return filepath.Join(home.Sockets(), id+".br
 func RecordPath(id string) string { return filepath.Join(home.Sessions(), id+".json") }
 
 // client is one attached connection with its own writer goroutine, so a slow
-// or dead client never stalls the pty reader. Closing flushes queued frames
-// first, which is how a Detached or Exit notice reaches the client in time.
+// client stalls the pty reader only once its queue is full, and a dead one
+// never: when a write fails the writer closes the client, which releases
+// anyone queuing. Closing flushes queued frames first, which is how a
+// Detached or Exit notice reaches the client in time.
 type client struct {
 	conn net.Conn
 	out  chan []byte
@@ -90,6 +97,7 @@ func newClient(conn net.Conn) *client {
 	go func() {
 		defer close(c.done)
 		defer conn.Close()
+		defer c.close() // a failed write must not leave senders waiting
 		w := bufio.NewWriterSize(conn, 64<<10)
 		write := func(b []byte) bool {
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -128,33 +136,35 @@ func newClient(conn net.Conn) *client {
 // scrollback until it fits: a frame larger than the protocol allows would
 // end the connection instead of opening copy mode.
 func encodeSnapshot(snap vt.SnapshotData) []byte {
+	const room = proto.MaxPayload - 64<<10 // headroom for the frame and uneven lines
 	for {
 		var buf bytes.Buffer
 		if err := gob.NewEncoder(&buf).Encode(snap); err != nil {
 			return nil
 		}
-		if buf.Len() <= proto.MaxPayload || len(snap.Lines) <= snap.Rows {
+		if buf.Len() <= room || len(snap.Lines) <= snap.Rows {
 			return buf.Bytes()
 		}
-		drop := max((len(snap.Lines)-snap.Rows)/4, 1)
+		// The measured size says how many lines must go; one more encode
+		// usually confirms it.
+		perLine := max(buf.Len()/max(len(snap.Lines), 1), 1)
+		drop := min(max((buf.Len()-room)/perLine+1, 1), len(snap.Lines)-snap.Rows)
 		snap.Lines = snap.Lines[drop:]
 		snap.CursorRow = max(snap.CursorRow-drop, 0)
 	}
 }
 
-// send queues one frame; it drops the client if it has gone away. A frame
-// the protocol cannot carry is not sent: the stream must stay decodable.
+// send queues one frame for the writer; it blocks while the queue is full
+// and returns at once once the client is closed. A frame the protocol
+// cannot carry is not sent: the stream must stay decodable.
 func (c *client) send(t proto.Type, payload []byte) {
-	if len(payload) > proto.MaxPayload {
-		log.Printf("frame %x of %d bytes exceeds the protocol limit; not sent", t, len(payload))
+	var buf bytes.Buffer
+	if err := proto.Write(&buf, t, payload); err != nil {
+		log.Printf("frame %x: %v; not sent", t, err)
 		return
 	}
-	var buf []byte
-	hdr := [5]byte{byte(t), byte(len(payload) >> 24), byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload))}
-	buf = append(buf, hdr[:]...)
-	buf = append(buf, payload...)
 	select {
-	case c.out <- buf:
+	case c.out <- buf.Bytes():
 	case <-c.quit:
 	}
 }
@@ -179,7 +189,8 @@ type Session struct {
 	mu       sync.Mutex
 	cur      *client
 	attached bool
-	from     string // the machine the attached client said it is on, for the one it replaced
+
+	ptyDone chan struct{} // closed once readPTY has read the application's last output
 
 	bridgeMu sync.Mutex
 	bridgeID uint32
@@ -232,8 +243,16 @@ func Serve(o Options) error {
 	if self, err := os.Executable(); err == nil {
 		home.InstallShims(self)
 	}
-	s := &Session{opts: o, term: vt.New(o.Cols, o.Rows), waiting: map[uint32]chan proto.BridgeResponse{}, exited: make(chan struct{})}
+	s := &Session{opts: o, term: vt.New(o.Cols, o.Rows), waiting: map[uint32]chan proto.BridgeResponse{}, exited: make(chan struct{}), ptyDone: make(chan struct{})}
 	s.term.Reply = s.replyWhenDetached
+
+	// A live session of this name keeps its record and socket; only a dead
+	// one's socket is cleared away.
+	if c, err := net.Dial("unix", SocketPath(o.ID)); err == nil {
+		c.Close()
+		return fmt.Errorf("session %s is already running", o.ID)
+	}
+	os.Remove(SocketPath(o.ID))
 
 	cmd := buildCommand(o.Wrapper, o.Command)
 	cmd.Dir = o.Dir
@@ -243,23 +262,19 @@ func Serve(o Options) error {
 		return fmt.Errorf("start %s: %w", o.Command[0], err)
 	}
 	s.ptmx, s.cmd = ptmx, cmd
-	s.record = Record{ID: o.ID, Command: o.Command, Dir: o.Dir, PID: cmd.Process.Pid, Server: os.Getpid(), Started: time.Now().UTC().Format(time.RFC3339), Cols: o.Cols, Rows: o.Rows}
+	s.record = Record{ID: o.ID, Command: o.Command, Dir: o.Dir, PID: cmd.Process.Pid, Server: os.Getpid(), Started: time.Now().UTC().Format(time.RFC3339), Cols: o.Cols, Rows: o.Rows, Bridge: BridgePath(o.ID)}
 	if err := writeJSON(RecordPath(o.ID), s.record); err != nil {
 		return err
 	}
 	// The session may be renamed while it runs, so what it leaves behind is
-	// named at the end.
+	// named at the end; the listener must not unlink the name it was given,
+	// which another session may hold by then.
 	defer func() { os.Remove(RecordPath(s.id())) }()
-
-	if c, err := net.Dial("unix", SocketPath(o.ID)); err == nil {
-		c.Close()
-		return fmt.Errorf("session %s is already running", o.ID)
-	}
-	os.Remove(SocketPath(o.ID)) // a socket a dead session left behind
 	ln, err := net.Listen("unix", SocketPath(o.ID))
 	if err != nil {
 		return err
 	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	defer ln.Close()
 	defer func() { os.Remove(SocketPath(s.id())) }()
 	os.Remove(BridgePath(o.ID))
@@ -278,6 +293,12 @@ func Serve(o Options) error {
 
 	err = cmd.Wait()
 	s.exit = exitInfo(err)
+	// The application's last output may still be in the pty: let the reader
+	// have it, so the last screen and the attached terminal get the last words.
+	select {
+	case <-s.ptyDone:
+	case <-time.After(time.Second):
+	}
 	close(s.exited)
 	s.udpMu.Lock()
 	l := s.udp
@@ -366,16 +387,22 @@ func buildCommand(wrapper, argv []string) *exec.Cmd {
 		shell = "/bin/sh"
 	}
 	script := `export PATH="$AFT_SHIMS:$PATH"; exec "$0" "$@"`
+	if filepath.Base(shell) == "fish" {
+		// fish has its own syntax, and hands the arguments over in argv.
+		script = `set -gx PATH $AFT_SHIMS $PATH; exec $argv`
+	}
 	args := append([]string{"-l", "-c", script}, argv...)
 	return exec.Command(shell, args...)
 }
 
+// environment is the application's environment: the server's own, minus
+// what the client sends in its place, plus the session's bridge variables.
 func (s *Session) environment() []string {
 	env := os.Environ()
 	drop := map[string]bool{"AFT_SESSION": true, "AFT_BRIDGE": true, "AFT_SHIMS": true, "TERM": true, "COLORTERM": true, "TERM_PROGRAM": true, "TERM_PROGRAM_VERSION": true, "LANG": true, "LC_ALL": true}
 	out := make([]string, 0, len(env)+len(s.opts.Env)+4)
 	for _, kv := range env {
-		k, _, _ := cutKV(kv)
+		k, _, _ := strings.Cut(kv, "=")
 		if !drop[k] {
 			out = append(out, kv)
 		}
@@ -385,15 +412,8 @@ func (s *Session) environment() []string {
 	return out
 }
 
-func cutKV(kv string) (string, string, bool) {
-	for i := 0; i < len(kv); i++ {
-		if kv[i] == '=' {
-			return kv[:i], kv[i+1:], true
-		}
-	}
-	return kv, "", false
-}
-
+// exitInfo turns the application's wait result into what the client is
+// told: its exit code, or the signal that ended it.
 func exitInfo(err error) proto.ExitInfo {
 	if err == nil {
 		return proto.ExitInfo{Code: 0}
@@ -415,7 +435,11 @@ func (s *Session) replyWhenDetached(b []byte) {
 	}
 }
 
+// readPTY relays the application's output: into the session's screen copy,
+// its record's title, and the attached client. It ends when the pty does,
+// after the application has exited and its last output has been read.
 func (s *Session) readPTY() {
+	defer close(s.ptyDone)
 	buf := make([]byte, 64<<10)
 	for {
 		n, err := s.ptmx.Read(buf)
@@ -494,7 +518,6 @@ func (s *Session) serveClient(conn net.Conn) {
 		old.close()
 	}
 	s.cur = c
-	s.from = from
 	s.attached = true
 	s.record.Attached = true
 	resized := cols != s.record.Cols || rows != s.record.Rows
@@ -503,14 +526,15 @@ func (s *Session) serveClient(conn net.Conn) {
 	} else {
 		writeJSON(RecordPath(s.opts.ID), s.record)
 	}
-	c.sendJSON(proto.Hello, proto.HelloInfo{ID: s.opts.ID, Command: s.opts.Command, Dir: s.opts.Dir, PID: s.record.PID, Cols: cols, Rows: rows, Started: s.record.Started})
-	c.send(proto.Output, s.term.Render(vt.RenderOptions{Scrollback: true, Title: true}))
+	id := s.opts.ID
+	c.sendJSON(proto.Hello, proto.HelloInfo{ID: id, Command: s.opts.Command, Dir: s.opts.Dir, PID: s.record.PID, Cols: cols, Rows: rows, Started: s.record.Started})
+	c.send(proto.Output, s.repaint())
 	s.mu.Unlock()
 	if !resized {
 		// Same size means no SIGWINCH from the resize; ask the app to redraw.
 		syscall.Kill(-s.record.PID, syscall.SIGWINCH)
 	}
-	log.Printf("session %s: client attached (%dx%d)", s.opts.ID, cols, rows)
+	log.Printf("session %s: client attached (%dx%d)", id, cols, rows)
 
 	// A client that sends heartbeats and then goes quiet has gone, even if its
 	// connection has not closed yet, as when a laptop sleeps.
@@ -522,6 +546,12 @@ func (s *Session) serveClient(conn net.Conn) {
 		f, err := proto.Read(r)
 		if err != nil {
 			break
+		}
+		s.mu.Lock()
+		current := s.cur == c
+		s.mu.Unlock()
+		if !current && f.Type != proto.Ping {
+			continue // replaced by another terminal: its frames no longer drive the session
 		}
 		switch f.Type {
 		case proto.Input:
@@ -573,7 +603,18 @@ done:
 	}
 	s.mu.Unlock()
 	c.close()
-	log.Printf("session %s: client detached", s.opts.ID)
+	log.Printf("session %s: client detached", id)
+}
+
+// repaint renders the screen for a terminal that just attached, with as much
+// scrollback as one frame can carry: a history too large to send is left
+// to the terminal's own, and the screen itself always fits.
+func (s *Session) repaint() []byte {
+	out := s.term.Render(vt.RenderOptions{Scrollback: true, Title: true})
+	if len(out) > proto.MaxPayload {
+		out = s.term.Render(vt.RenderOptions{Scrollback: false, Title: true})
+	}
+	return out
 }
 
 // openUDP starts the session's UDP listener, once, and returns how to reach
@@ -640,10 +681,16 @@ func (s *Session) control(c *client, r *bufio.Reader) {
 			}
 		case proto.Ping:
 			c.send(proto.Pong, nil)
+		default:
+			// Answered, so a request a newer client makes never waits on
+			// silence to learn that this server does not know it.
+			c.send(proto.Error, []byte("unknown request"))
 		}
 	}
 }
 
+// resize gives the pty and the screen copy a new size and records it. The
+// caller holds mu.
 func (s *Session) resize(cols, rows int) {
 	s.record.Cols, s.record.Rows = cols, rows
 	s.term.Resize(cols, rows)
@@ -713,19 +760,23 @@ func (s *Session) bridge(req proto.BridgeRequest) proto.BridgeResponse {
 		s.bridgeMu.Lock()
 		delete(s.waiting, req.ID)
 		s.bridgeMu.Unlock()
-		return proto.BridgeResponse{OK: false, Error: "the client disconnected"}
+		return proto.BridgeResponse{OK: false, Error: "the terminal went away before it answered"}
 	}
 }
 
 // pollListeners reports listening TCP ports to the attached client when they
-// change, so the client can mirror them.
+// change, so the client can mirror them. Every client is told the current
+// set once on attach; while the set stays the same the polls spread out,
+// since listing sockets costs real time on some hosts.
 func (s *Session) pollListeners() {
 	var last []int
+	var told *client
+	wait := 3 * time.Second
 	for {
 		select {
 		case <-s.exited:
 			return
-		case <-time.After(3 * time.Second):
+		case <-time.After(wait):
 		}
 		s.mu.Lock()
 		c := s.cur
@@ -738,26 +789,17 @@ func (s *Session) pollListeners() {
 			continue
 		}
 		sort.Ints(ports)
-		if equalInts(ports, last) {
+		if c == told && slices.Equal(ports, last) {
+			wait = min(wait*2, 15*time.Second)
 			continue
 		}
-		last = ports
+		wait = 3 * time.Second
+		last, told = ports, c
 		c.send(proto.Listeners, proto.EncodePorts(ports))
 	}
 }
 
-func equalInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
+// writeJSON writes v as JSON to path, replacing the file in one step.
 func writeJSON(path string, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -796,7 +838,10 @@ func List() ([]Record, error) {
 			}
 			os.Remove(filepath.Join(home.Sessions(), e.Name()))
 			os.Remove(SocketPath(r.ID))
-			os.Remove(BridgePath(r.ID))
+			if r.Bridge == "" {
+				r.Bridge = BridgePath(r.ID)
+			}
+			os.Remove(r.Bridge)
 			continue
 		}
 		out = append(out, r)
@@ -913,11 +958,9 @@ func request(id string, t proto.Type, payload []byte) (proto.Frame, error) {
 	if err := proto.Write(conn, t, payload); err != nil {
 		return proto.Frame{}, err
 	}
-	wait := 5 * time.Second
-	if t == proto.ReqUDP || t == proto.Rename {
-		wait = time.Second // a session from an older server never answers
-	}
-	conn.SetReadDeadline(time.Now().Add(wait))
+	// A session answers every request, even one it does not know; only a
+	// session from an older server stays silent.
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	f, err := proto.Read(bufio.NewReader(conn))
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		err = fmt.Errorf("session %s did not answer; it may have been started by an older server, which a fresh session would not be", id)

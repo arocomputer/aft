@@ -1,6 +1,8 @@
 package session
 
 import (
+	"errors"
+	"io/fs"
 	"math/rand/v2"
 	"os"
 	"slices"
@@ -45,8 +47,13 @@ func NewID() string {
 				continue
 			}
 			f, err := os.OpenFile(RecordPath(id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-			if err != nil {
+			if errors.Is(err, fs.ErrExist) {
 				continue // claimed by another session this instant
+			}
+			if err != nil {
+				// The directory cannot be written: no name can be claimed, and
+				// trying every one would never end. Serve reports the error.
+				return id
 			}
 			f.Close()
 			return id

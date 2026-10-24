@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,7 +89,12 @@ func Upload(ctx context.Context, h transport.Host, paths []string) ([]string, er
 		if err != nil {
 			return nil, err
 		}
-		dest, err := transport.OutputContext(ctx, h, f, "clipboard-put", filepath.Base(p))
+		fi, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		dest, err := transport.OutputContext(ctx, h, f, "clipboard-put", filepath.Base(p), strconv.FormatInt(fi.Size(), 10))
 		f.Close()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -103,8 +109,9 @@ func Upload(ctx context.Context, h transport.Host, paths []string) ([]string, er
 
 // Store keeps one pasted file, read from r, as <clipboard dir>/<unique>/<name>
 // and returns its absolute path. It runs on the server. name must be a bare
-// file name; it is kept so the application sees what the user pasted.
-func Store(name string, r io.Reader) (string, error) {
+// file name; it is kept so the application sees what the user pasted. size
+// is the file's length: an upload the client cut short is not kept.
+func Store(name string, size int64, r io.Reader) (string, error) {
 	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
 		return "", fmt.Errorf("invalid file name %q", name)
 	}
@@ -125,7 +132,11 @@ func Store(name string, r io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(f, r); err != nil {
+	n, err := io.Copy(f, r)
+	if err == nil && n != size {
+		err = fmt.Errorf("received %d of %d bytes", n, size)
+	}
+	if err != nil {
 		f.Close()
 		os.RemoveAll(dir)
 		return "", err
@@ -149,13 +160,16 @@ func prune(root string, cutoff time.Time) {
 
 // splitWords splits s like a POSIX shell would split plain words: whitespace
 // separates, a backslash escapes the next character, and single or double
-// quotes group. ok is false for an unterminated quote.
+// quotes group; inside double quotes a backslash escapes only what the shell
+// does there. ok is false for an unterminated quote.
 func splitWords(s string) (words []string, ok bool) {
 	var cur strings.Builder
 	in := false // a word is open, possibly empty ('')
 	var quote rune
 	esc := false
-	for _, r := range s {
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		switch {
 		case esc:
 			cur.WriteRune(r)
@@ -163,7 +177,7 @@ func splitWords(s string) (words []string, ok bool) {
 		case quote != 0:
 			if r == quote {
 				quote = 0
-			} else if r == '\\' && quote == '"' {
+			} else if r == '\\' && quote == '"' && i+1 < len(runes) && strings.ContainsRune("$`\"\\\n", runes[i+1]) {
 				esc = true
 			} else {
 				cur.WriteRune(r)

@@ -295,9 +295,6 @@ func (p *Proc) Kill() {
 	}
 }
 
-// Stderr returns what the server has written to stderr so far.
-func (p *Proc) Stderr() string { return strings.TrimSpace(p.stderr.String()) }
-
 // Output runs a server subcommand to completion and returns its stdout.
 func Output(h Host, stdin io.Reader, args ...string) ([]byte, error) {
 	return OutputContext(context.Background(), h, stdin, args...)

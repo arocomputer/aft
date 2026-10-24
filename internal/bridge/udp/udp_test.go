@@ -108,3 +108,30 @@ func TestDrainWaitsForTheClientToHangUp(t *testing.T) {
 	}
 	client.Close()
 }
+
+// TestCloseTwiceIsHarmless closes a listener-side connection twice: the
+// second close must not touch the listener's count again.
+func TestCloseTwiceIsHarmless(t *testing.T) {
+	l, err := Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	client, err := Dial("127.0.0.1", l.Offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server, err := l.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+	server.Close()
+	client.Close()
+	start := time.Now()
+	l.Drain(5 * time.Second)
+	if time.Since(start) > 4*time.Second {
+		t.Fatal("drain waited its whole timeout")
+	}
+}

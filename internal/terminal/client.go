@@ -317,6 +317,17 @@ func (c *session) dial() (link, error) {
 			// answer): use SSH this time and ask again on the next connect.
 		}
 	}
+	if c.id == "" && c.o.Reuse && !c.fresh && c.o.Existing != nil {
+		// Over SSH the server cannot ask before joining a running session,
+		// so look first and ask here.
+		if r, ok := c.running(); ok {
+			if c.o.Existing(r.ID, r.Title, r.Attached) {
+				c.id = r.ID
+			} else {
+				c.fresh = true
+			}
+		}
+	}
 	args := []string{"attach", c.id}
 	if c.id == "" {
 		args = append([]string{"new"}, c.sessionArgs()...)
@@ -326,6 +337,28 @@ func (c *session) dial() (link, error) {
 		return nil, err
 	}
 	return sshLink{proc}, nil
+}
+
+// running finds the session already running this command in this directory
+// on the host, as the server's --reuse would.
+func (c *session) running() (sess.Record, bool) {
+	out, err := transport.Output(c.o.Host, nil, "ls")
+	if err != nil {
+		return sess.Record{}, false
+	}
+	var recs []sess.Record
+	if json.Unmarshal(out, &recs) != nil {
+		return sess.Record{}, false
+	}
+	for _, r := range recs {
+		if r.Dir != c.o.Dir || len(r.Command) == 0 || len(c.o.Command) == 0 {
+			continue
+		}
+		if sess.IsShell(c.o.Command) && sess.IsShell(r.Command) || !sess.IsShell(c.o.Command) && !sess.IsShell(r.Command) && r.Command[0] == c.o.Command[0] {
+			return r, true
+		}
+	}
+	return sess.Record{}, false
 }
 
 // sessionArgs names the session to attach to, or describes the one to start.

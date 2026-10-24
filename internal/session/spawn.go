@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,12 @@ func Start(server []string, o Options) error {
 	if err := home.Ensure(); err != nil {
 		return err
 	}
+	// A socket a dead session left would look like the new one listening.
+	if c, err := net.Dial("unix", SocketPath(o.ID)); err == nil {
+		c.Close()
+		return fmt.Errorf("session %s is already running", o.ID)
+	}
+	os.Remove(SocketPath(o.ID))
 	logf, err := os.OpenFile(filepath.Join(home.Logs(), o.ID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err

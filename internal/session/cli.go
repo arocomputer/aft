@@ -79,17 +79,12 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			}
 			return 0
 		}
-		if reuse {
-			if id := existing(o.Dir, o.Command); id != "" {
-				return relay(id, stdin, stdout, stderr)
-			}
-			o.ID = NewID()
-		}
-		if err := Start(prefix, o); err != nil {
+		id, _, err := startOrReuse(prefix, o, reuse)
+		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return relay(o.ID, stdin, stdout, stderr)
+		return relay(id, stdin, stdout, stderr)
 	case "rename":
 		if len(args) != 3 || !ValidID(args[1]) {
 			fmt.Fprintln(stderr, "usage: server rename ID NAME")
@@ -119,22 +114,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				fmt.Fprintln(stderr, err)
 				return 2
 			}
-			if reuse {
-				id = existing(o.Dir, o.Command)
+			if id, reused, err = startOrReuse(prefix, o, reuse); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
-			if id != "" {
-				reused, _ = Load(id)
-			} else {
-				started = true
-				if o.ID == "" {
-					o.ID = NewID()
-				}
-				if err := Start(prefix, o); err != nil {
-					fmt.Fprintln(stderr, err)
-					return 1
-				}
-				id = o.ID
-			}
+			started = reused.ID == ""
 		}
 		offer, err := OfferUDP(id)
 		var gone notRunning
@@ -245,11 +229,16 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		json.NewEncoder(stdout).Encode(GatherInfo())
 		return 0
 	case "clipboard-put":
-		if len(args) != 2 {
-			fmt.Fprintln(stderr, "usage: server clipboard-put NAME < file")
+		var size int64
+		if len(args) != 3 {
+			fmt.Fprintln(stderr, "usage: server clipboard-put NAME SIZE < file")
 			return 2
 		}
-		path, err := bridge.Store(args[1], stdin)
+		if _, err := fmt.Sscan(args[2], &size); err != nil {
+			fmt.Fprintln(stderr, "usage: server clipboard-put NAME SIZE < file")
+			return 2
+		}
+		path, err := bridge.Store(args[1], size, stdin)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -295,6 +284,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	return 2
 }
 
+// parseSessionArgs reads a session's flags and command for the serve, new
+// and udp commands. Without --reuse a missing --id is claimed here, so the
+// name is taken from the moment it is chosen; with --reuse the name is left
+// empty, since a running session may be used instead, and startOrReuse
+// claims one only when it starts a session.
 func parseSessionArgs(name string, args []string) (o Options, reuse bool, err error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -334,6 +328,26 @@ func parseSessionArgs(name string, args []string) (o Options, reuse bool, err er
 	return o, reuse, nil
 }
 
+// startOrReuse is the session a client gets for o: with reuse, the one
+// already running the same program in the same directory, returned as
+// reused; otherwise a new one, under o.ID or a fresh name. prefix runs
+// server subcommands, as for Start.
+func startOrReuse(prefix []string, o Options, reuse bool) (id string, reused Record, err error) {
+	if reuse {
+		if id := existing(o.Dir, o.Command); id != "" {
+			reused, _ = Load(id)
+			return id, reused, nil
+		}
+	}
+	if o.ID == "" {
+		o.ID = NewID()
+	}
+	if err := Start(prefix, o); err != nil {
+		return "", Record{}, err
+	}
+	return o.ID, Record{}, nil
+}
+
 // existing is the running session in dir for the same program as command, or
 // empty: the one a launcher comes back to instead of starting a second.
 func existing(dir string, command []string) string {
@@ -354,6 +368,10 @@ type multi []string
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
 
+// relay pumps the caller's stdin and stdout, an SSH channel, to and from a
+// session's socket until either side ends. A session that is gone is
+// reported on stdout in the client's own protocol, as an Error frame, so the
+// client stops instead of reconnecting.
 func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := Attach(id, struct {
 		io.Reader

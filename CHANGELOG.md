@@ -176,6 +176,18 @@ stays on your machine, and typing feels local.
   port forwards it held.
 - Port mirroring applies updates in order, off the input loop; a notice never
   draws over copy mode, and a flash takes down only itself.
+- The session server no longer deadlocks when an attached terminal stops
+  reading: a failed write releases everyone waiting to send to it. A renamed
+  session no longer removes another session's socket when it ends, starting a
+  session under a name in use leaves the running one untouched, a terminal
+  that joins is told the ports already listening, a replaced terminal's keys
+  no longer reach the application, and the last output of an application
+  that exits unseen is kept.
+- A reattach to a session with more history than one frame can carry
+  repaints the screen rather than nothing. fish works as the login shell on a
+  host. A newer server missing its shims is set up, never replaced. An
+  upload cut short by Ctrl-C leaves no truncated file on the server. A TIFF
+  on the macOS pasteboard pastes as an image.
 - Hyperlinks (OSC 8) are kept per cell and restored by a repaint, so a link
   on screen stays clickable after a reattach.
 - Copy mode's status bar names no keys; the guide lists them.

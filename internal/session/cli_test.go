@@ -391,6 +391,7 @@ func TestRenameFollowsTheSession(t *testing.T) {
 	if err := Start([]string{self}, o); err != nil {
 		t.Fatal(err)
 	}
+	defer Control("t-old", proto.End) // harmless once renamed
 	other := Options{ID: "t-taken", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
 	if err := Start([]string{self}, other); err != nil {
 		t.Fatal(err)
@@ -512,5 +513,112 @@ func TestMuteSessionIsExplained(t *testing.T) {
 	err = Rename("t-mute", "t-loud")
 	if err == nil || !strings.Contains(err.Error(), "did not answer") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// TestRenamedSessionLeavesTheOldNameAlone renames a session, gives its old
+// name to a new session, and ends the renamed one: the new session's socket
+// must survive, since the listener was told not to unlink the name it had.
+func TestRenamedSessionLeavesTheOldNameAlone(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	if err := Start([]string{self}, Options{ID: "t-name", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rename("t-name", "t-moved"); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-moved", proto.End)
+	if err := Start([]string{self}, Options{ID: "t-name", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-name", proto.End)
+	Control("t-moved", proto.End)
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if _, err := Load("t-moved"); err != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := Control("t-name", proto.Ping); err != nil {
+		t.Fatalf("the new session under the old name is unreachable: %v", err)
+	}
+}
+
+// TestServeRefusesANameInUseWithoutHarm starts a session under a name that
+// is running: it is refused, and the running session's record is untouched.
+func TestServeRefusesANameInUseWithoutHarm(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	if err := Start([]string{self}, Options{ID: "t-busy", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-busy", proto.End)
+	before, _ := Load("t-busy")
+	if err := Serve(Options{ID: "t-busy", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("second serve: %v", err)
+	}
+	after, err := Load("t-busy")
+	if err != nil || after.Server != before.Server {
+		t.Fatalf("the running session's record changed: %+v -> %+v (%v)", before, after, err)
+	}
+}
+
+// TestStartClearsAStaleSocket starts a session under a name whose previous
+// session died leaving its socket: the new one listens and answers.
+func TestStartClearsAStaleSocket(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	ln, err := net.Listen("unix", SocketPath("t-stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	self, _ := os.Executable()
+	if err := Start([]string{self}, Options{ID: "t-stale", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-stale", proto.End)
+	if err := Control("t-stale", proto.Ping); err != nil {
+		t.Fatalf("not reachable: %v", err)
+	}
+}
+
+// TestNewIDGivesUpOnAnUnwritableDirectory returns a name instead of
+// spinning when no claim can be written; Serve then reports the error.
+func TestNewIDGivesUpOnAnUnwritableDirectory(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	if err := os.Chmod(home.Sessions(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(home.Sessions(), 0o700)
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	done := make(chan string, 1)
+	go func() { done <- NewID() }()
+	select {
+	case id := <-done:
+		if id == "" {
+			t.Fatal("no name")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("NewID did not return")
+	}
+}
+
+// TestFishLoginShell runs the application through fish with fish syntax.
+func TestFishLoginShell(t *testing.T) {
+	t.Setenv("SHELL", "/usr/local/bin/fish")
+	cmd := buildCommand(nil, []string{"claude", "--resume"})
+	if cmd.Args[0] != "/usr/local/bin/fish" || !strings.Contains(cmd.Args[3], "exec $argv") || cmd.Args[4] != "claude" {
+		t.Fatalf("args %q", cmd.Args)
+	}
+	t.Setenv("SHELL", "/bin/zsh")
+	cmd = buildCommand(nil, []string{"claude"})
+	if !strings.Contains(cmd.Args[3], `exec "$0" "$@"`) {
+		t.Fatalf("args %q", cmd.Args)
 	}
 }

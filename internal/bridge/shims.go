@@ -36,6 +36,9 @@ func IsShim(argv0 string) bool {
 // directory.
 func RunShim(argv0 string, args []string) int {
 	name := filepath.Base(argv0)
+	if os.Getenv("AFT_BRIDGE") == "" {
+		return passthrough(name, args) // outside a session a shim is the command it stands for
+	}
 	switch name {
 	case "open", "xdg-open":
 		if len(args) == 1 && isURL(args[0]) {
@@ -148,10 +151,8 @@ func passthrough(name string, args []string) int {
 		}
 		p := filepath.Join(dir, name)
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-			if err := syscall.Exec(p, append([]string{name}, args...), os.Environ()); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 1
-			}
+			syscall.Exec(p, append([]string{name}, args...), os.Environ())
+			// Exec returns only on failure: try the next PATH entry.
 		}
 	}
 	fmt.Fprintf(os.Stderr, "%s: not available on this machine\n", name)

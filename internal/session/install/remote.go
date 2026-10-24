@@ -132,8 +132,16 @@ func Ensure(h transport.Host) (session.Info, error) {
 	}
 	sum := sha256.Sum256(blob)
 	want := hex.EncodeToString(sum[:])
-	if have && (compare(info, want, session.BuiltAt()) >= 0 && info.Shims) {
-		return info, nil
+	if have && compare(info, want, session.BuiltAt()) >= 0 {
+		if info.Shims {
+			return info, nil
+		}
+		// Current or newer, only its shims are missing: set it up, never
+		// replace it with this build.
+		if _, err := transport.RunRaw(h, nil, transport.RemotePrefix()+server+" setup"); err != nil {
+			return session.Info{}, fmt.Errorf("set up server on %s: %w", h.Dest(), err)
+		}
+		return Info(h)
 	}
 	// Write the binary to a temp name and move it into place, so a server in
 	// use is never truncated; then let it set up its own shims.

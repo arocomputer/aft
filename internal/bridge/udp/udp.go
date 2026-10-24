@@ -107,6 +107,7 @@ func (l *Listener) serve() {
 			select {
 			case l.admitted <- s:
 			case <-c.Context().Done():
+				s.Close() // the client left before Accept took it; let Drain know
 			case <-l.done:
 				s.Close()
 			}
@@ -202,10 +203,12 @@ func Dial(host string, o Offer) (net.Conn, error) {
 }
 
 // conn makes one QUIC stream a net.Conn; closing it closes the connection.
+// Close may be called more than once.
 type conn struct {
 	*quic.Stream
 	c      *quic.Conn
 	closed func() // tells the listener the connection is gone, if it has one
+	once   sync.Once
 }
 
 func (c *conn) LocalAddr() net.Addr  { return c.c.LocalAddr() }
@@ -216,17 +219,20 @@ func (c *conn) RemoteAddr() net.Addr { return c.c.RemoteAddr() }
 // has hung up or a moment has passed. Closing the connection at once would
 // discard data still in flight.
 func (c *conn) Close() error {
-	err := c.Stream.Close()
-	go func() {
-		select {
-		case <-c.c.Context().Done():
-		case <-time.After(3 * time.Second):
-		}
-		c.c.CloseWithError(0, "")
-		if c.closed != nil {
-			c.closed()
-		}
-	}()
+	var err error
+	c.once.Do(func() {
+		err = c.Stream.Close()
+		go func() {
+			select {
+			case <-c.c.Context().Done():
+			case <-time.After(3 * time.Second):
+			}
+			c.c.CloseWithError(0, "")
+			if c.closed != nil {
+				c.closed()
+			}
+		}()
+	})
 	return err
 }
 
