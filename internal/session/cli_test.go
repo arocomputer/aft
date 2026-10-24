@@ -380,3 +380,111 @@ func TestNewIDClaimsTheName(t *testing.T) {
 		}
 	}
 }
+
+// TestRenameFollowsTheSession renames a running session: the new name lists
+// and answers, the old one is gone, the attached terminal is told, and a name
+// in use is refused.
+func TestRenameFollowsTheSession(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := Options{ID: "t-old", Command: []string{"sh", "-c", "printf 'r> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	other := Options{ID: "t-taken", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, other); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-taken", proto.End)
+	a := attach(t, "t-old", 40, 10)
+	a.read(t)
+	a.collect(t, "r>")
+	if err := Rename("t-old", "t-taken"); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("a name in use was given away: %v", err)
+	}
+	if err := Rename("t-old", "t-new"); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-new", proto.End)
+	if f := a.read(t); f.Type != proto.Renamed || string(f.Payload) != "t-new" {
+		t.Fatalf("attached client got %x %q, want Renamed t-new", f.Type, f.Payload)
+	}
+	if r, err := Load("t-new"); err != nil || r.ID != "t-new" {
+		t.Fatalf("new record: %+v %v", r, err)
+	}
+	if _, err := Load("t-old"); err == nil {
+		t.Fatal("old record still there")
+	}
+	if _, err := OfferUDP("t-new"); err != nil {
+		t.Fatalf("new name does not answer: %v", err)
+	}
+	if err := Control("t-old", proto.Ping); err == nil {
+		t.Fatal("old name still answers")
+	}
+}
+
+// TestReuseComesBackToTheSameProgram makes udp --reuse answer with the session
+// already running the same program in the same directory, and start a new one
+// for another program or directory.
+func TestReuseComesBackToTheSameProgram(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	dir := t.TempDir()
+	o := Options{ID: "t-first", Command: []string{"sleep", "30"}, Dir: dir, Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-first", proto.End)
+	ask := func(args ...string) (id string, reused bool) {
+		var out strings.Builder
+		if code := Main([]string{self}, append([]string{"udp", "--reuse", "--cols", "40", "--rows", "10"}, args...), nil, &out, io.Discard); code != 0 {
+			t.Fatalf("udp exited %d", code)
+		}
+		var got struct {
+			ID     string `json:"id"`
+			Reused bool   `json:"reused"`
+		}
+		json.Unmarshal([]byte(out.String()), &got)
+		return got.ID, got.Reused
+	}
+	if id, reused := ask("--dir", dir, "sleep", "30"); id != "t-first" || !reused {
+		t.Fatalf("same program here: got %s reused=%v", id, reused)
+	}
+	id, reused := ask("--dir", dir, "sh", "-c", "sleep 30")
+	if id == "t-first" || id == "" || reused {
+		t.Fatalf("another program here: got %s reused=%v", id, reused)
+	}
+	Control(id, proto.End)
+	id, reused = ask("--dir", t.TempDir(), "sleep", "30")
+	if id == "t-first" || id == "" || reused {
+		t.Fatalf("same program elsewhere: got %s reused=%v", id, reused)
+	}
+	Control(id, proto.End)
+}
+
+// TestTakeoverNamesTheMachine tells a replaced client which machine took the
+// session, when the new client said where it is.
+func TestTakeoverNamesTheMachine(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := Options{ID: "t-from", Command: []string{"sh", "-c", "printf 'f> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-from", proto.End)
+	a := attach(t, "t-from", 40, 10)
+	a.read(t)
+	a.collect(t, "f>")
+	b := attach(t, "t-from", 40, 10)
+	proto.Write(b.c, proto.From, []byte("laptop"))
+	b.read(t)
+	for {
+		f := a.read(t)
+		if f.Type == proto.Detached {
+			if string(f.Payload) != "laptop" {
+				t.Fatalf("told %q, want laptop", f.Payload)
+			}
+			break
+		}
+	}
+}

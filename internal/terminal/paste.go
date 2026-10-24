@@ -112,7 +112,7 @@ func (c *session) startUpload(t Token) bool {
 	if len(send) > 1 {
 		what = fmt.Sprintf("%d files", len(send))
 	}
-	c.title("aft · uploading " + what + " · Ctrl-C cancels")
+	c.notice("aft - uploading " + what + " - Ctrl-C cancels")
 	ctx, cancel := context.WithCancel(context.Background())
 	c.uploadCtx, c.cancelUpload = ctx, cancel
 	host := c.o.Host
@@ -137,7 +137,10 @@ func (c *session) uploading() bool { return c.uploadCtx != nil && c.uploadCtx.Er
 func (c *session) finishUpload(u uploadResult) bool {
 	c.holding, c.cancelled = false, false
 	c.uploadCtx, c.cancelUpload = nil, nil
-	c.title(c.pred.Title())
+	if c.noticeUp {
+		c.pred.RestoreRow(0)
+		c.noticeUp = false
+	}
 	if errors.Is(u.err, context.Canceled) {
 		// Ctrl-C: the user took the paste back. Its start marker has gone
 		// out already, so close it with nothing in between, or the app would

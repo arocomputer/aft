@@ -136,6 +136,25 @@ stays on your machine, and typing feels local.
   real path on the server with no clone and no sync, auto-detecting the mapping
   from the mount and the server's share definition. Manage mappings with
   `aft mount`.
+- `aft rename NAME NEW` gives a session a name of your own; a terminal attached
+  to it is told, and follows.
+- Launching an agent where one already runs in the same folder asks whether to
+  attach to it or start a new one, instead of starting a second; `existing` in
+  the config answers once for good. A terminal that loses a session to another
+  machine is told which one took it.
+- Aft never sets the terminal title: your tab says what the agent wants it to.
+  Reconnecting, uploads and takeovers show as a line across the top of the
+  screen, and only while they last.
+- `aft HOST`, `aft attach` and `aft kill` connect the way ssh does: no spinner,
+  and in two round trips instead of five. A session is looked up on the default
+  host first. Prompts show their choices without a key legend.
+- A client never replaces a newer server with its own older build; builds are
+  ordered by commit time, and `aft doctor` says when the server is the newer
+  one. The install check is one round trip.
+- `aft completion` completes hosts and session names, not just commands.
+  `aft ls` with nothing running says how to start one, `aft` alone on a fresh
+  install says to run `aft setup`, and `aft doctor` sees launchers put on PATH
+  by the shell config even when run from a script.
 
 ### Removed
 

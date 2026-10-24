@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/arocomputer/aft/internal/config"
@@ -51,5 +52,31 @@ func TestNameFor(t *testing.T) {
 		if got := nameFor(dest); got != want {
 			t.Errorf("nameFor(%q) = %q, want %q", dest, got, want)
 		}
+	}
+}
+
+// TestCompletions offers commands and hosts first, session names only where a
+// name goes, and a command's own words after it.
+func TestCompletions(t *testing.T) {
+	cfg := config.Config{Hosts: map[string]config.HostConfig{"server": {SSH: "server"}}}
+	asked := false
+	sessions := func() []string { asked = true; return []string{"fox"} }
+	first := completions(cfg, nil, sessions)
+	for _, w := range []string{"attach", "rename", "server"} {
+		if !slices.Contains(first, w) {
+			t.Errorf("first word lacks %q: %v", w, first)
+		}
+	}
+	if slices.Contains(first, "HOST") || asked {
+		t.Errorf("first word: %v (sessions asked: %v)", first, asked)
+	}
+	if got := completions(cfg, []string{"attach"}, sessions); !slices.Equal(got, []string{"fox"}) || !asked {
+		t.Errorf("after attach: %v", got)
+	}
+	if got := completions(cfg, []string{"rename", "fox"}, sessions); got != nil {
+		t.Errorf("a new name is not completed: %v", got)
+	}
+	if got := completions(cfg, []string{"host", "rm"}, sessions); !slices.Equal(got, []string{"server"}) {
+		t.Errorf("after host rm: %v", got)
 	}
 }

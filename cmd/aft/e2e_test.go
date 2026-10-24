@@ -165,6 +165,7 @@ func itoa(i int) string {
 // TestShellSessionSurvivesConnectionLoss runs a real shell session through the
 // client on the local host, kills the relay as if the network dropped, and
 // expects the client to reconnect with the screen intact and the shell alive.
+// Keys typed while it was away arrive after the reattach, in order.
 func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 	if _, err := exec.LookPath("pgrep"); err != nil {
 		t.Skip("pgrep required")
@@ -177,13 +178,12 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 
 	relay := relayPID(t, s.cmd.Process.Pid)
 	syscall.Kill(relay, syscall.SIGKILL)
-	// The client should announce the reconnect in the title and then repaint.
+	// A reconnect that succeeds at once says nothing: the notice across the
+	// top row appears only when the session stays out of reach. The new relay
+	// shows the client is back.
 	deadline := time.Now().Add(5 * time.Second)
-	for !s.rawContains("reconnecting") && time.Now().Before(deadline) {
+	for relayPID(t, s.cmd.Process.Pid) == relay && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
-	}
-	if !s.rawContains("reconnecting") {
-		t.Fatal("no reconnecting title after the relay died")
 	}
 	s.typeKeys("echo after-$((40+2))\r")
 	s.waitFor("after-42", 10*time.Second)

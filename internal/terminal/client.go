@@ -43,11 +43,17 @@ type Options struct {
 	Host      transport.Host
 	SessionID string   // attach to this session; empty starts a new one
 	Command   []string // for a new session
-	Dir       string   // working directory on the server
-	Env       []string // KEY=VALUE pairs to pass through
-	Wrapper   []string // optional command to run the agent inside
-	Predict   bool
-	UDP       bool // reach the session over UDP when the host allows it
+	// Reuse comes back to the session already running Command in Dir on the
+	// host, if there is one, instead of starting a second. Existing, when set,
+	// is asked first, with that session's name, title and whether a terminal
+	// shows it; false starts a new one.
+	Reuse    bool
+	Existing func(id, title string, attached bool) bool
+	Dir      string   // working directory on the server
+	Env      []string // KEY=VALUE pairs to pass through
+	Wrapper  []string // optional command to run the agent inside
+	Predict  bool
+	UDP      bool // reach the session over UDP when the host allows it
 	// ServerPath names a local file on the host when it is already there,
 	// through a mounted folder; a pasted file it names is not uploaded.
 	ServerPath func(local string) (string, bool)
@@ -166,6 +172,7 @@ type session struct {
 	offer      *udp.Offer // how to reach the session over UDP, once it offered
 	udpAddr    string     // the host's address for UDP
 	udpBlocked bool       // UDP failed after an offer: stay on SSH
+	fresh      bool       // the existing session was declined: start a new one
 
 	wmu sync.Mutex
 	wr  io.Writer
@@ -236,6 +243,11 @@ func (c *session) use(l link) error {
 		l.Close()
 		return err
 	}
+	// Say which machine this is, so a terminal this one replaces can be told.
+	if name, err := os.Hostname(); err == nil {
+		name, _, _ = strings.Cut(name, ".")
+		c.send(proto.From, []byte(name))
+	}
 	return nil
 }
 
@@ -250,8 +262,11 @@ func (c *session) dial() (link, error) {
 			var got struct {
 				ID string `json:"id"`
 				udp.Offer
-				Gone    bool `json:"gone"`    // the session is not running
-				Remains bool `json:"remains"` // and it left its last screen
+				Gone     bool   `json:"gone"`    // the session is not running
+				Remains  bool   `json:"remains"` // and it left its last screen
+				Reused   bool   `json:"reused"`  // it was already running here; then:
+				Title    string `json:"title"`
+				Attached bool   `json:"attached"`
 			}
 			if err != nil && c.id == "" && !strings.Contains(err.Error(), "unknown server command") {
 				return nil, fmt.Errorf("could not start the session: %w", err)
@@ -259,6 +274,13 @@ func (c *session) dial() (link, error) {
 			answered := err == nil && json.Unmarshal(out, &got) == nil
 			if answered && got.Gone {
 				return nil, sessionEnded{Remains: got.Remains}
+			}
+			if answered && got.Reused {
+				if c.o.Existing != nil && !c.o.Existing(got.ID, got.Title, got.Attached) {
+					c.fresh = true
+					return c.dial()
+				}
+				ui.Note("reattaching to %s %s", got.ID, ui.Dim("· aft kill "+got.ID+" starts a fresh one"))
 			}
 			if answered {
 				c.id = got.ID
@@ -293,6 +315,9 @@ func (c *session) sessionArgs() []string {
 		return []string{c.id}
 	}
 	args := []string{"--dir", c.o.Dir, "--cols", strconv.Itoa(c.cols), "--rows", strconv.Itoa(c.rows)}
+	if c.o.Reuse && !c.fresh {
+		args = append(args, "--reuse")
+	}
 	for _, kv := range c.o.Env {
 		args = append(args, "--env", kv)
 	}
@@ -334,10 +359,6 @@ func (c *session) writer() {
 			return
 		}
 	}
-}
-
-func (c *session) title(s string) {
-	c.out.Write([]byte("\x1b]2;" + s + "\x1b\\"))
 }
 
 type frameOrErr struct {
@@ -438,7 +459,6 @@ func (c *session) loop(proc link) int {
 					c.message = func() { ui.Error("could not start the session: %s", msg) }
 					return 1
 				}
-				c.title("aft · reconnecting")
 				var typed []byte
 				var err error
 				proc, typed, err = c.reconnect(keys)
@@ -683,9 +703,20 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		return e.Code, true
 	case proto.Detached:
 		if c.message == nil { // not our own detach: another terminal took the session
-			c.message = c.detachMessage("detached from %s; another terminal took it, and it keeps running")
+			who := "another terminal"
+			if len(f.Payload) > 0 {
+				who = strings.ReplaceAll(string(f.Payload), "%", "%%")
+			}
+			c.message = c.detachMessage("detached from %s; " + who + " took it over, and it keeps running")
 		}
 		return 0, true
+	case proto.Renamed:
+		// aft rename, from another terminal: follow the name, so reconnects
+		// and the leaving message use it.
+		c.clearMirrors()
+		c.id = string(f.Payload)
+		c.writeMirrors()
+		c.flash("aft - this session is now called " + c.id)
 	case proto.Error:
 		if c.noticeUp {
 			// A reconnect may have drawn a notice that no repaint will
@@ -744,7 +775,6 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 				if l := (udpLink{conn}); c.use(l) == nil {
 					c.pred.Reset()
 					c.noticeUp = false // the reattach repaints over it
-					c.title("")
 					return l, typed, nil
 				}
 			}
@@ -761,15 +791,11 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			if err == nil {
 				c.pred.Reset()
 				c.noticeUp = false // the reattach repaints over it
-				c.title("")
 				return proc, typed, nil
 			}
 		}
 		if delay < 5*time.Second {
 			delay *= 2
-		}
-		if attempt%4 == 0 {
-			c.title(fmt.Sprintf("aft · reconnecting (%d)", attempt))
 		}
 	}
 }

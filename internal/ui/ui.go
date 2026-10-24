@@ -4,6 +4,9 @@
 // untouched, uses only the output, and only once it has restored the terminal. Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
 //
+// A prompt shows its choices and nothing else: arrows and Enter, y and n need
+// no legend.
+//
 // The prompts are driven directly in raw mode rather than with a TUI framework:
 // Bubble Tea queries the terminal (an OSC 11 background probe) merely on import,
 // which would corrupt a session client sharing the terminal. Nothing in this
@@ -137,7 +140,7 @@ func Confirm(question string, def bool) bool {
 	defer term.Restore(int(os.Stdin.Fd()), st)
 	value := def
 	var sc screen
-	accent, dim, _ := styles()
+	accent, _, _ := styles()
 	render := func() {
 		yes, no := "  Yes  ", "  No  "
 		if value {
@@ -145,7 +148,7 @@ func Confirm(question string, def bool) bool {
 		} else {
 			no = accent.Render("[ No ]")
 		}
-		sc.render([]string{accent.Render("? ") + question, "  " + yes + " " + no, dim.Render("  y / n / arrows / enter")})
+		sc.render([]string{accent.Render("? ") + question, "  " + yes + " " + no})
 	}
 	render()
 	for {
@@ -205,7 +208,7 @@ func Choose(title string, options []Option, def int) int {
 			}
 			lines = append(lines, line)
 		}
-		sc.render(append(lines, dim.Render("  arrows / enter")))
+		sc.render(lines)
 	}
 	render()
 	for {

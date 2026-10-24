@@ -26,7 +26,8 @@ var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp
 // table or a repository's aft.toml can override most of them. Keys are flat and
 // snake_case; a host is addressed by name, so its table is singular: host.mini.
 type Config struct {
-	Use          string                `toml:"use,omitempty"` // the host used when none is given; a lone host needs no line
+	Use          string                `toml:"use,omitempty"`      // the host used when none is given; a lone host needs no line
+	Existing     string                `toml:"existing,omitempty"` // when an agent is launched where one already runs: ask (default), attach or new
 	Agents       []string              `toml:"agents"`
 	Tools        []string              `toml:"tools,omitempty"` // commands like git and gh that run once on the host, not in a session
 	Predict      *bool                 `toml:"predict,omitempty"`
@@ -182,6 +183,11 @@ func Load() (Config, error) {
 	}
 	if c.Hosts == nil {
 		c.Hosts = map[string]HostConfig{}
+	}
+	switch c.Existing {
+	case "", "ask", "attach", "new":
+	default:
+		return c, fmt.Errorf("%s: existing must be ask, attach or new, not %q", Path(), c.Existing)
 	}
 	return c, nil
 }

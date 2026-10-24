@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -485,23 +486,8 @@ func cmdHostShell(cfg config.Config, h transport.Host, args []string) int {
 	}
 	opts.Host = h
 	opts.Command = session.ShellCommand
-	opts.Dir = dir
-	if dir == "" && h.IsLocal() {
-		opts.Dir, _ = os.UserHomeDir()
-	} else if dir == "" {
-		if err := connect(h); err != nil {
-			return fail(err)
-		}
-		if opts.Dir, err = resolveRemoteDir(h, "~"); err != nil {
-			return fail(err)
-		}
-	}
-	// Come back to the shell already open in this directory, if there is one.
-	isShell := func(r session.Record) bool { return session.IsShell(r.Command) }
-	if id := launcher.ExistingSession(h, opts.Dir, isShell); id != "" {
-		ui.Note("reattaching to %s %s", id, ui.Dim("· aft kill "+id+" starts a fresh one"))
-		opts.SessionID = id
-	}
+	opts.Dir = dir    // empty: the login directory on the host
+	opts.Reuse = true // come back to the shell already open there
 	return terminal.Run(opts)
 }
 
@@ -587,42 +573,43 @@ type hostSessions struct {
 }
 
 // allSessions asks every host for its sessions at once, connecting without a
-// terminal where no connection is open, behind a spinner.
+// terminal where no connection is open. There is no spinner: it takes a
+// fraction of a second, as ssh does, and an offline host gives up in seconds.
 func allSessions(cfg config.Config) []hostSessions {
+	return sessionsOn(cfg, cfg.HostNames())
+}
+
+// sessionsOn lists this machine's sessions and those on the named hosts.
+func sessionsOn(cfg config.Config, names []string) []hostSessions {
 	var out []hostSessions
 	list, _ := session.List()
 	if list = append(list, session.Remains()...); len(list) > 0 {
 		out = append(out, hostSessions{host: transport.Local, list: list})
 	}
-	names := cfg.HostNames()
 	if len(names) == 0 {
 		return out
 	}
 	remote := make([]hostSessions, len(names))
-	label := "Asking " + strings.Join(names, ", ") + " for sessions"
-	ui.Spin(label, func() error {
-		var wg sync.WaitGroup
-		for i, n := range names {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				h, err := cfg.Host(n)
-				hs := hostSessions{host: h, err: err}
-				if err == nil {
-					hs.err = transport.EnsureMasterWithin(h, 4) // an offline host must not hold up the list
+	var wg sync.WaitGroup
+	for i, n := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := cfg.Host(n)
+			hs := hostSessions{host: h, err: err}
+			if err == nil {
+				hs.err = transport.EnsureMasterWithin(h, 4) // an offline host must not hold up the list
+			}
+			if hs.err == nil {
+				raw, err := transport.Output(h, nil, "ls", "--all")
+				if hs.err = err; err == nil {
+					json.Unmarshal(raw, &hs.list)
 				}
-				if hs.err == nil {
-					raw, err := transport.Output(h, nil, "ls", "--all")
-					if hs.err = err; err == nil {
-						json.Unmarshal(raw, &hs.list)
-					}
-				}
-				remote[i] = hs
-			}()
-		}
-		wg.Wait()
-		return nil
-	})
+			}
+			remote[i] = hs
+		}()
+	}
+	wg.Wait()
 	return append(out, remote...)
 }
 
@@ -705,6 +692,11 @@ func cmdLs(args []string) int {
 	}
 	if len(rows) == 0 {
 		fmt.Println(ui.Dim("No sessions."))
+		if used := cfg.UsedHost(); used != "" {
+			ui.Hint("an agent run in a project that is on starts one; aft %s opens a terminal on %s", used, used)
+		} else {
+			ui.Hint("aft setup adds a host; an agent run in a project that is on starts one")
+		}
 	} else {
 		ui.Table([]string{"SESSION", "STATE", "HOST", "DIRECTORY", "STARTED"}, rows)
 		ended := false
@@ -734,12 +726,20 @@ func cmdLs(args []string) int {
 	return 0
 }
 
-// findSession locates a session id across hosts.
+// findSession locates a session by name: on the default host first, where it
+// almost always is, so the other hosts are asked only when it is not there.
 func findSession(cfg config.Config, id string) (transport.Host, session.Record, error) {
-	for _, hs := range allSessions(cfg) {
-		for _, r := range hs.list {
-			if r.ID == id {
-				return hs.host, r, nil
+	rounds := [][]string{cfg.HostNames()}
+	if used := cfg.UsedHost(); used != "" && len(cfg.Hosts) > 1 {
+		rest := slices.DeleteFunc(cfg.HostNames(), func(n string) bool { return n == used })
+		rounds = [][]string{{used}, rest}
+	}
+	for _, names := range rounds {
+		for _, hs := range sessionsOn(cfg, names) {
+			for _, r := range hs.list {
+				if r.ID == id {
+					return hs.host, r, nil
+				}
 			}
 		}
 	}
@@ -902,6 +902,42 @@ func cmdKill(args []string) int {
 	} else {
 		ui.OK("Killed %s", ui.Bold(id))
 	}
+	return 0
+}
+
+// cmdRename gives a session a name of your own.
+func cmdRename(args []string) int {
+	fs := flags("rename")
+	hostName := fs.String("host", "", "host the session is on")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 2 {
+		fmt.Fprintln(os.Stderr, "usage: aft rename [--host H] NAME NEW")
+		return 2
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fail(err)
+	}
+	id, to := fs.Arg(0), fs.Arg(1)
+	if !session.ValidID(to) {
+		return fail(fmt.Errorf("a session name is letters, digits, dots, dashes and underscores: %q", to))
+	}
+	var h transport.Host
+	var rec session.Record
+	if *hostName != "" {
+		h, err = cfg.Host(*hostName)
+	} else {
+		h, rec, err = findSession(cfg, id)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	if rec.Ended != nil {
+		return fail(fmt.Errorf("%s has ended; aft kill %s forgets it", id, id))
+	}
+	if _, err := transport.Output(h, nil, "rename", id, to); err != nil {
+		return fail(err)
+	}
+	ui.OK("Renamed %s to %s", ui.Bold(id), ui.Bold(to))
 	return 0
 }
 
@@ -1093,6 +1129,8 @@ func cmdDoctor(args []string) int {
 	switch {
 	case launcher.OnPath():
 		d.ok("launchers on PATH")
+	case launcher.PathInShellConfig(st):
+		d.ok("launchers on PATH " + ui.Dim("· in new shells"))
 	case cfg.EditingDotfiles():
 		d.repair("launchers not on PATH", "run aft setup", func() error {
 			if _, err := launcher.InstallShellBlock(&st); err != nil {
@@ -1171,9 +1209,12 @@ func cmdDoctor(args []string) int {
 		case !info.Shims:
 			d.repair("bridge shims missing", "run aft setup", func() error { _, e := install.Ensure(h); return e }, "reinstalled the server")
 		default:
-			if ok, e := install.UpToDate(info); e == nil && !ok {
+			switch cmp, e := install.Compare(info); {
+			case e == nil && cmp < 0:
 				d.repair("server out of date ("+info.Version+")", "run aft doctor --fix", func() error { _, e := install.Ensure(h); return e }, "updated the server")
-			} else {
+			case e == nil && cmp > 0:
+				d.warn("server is newer than this aft ("+info.Version+")", "update aft on this machine")
+			default:
 				d.ok("server ready " + ui.Dim("· "+info.OS+"/"+info.Arch+" · "+info.Version))
 			}
 		}
@@ -1377,27 +1418,106 @@ func cmdUninstall(args []string) int {
 	return code
 }
 
-// cmdCompletion prints shell completion for the top-level commands.
+// cmdCompletion prints shell completion. The script asks aft itself what fits
+// after the words typed so far, so hosts and session names complete too.
 func cmdCompletion(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: aft completion bash|zsh|fish")
 		return 2
 	}
-	words := "setup on off ls attach kill host mount status doctor agents tools uninstall completion version help"
 	switch args[0] {
 	case "bash":
-		fmt.Printf("_aft() { COMPREPLY=( $(compgen -W '%s' -- \"${COMP_WORDS[COMP_CWORD]}\") ); }\ncomplete -F _aft aft\n", words)
+		fmt.Println(`_aft() { local IFS=$'\n'; COMPREPLY=( $(compgen -W "$(aft _complete "${COMP_WORDS[@]:1:COMP_CWORD-1}")" -- "${COMP_WORDS[COMP_CWORD]}") ); }
+complete -F _aft aft`)
 	case "zsh":
-		fmt.Printf("#compdef aft\n_aft() { compadd -- %s; }\ncompdef _aft aft\n", words)
+		fmt.Println(`#compdef aft
+_aft() { local -a w; w=(${(f)"$(aft _complete "${(@)words[2,CURRENT-1]}")"}); compadd -a w; }
+compdef _aft aft`)
 	case "fish":
-		for _, w := range strings.Fields(words) {
-			fmt.Printf("complete -c aft -n '__fish_use_subcommand' -a %s\n", w)
-		}
+		fmt.Println(`complete -c aft -f -a '(aft _complete (commandline -opc)[2..-1])'`)
 	default:
 		fmt.Fprintln(os.Stderr, "supported shells: bash, zsh, fish")
 		return 2
 	}
 	return 0
+}
+
+// cmdComplete prints, one per line, what can follow the words typed so far;
+// the completion scripts call it. It must stay silent otherwise.
+func cmdComplete(args []string) int {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0
+	}
+	for _, w := range completions(cfg, args, func() []string { return liveSessionNames(cfg) }) {
+		fmt.Println(w)
+	}
+	return 0
+}
+
+// completions is what can follow the words typed so far: commands and hosts
+// first, then what each command takes. sessions is asked only where a session
+// name goes.
+func completions(cfg config.Config, prev []string, sessions func() []string) []string {
+	if len(prev) == 0 {
+		var out []string
+		for _, g := range commands {
+			for _, c := range g.cmds {
+				if w := strings.Fields(c[0])[0]; w != "HOST" {
+					out = append(out, w)
+				}
+			}
+		}
+		return append(out, cfg.HostNames()...)
+	}
+	switch prev[0] {
+	case "attach", "kill", "rename":
+		if len(prev) == 1 {
+			return sessions()
+		}
+	case "host":
+		switch {
+		case len(prev) == 1:
+			return []string{"add", "rm", "use"}
+		case len(prev) == 2 && prev[1] != "add":
+			return cfg.HostNames()
+		}
+	case "mount":
+		if len(prev) == 1 {
+			return []string{"list", "add", "remove"}
+		}
+	case "agents", "tools":
+		if len(prev) == 1 {
+			return []string{"add"}
+		}
+	case "completion":
+		if len(prev) == 1 {
+			return []string{"bash", "zsh", "fish"}
+		}
+	case "on":
+		return []string{"--host", "--dir"}
+	case "doctor":
+		return []string{"--fix", "--host"}
+	}
+	return nil
+}
+
+// liveSessionNames lists sessions here and on hosts a connection is already
+// open to, so completing never waits on the network.
+func liveSessionNames(cfg config.Config) []string {
+	var names []string
+	for _, n := range cfg.HostNames() {
+		if h, err := cfg.Host(n); err == nil && transport.MasterAlive(h) {
+			names = append(names, n)
+		}
+	}
+	var out []string
+	for _, hs := range sessionsOn(cfg, names) {
+		for _, r := range hs.list {
+			out = append(out, r.ID)
+		}
+	}
+	return out
 }
 
 func remoteDirExists(h transport.Host, dir string) (bool, error) {

@@ -17,17 +17,25 @@ never blocks waiting for a terminal.
 aft ls                 # sessions on every host
 aft attach fox         # reattach to the session called fox
 aft attach             # reattach; picks from a list when several are running
+aft rename fox login   # call it what you like
 aft kill fox           # stop the application and the session
 aft server             # a terminal on the host called server
 aft server uptime      # run one command there, as ssh does
 aft status             # here on/off, hosts, sessions
 ```
 
-Each session is named with a short animal word, unique on its host. `aft ls`
-says what each one is: the program, and the window title it sets. Claude Code
-titles its window with the conversation's topic, so its sessions read like
-`Claude · Fix the login bug`. Aft only reads the title the program already
-sends to the terminal; it never reads an agent's files.
+Each session is named with a short animal word, unique on its host, and
+`aft rename` gives it a name of your own; a terminal attached to it is told.
+`aft ls` says what each one is: the program, and the window title it sets.
+Claude Code titles its window with the conversation's topic, so its sessions
+read like `Claude · Fix the login bug`. Aft only reads the title the program
+already sends to the terminal; it never reads an agent's files, and it never
+sets the title itself, so your tab says what the program wants it to.
+
+Starting an agent where one already runs in the same folder does not start a
+second. Aft asks whether to attach to it or start a new one, naming the
+session and what it is doing. `existing = "attach"` in the config always
+attaches without asking, and `existing = "new"` always starts another.
 
 ## Typing
 
@@ -43,18 +51,20 @@ model time anyway. `predict = false` in the config turns prediction off.
 
 ## Disconnects
 
-If the connection drops, the terminal title shows "aft · reconnecting" and the
-client reconnects with backoff. The session is untouched. On reattach the
-server repaints the screen, restores terminal modes, and asks the application
-to redraw. Ctrl-C while disconnected leaves the client; the session keeps
-running and `aft attach` returns to it.
+If the connection drops, the client reconnects with backoff. A reconnect that
+succeeds at once is silent; while the session stays out of reach, a line
+across the top of the screen says how long it has been and that Ctrl-C leaves.
+The session is untouched. On reattach the server repaints the screen, restores
+terminal modes, and asks the application to redraw. Ctrl-C while disconnected
+leaves the client; the session keeps running and `aft attach` returns to it.
 
 A session detaches when its terminal goes away and keeps running on the server
 with no terminal. That happens when you close the tab or window, when another
-computer attaches (one terminal shows a session at a time), and when a laptop
-sleeps or drops off the network: the client sends a heartbeat every ten
-seconds, and after thirty silent seconds the session lets it go. `aft ls` says
-which sessions are attached.
+computer attaches (one terminal shows a session at a time, and the one that
+lost it is told which machine took it), and when a laptop sleeps or drops off
+the network: the client sends a heartbeat every ten seconds, and after thirty
+silent seconds the session lets it go. `aft ls` says which sessions are
+attached.
 
 ## Over UDP
 
@@ -77,10 +87,11 @@ Turn UDP off with `udp = false` in the config, for every host or one.
 `aft HOST` opens your login shell on that host in a session, where HOST is the
 name of one of your hosts: `aft server`, `aft mini`, `aft studio`. It is like
 `ssh HOST`, but it survives disconnects and sleep, reaches the host over UDP
-when it can, and predicts your typing locally, as mosh does. It starts in the
-project's directory when this project is on for that host. Run it again in the
-same place and it comes back to that shell. `aft HOST CMD...` runs one command
-there instead and returns its exit code, as `ssh HOST CMD` does.
+when it can, and predicts your typing locally, as mosh does. Like ssh it shows
+nothing while it connects: two round trips, and the shell is there. It starts
+in the project's directory when this project is on for that host. Run it again
+in the same place and it comes back to that shell. `aft HOST CMD...` runs one
+command there instead and returns its exit code, as `ssh HOST CMD` does.
 
 A host you have not added yet works too. `aft user@box` or `aft box`, when SSH
 can reach it, adds it as a host named `box`, installs Aft's server there, and
@@ -138,8 +149,9 @@ owns the screen, the selection and the clipboard; aft does not get in the way.
   paste, and the terminal pastes its local path. When a paste is nothing but
   paths to files on your machine, aft uploads them over the existing
   connection and pastes the server paths instead, so the agent can open a
-  screenshot, recording or document. The window title shows the upload; keys
-  you type meanwhile are sent after it, in order, and Ctrl-C cancels it. A
+  screenshot, recording or document. A line across the top of the screen
+  shows the upload; keys you type meanwhile are sent after it, in order, and
+  Ctrl-C cancels it. A
   file in a mounted folder (see [Mounts](mounts.md)) is already on the server,
   so its server path is pasted without copying it. Only files from where you
   would drop them, your home, a temporary directory or an external drive, are

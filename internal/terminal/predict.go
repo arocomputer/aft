@@ -102,13 +102,6 @@ func (p *Predictor) Reset() {
 	p.confident = true
 }
 
-// Title returns the title the application set, if any.
-func (p *Predictor) Title() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.shadow.Title()
-}
-
 // Output passes server output to the terminal and updates the shadow.
 func (p *Predictor) Output(b []byte) error {
 	p.mu.Lock()

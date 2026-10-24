@@ -29,6 +29,7 @@ var commands = []struct {
 		{"HOST", "[CMD...]", "a terminal on that host that survives disconnects; CMD runs once"},
 		{"ls", "", "sessions on every host"},
 		{"attach", "[NAME]", "reattach to a session"},
+		{"rename", "NAME NEW", "call a session what you like"},
 		{"kill", "NAME", "stop a session"},
 	}},
 	{"Hosts", [][3]string{
@@ -54,7 +55,7 @@ var commands = []struct {
 // answered with a suggestion rather than accepted.
 var meant = map[string]string{
 	"list": "ls", "sessions": "ls", "ps": "ls",
-	"end": "kill", "stop": "kill", "rm": "kill",
+	"end": "kill", "stop": "kill", "rm": "kill", "mv": "rename",
 	"ssh": "HOST", "shell": "HOST", "connect": "HOST",
 	"use": "host use", "hosts": "host",
 	"clone": "on", "ports": "status", "exec": "tools add", "run": "tools add",
@@ -64,7 +65,7 @@ var meant = map[string]string{
 // isCommand reports whether name is one of aft's commands.
 func isCommand(name string) bool {
 	switch name {
-	case "selftest":
+	case "selftest", "_complete":
 		return true
 	}
 	for _, g := range commands {
@@ -161,6 +162,13 @@ func main() {
 		os.Exit(launcher.Launch(base, os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
+		// A fresh install has one next step; the full list can wait.
+		if cfg, err := config.Load(); err == nil && len(cfg.Hosts) == 0 {
+			fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
+			fmt.Println()
+			fmt.Println("Start with " + ui.Command("aft setup") + ui.Dim(" to add your server. aft help lists the commands."))
+			os.Exit(0)
+		}
 		printUsage()
 		os.Exit(0)
 	}
@@ -189,6 +197,8 @@ func run(cmd string, args []string) int {
 		return cmdAttach(args)
 	case "kill":
 		return cmdKill(args)
+	case "rename":
+		return cmdRename(args)
 	case "status":
 		return cmdStatus(args)
 	case "doctor":
@@ -203,6 +213,8 @@ func run(cmd string, args []string) int {
 		return cmdSelftest(args)
 	case "completion":
 		return cmdCompletion(args)
+	case "_complete":
+		return cmdComplete(args)
 	}
 	// aft HOST: a host you have, or one SSH can reach, which becomes one.
 	if cfg, err := config.Load(); err == nil {

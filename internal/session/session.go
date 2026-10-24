@@ -156,6 +156,7 @@ type Session struct {
 	mu       sync.Mutex
 	cur      *client
 	attached bool
+	from     string // the machine the attached client said it is on, for the one it replaced
 
 	bridgeMu sync.Mutex
 	bridgeID uint32
@@ -223,7 +224,9 @@ func Serve(o Options) error {
 	if err := writeJSON(RecordPath(o.ID), s.record); err != nil {
 		return err
 	}
-	defer os.Remove(RecordPath(o.ID))
+	// The session may be renamed while it runs, so what it leaves behind is
+	// named at the end.
+	defer func() { os.Remove(RecordPath(s.id())) }()
 
 	if c, err := net.Dial("unix", SocketPath(o.ID)); err == nil {
 		c.Close()
@@ -235,7 +238,7 @@ func Serve(o Options) error {
 		return err
 	}
 	defer ln.Close()
-	defer os.Remove(SocketPath(o.ID))
+	defer func() { os.Remove(SocketPath(s.id())) }()
 	os.Remove(BridgePath(o.ID))
 	bln, err := net.Listen("unix", BridgePath(o.ID))
 	if err != nil {
@@ -266,16 +269,59 @@ func Serve(o Options) error {
 		s.cur.sendJSON(proto.Exit, s.exit)
 		s.cur.close()
 		<-s.cur.done
-		ClearRemains(o.ID) // whoever was attached saw it end
+		ClearRemains(s.opts.ID) // whoever was attached saw it end
 	case s.killed:
-		ClearRemains(o.ID)
+		ClearRemains(s.opts.ID)
 	default:
 		// It ended unseen: keep how, and its last screen, for aft ls and attach.
 		s.saveScreen()
 		leaveRemains(s.record, Ending{At: time.Now().UTC().Format(time.RFC3339), Code: s.exit.Code, Signal: s.exit.Signal})
 	}
 	s.mu.Unlock()
-	log.Printf("session %s: %s exited: %+v", o.ID, o.Command[0], s.exit)
+	log.Printf("session %s: %s exited: %+v", s.opts.ID, o.Command[0], s.exit)
+	return nil
+}
+
+// id is the session's current name, which aft rename can change.
+func (s *Session) id() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.opts.ID
+}
+
+// rename gives the session the name id: it claims the name, moves its record
+// and socket, and tells the attached client. The bridge socket keeps its path,
+// which the application holds in AFT_BRIDGE.
+func (s *Session) rename(id string) error {
+	if !ValidID(id) {
+		return fmt.Errorf("a session name is letters, digits, dots, dashes and underscores: %q", id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.opts.ID
+	if id == old {
+		return nil
+	}
+	if hasRemains(id) {
+		return fmt.Errorf("%s names a session that ended; aft kill %s forgets it", id, id)
+	}
+	f, err := os.OpenFile(RecordPath(id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("a session called %s is already running", id)
+	}
+	f.Close()
+	if err := os.Rename(SocketPath(old), SocketPath(id)); err != nil {
+		os.Remove(RecordPath(id))
+		return err
+	}
+	s.opts.ID, s.record.ID = id, id
+	writeJSON(RecordPath(id), s.record)
+	os.Remove(RecordPath(old))
+	os.Rename(ScreenPath(old), ScreenPath(id))
+	if s.cur != nil {
+		s.cur.send(proto.Renamed, []byte(id))
+	}
+	log.Printf("session %s: renamed to %s", old, id)
 	return nil
 }
 
@@ -407,12 +453,25 @@ func (s *Session) serveClient(conn net.Conn) {
 		return
 	}
 
+	// The client may say which machine it is on, right after its size, so a
+	// client it replaces can be told who took the session. Only a From frame
+	// is taken here; anything else, or nothing within a moment, is left for
+	// the loop below.
+	from := ""
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if b, err := r.Peek(1); err == nil && proto.Type(b[0]) == proto.From {
+		if f, err := proto.Read(r); err == nil {
+			from = string(f.Payload)
+		}
+	}
+	conn.SetReadDeadline(time.Time{})
 	s.mu.Lock()
 	if old := s.cur; old != nil {
-		old.send(proto.Detached, nil)
+		old.send(proto.Detached, []byte(from))
 		old.close()
 	}
 	s.cur = c
+	s.from = from
 	s.attached = true
 	s.record.Attached = true
 	resized := cols != s.record.Cols || rows != s.record.Rows
@@ -552,6 +611,12 @@ func (s *Session) control(c *client, r *bufio.Reader) {
 				c.send(proto.Error, []byte(err.Error()))
 			} else {
 				c.sendJSON(proto.UDPOffer, o)
+			}
+		case proto.Rename:
+			if err := s.rename(string(f.Payload)); err != nil {
+				c.send(proto.Error, []byte(err.Error()))
+			} else {
+				c.send(proto.Pong, nil)
 			}
 		case proto.Ping:
 			c.send(proto.Pong, nil)
@@ -783,13 +848,22 @@ func GoneText(id string) string {
 
 // Control opens a control connection to a session and sends one frame.
 func Control(id string, t proto.Type) error {
-	_, err := request(id, t)
+	_, err := request(id, t, nil)
+	return err
+}
+
+// Rename asks the session id to call itself to.
+func Rename(id, to string) error {
+	f, err := request(id, proto.Rename, []byte(to))
+	if err == nil && f.Type == proto.Error {
+		err = errors.New(string(f.Payload))
+	}
 	return err
 }
 
 // OfferUDP asks a session to listen on UDP and returns how to reach it.
 func OfferUDP(id string) (udp.Offer, error) {
-	f, err := request(id, proto.ReqUDP)
+	f, err := request(id, proto.ReqUDP, nil)
 	var o udp.Offer
 	if err == nil && f.Type == proto.Error {
 		err = errors.New(string(f.Payload))
@@ -804,7 +878,7 @@ func OfferUDP(id string) (udp.Offer, error) {
 }
 
 // request sends one control frame to a session and returns its answer.
-func request(id string, t proto.Type) (proto.Frame, error) {
+func request(id string, t proto.Type, payload []byte) (proto.Frame, error) {
 	conn, err := dial(id)
 	if err != nil {
 		return proto.Frame{}, err
@@ -813,7 +887,7 @@ func request(id string, t proto.Type) (proto.Frame, error) {
 	if err := proto.Write(conn, proto.Resize, proto.EncodeResize(0, 0)); err != nil {
 		return proto.Frame{}, err
 	}
-	if err := proto.Write(conn, t, nil); err != nil {
+	if err := proto.Write(conn, t, payload); err != nil {
 		return proto.Frame{}, err
 	}
 	wait := 5 * time.Second

@@ -126,3 +126,25 @@ func TestServerPathFollowsMounts(t *testing.T) {
 		t.Errorf("a file on other's mount was named on box: %q", got)
 	}
 }
+
+// TestPathInShellConfig sees the launchers on PATH for new shells from the
+// shell config alone: aft's block, or a hand-written line, and not an rc file
+// without either.
+func TestPathInShellConfig(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("SHELL", "/bin/zsh")
+	rc := filepath.Join(h, ".zshrc")
+	os.WriteFile(rc, []byte("alias ll='ls -l'\n"), 0o644)
+	if PathInShellConfig(config.State{}) {
+		t.Fatal("an rc file without the line counts")
+	}
+	os.WriteFile(rc, []byte("alias ll='ls -l'\nexport PATH=\""+PathDir+":$PATH\"\n"), 0o644)
+	if !PathInShellConfig(config.State{}) {
+		t.Fatal("a hand-written line is missed")
+	}
+	os.WriteFile(rc, []byte("alias ll='ls -l'\n"+Block()), 0o644)
+	if !PathInShellConfig(config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: Block()}}}) {
+		t.Fatal("aft's own block is missed")
+	}
+}
