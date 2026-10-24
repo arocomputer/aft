@@ -56,6 +56,7 @@ type prediction struct {
 	gen      uint64
 	at       time.Time
 	drawn    bool
+	erase    bool // a Backspace: the cell is predicted blank, left of the caret
 }
 
 // NewPredictor returns a predictor writing passthrough and overlays to w.
@@ -307,7 +308,7 @@ func (p *Predictor) predictBackspace(now time.Time) {
 	p.w.Write([]byte(out))
 	p.displaced = true
 	p.posKnown, p.penKnown = false, false
-	p.pending = append(p.pending, prediction{row: row, col: col - 1, r: ' ', gen: p.shadow.Gen(), at: now, drawn: true})
+	p.pending = append(p.pending, prediction{row: row, col: col - 1, r: ' ', gen: p.shadow.Gen(), at: now, drawn: true, erase: true})
 	p.caretValid, p.caretRow, p.caretCol = true, row, col-1
 }
 
@@ -320,12 +321,17 @@ func cellRune(c vt.Cell) string {
 
 // reconcile checks pending predictions against the shadow after server
 // output. A prediction is confirmed when the server writes the predicted
-// character into its cell. When the server writes something else into a cell
-// it has not reached yet (at or right of its caret on the same row), it has
-// simply not processed that key: applications such as Ink-based agents redraw
-// the whole input line on every echo, erasing the cells still in flight. Such
-// predictions are kept and redrawn rather than counted as wrong, otherwise the
-// caret visibly snaps back to the server's position on every echo.
+// character into its cell, or, for a typed character, when the server's caret
+// moves past a cell that already shows it: some renderers echo a space by
+// moving over the blank cell. When the server blanks a cell it has not
+// reached yet (at or right of its caret on the same row), it has simply not
+// processed that key: applications such as Ink-based agents redraw the whole
+// input line on every echo, erasing the cells still in flight. Such
+// predictions are kept and redrawn, otherwise the caret visibly snaps back on
+// every echo. That holds only while every key since was foreseeable: after
+// Enter or Ctrl-C the app may rightly clear the line, so the predictions are
+// dropped, not counted against us. A cell filled with something else, as in
+// vim's normal mode, is a wrong prediction.
 func (p *Predictor) reconcile() {
 	if len(p.pending) == 0 {
 		return
@@ -337,7 +343,7 @@ func (p *Predictor) reconcile() {
 	for _, pr := range p.pending {
 		cell := p.shadow.Cell(pr.row, pr.col)
 		switch {
-		case cell.Gen <= pr.gen && caretOK && pr.row == cr && cc > pr.col && holds(cell, pr.r):
+		case cell.Gen <= pr.gen && !pr.erase && caretOK && pr.row == cr && cc > pr.col && holds(cell, pr.r):
 			// The server moved its caret past the cell without rewriting it,
 			// which is how some renderers echo a space: it handled the key.
 			p.confident = true
@@ -348,8 +354,11 @@ func (p *Predictor) reconcile() {
 			rtt := now.Sub(pr.at)
 			p.srtt = (p.srtt*7 + rtt) / 8
 			p.confident = true
-		case caretOK && pr.row == cr && pr.col >= cc:
-			// Overwritten ahead of the server's caret: still in flight.
+		case !p.caretValid:
+			// A key we could not foresee came after it; the app may rightly
+			// have cleared it. Drop it without judging.
+		case caretOK && pr.row == cr && pr.col >= cc && holds(cell, ' '):
+			// Blanked ahead of the server's caret: still in flight.
 			if pr.drawn {
 				erased = append(erased, len(keep))
 			}
@@ -404,7 +413,7 @@ func (p *Predictor) reconcile() {
 // the cursor jump back and forth. It applies only to a visible cursor on the
 // server caret's row; a drawn caret is moved by reconcile itself.
 func (p *Predictor) placeCursor(serverRow int, drawnCaret, caretOK bool) {
-	if !caretOK || drawnCaret || !p.caretValid || p.caretRow != serverRow {
+	if !caretOK || drawnCaret || !p.caretValid || p.caretRow != serverRow || !p.allDrawn() {
 		return
 	}
 	if p.posKnown && p.realRow == p.caretRow && p.realCol == p.caretCol {
@@ -413,6 +422,17 @@ func (p *Predictor) placeCursor(serverRow int, drawnCaret, caretOK bool) {
 	p.w.Write([]byte(vt.CUP(p.caretRow, p.caretCol)))
 	p.realRow, p.realCol, p.posKnown = p.caretRow, p.caretCol, true
 	p.displaced = true
+}
+
+// allDrawn reports whether every pending prediction is on screen, so the
+// cursor may go after them without skipping cells that show nothing yet.
+func (p *Predictor) allDrawn() bool {
+	for _, pr := range p.pending {
+		if !pr.drawn {
+			return false
+		}
+	}
+	return true
 }
 
 // holds reports whether cell already shows r, a blank counting as a space.
@@ -461,7 +481,7 @@ func (p *Predictor) Tick() {
 		// after the predictions still in flight, or where the server has it.
 		cur := p.shadow.Cursor()
 		row, col := cur.Row, cur.Col
-		if p.caretValid && p.caretRow == cur.Row {
+		if p.caretValid && p.caretRow == cur.Row && p.allDrawn() {
 			col = p.caretCol
 		}
 		if p.shadow.Modes().CursorVisible && !cur.Wrap {
