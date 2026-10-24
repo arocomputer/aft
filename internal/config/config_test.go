@@ -81,3 +81,23 @@ func TestLoadRepo(t *testing.T) {
 		t.Fatal("found aft.toml where there is none")
 	}
 }
+
+// TestFindProjectThroughSymlink finds a project turned on through a symlinked
+// path when the current directory is spelled by its real path, and maps the
+// subdirectory to the server.
+func TestFindProjectThroughSymlink(t *testing.T) {
+	real := t.TempDir()
+	os.MkdirAll(filepath.Join(real, "code", "app"), 0o755)
+	link := filepath.Join(t.TempDir(), "room")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip(err)
+	}
+	st := State{Projects: map[string]Project{filepath.Join(link, "code"): {Host: "box", Dir: "/srv/code"}}}
+	root, p, ok := st.FindProject(filepath.Join(real, "code", "app"))
+	if !ok || p.Host != "box" {
+		t.Fatalf("not found: %q %+v", root, p)
+	}
+	if got := RemoteDir(root, p, filepath.Join(real, "code", "app")); got != "/srv/code/app" {
+		t.Fatalf("RemoteDir = %q", got)
+	}
+}

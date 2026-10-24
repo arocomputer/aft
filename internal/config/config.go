@@ -298,10 +298,8 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 	dir = filepath.Clean(dir)
 	best := ""
 	for r := range s.Projects {
-		if dir == r || strings.HasPrefix(dir, r+string(filepath.Separator)) {
-			if len(r) > len(best) {
-				best = r
-			}
+		if within(dir, r) && len(r) > len(best) {
+			best = r
 		}
 	}
 	if best == "" {
@@ -310,10 +308,39 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 	return best, s.Projects[best], true
 }
 
+// within reports whether dir is root or inside it, spelled either way: a
+// project turned on through a symlink (~/room is /Volumes/Room) matches the
+// real path too.
+func within(dir, root string) bool {
+	if _, ok := relInside(dir, root); ok {
+		return true
+	}
+	_, ok := relInside(resolve(dir), resolve(root))
+	return ok
+}
+
+func relInside(dir, root string) (string, bool) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
+func resolve(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
 // RemoteDir maps a local directory inside a project to its server directory.
 func RemoteDir(root string, p Project, dir string) string {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel == "." {
+	rel, ok := relInside(dir, root)
+	if !ok {
+		rel, _ = relInside(resolve(dir), resolve(root))
+	}
+	if rel == "" || rel == "." {
 		return p.Dir
 	}
 	return p.Dir + "/" + filepath.ToSlash(rel)
