@@ -37,19 +37,19 @@ cd ~/code/app
 aft on
 ```
 
-The project maps to the same path relative to home, on the host, here
-`~/code/app`. If that directory does not exist there and your project is a git
-repository, `aft on` offers to clone it, on the host from the same remote.
-Pass `--dir` for a different server path, or `--host` for a different server.
+The project is exactly the folder you are in. It maps to the same path
+relative to home, on the host, here `~/code/app`, and `aft on` creates that
+directory there if it is missing. Pass `--dir` for a different server path, or
+`--host` for a different server.
 
 From then on, starting `claude`, `codex`, `opencode`, `pi` or any program with a
 launcher from inside that directory runs it, on the host. `aft off` turns it
 back off. Nothing else changes.
 
 To start from a repository that only exists remotely, make an empty local
-directory for it and run `aft on` there; it offers to create the directory on
-the host. With `git` set up as a tool (see [Launchers](../usage/launchers.md)),
-`git clone URL .` then clones it on the host.
+directory for it and run `aft on` there. With `git` set up as a tool (see
+[Launchers](../usage/launchers.md)), `git clone URL .` then clones it on the
+host.
 
 ## Settings
 

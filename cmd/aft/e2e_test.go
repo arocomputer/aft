@@ -165,7 +165,7 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 		t.Skip("pgrep required")
 	}
 	t.Setenv("AFT_HOME", shortHome(t))
-	s := start(t, "shell", "--host", "local")
+	s := start(t, "ssh", "local")
 	defer s.cmd.Process.Kill()
 	s.typeKeys("echo marker-$((20+22))\r")
 	s.waitFor("marker-42", 10*time.Second)
@@ -195,17 +195,17 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 	}
 }
 
-// TestShellReattachTakesOver runs aft shell twice in the same place: the second
+// TestShellReattachTakesOver runs aft ssh twice in the same place: the second
 // comes back to the first's shell, which kept running, and the first client is
 // detached because another terminal took the session.
 func TestShellReattachTakesOver(t *testing.T) {
 	t.Setenv("AFT_HOME", shortHome(t))
-	s := start(t, "shell", "--host", "local")
+	s := start(t, "ssh", "local")
 	defer s.cmd.Process.Kill()
 	s.typeKeys("echo first-$((1+1))\r")
 	s.waitFor("first-2", 10*time.Second)
 
-	s2 := start(t, "shell", "--host", "local")
+	s2 := start(t, "ssh", "local")
 	defer s2.cmd.Process.Kill()
 	s2.waitFor("first-2", 10*time.Second)
 	select {
@@ -227,7 +227,7 @@ func TestShellReattachTakesOver(t *testing.T) {
 // the marker back on screen with the copy-mode status bar.
 func TestCopyModeScrollback(t *testing.T) {
 	t.Setenv("AFT_HOME", shortHome(t))
-	s := start(t, "shell", "--host", "local")
+	s := start(t, "ssh", "local")
 	defer s.cmd.Process.Kill()
 	s.typeKeys("printf 'MARKER-TOP\\n'; for i in $(seq 1 60); do echo line $i; done\r")
 	s.waitFor("line 60", 10*time.Second)

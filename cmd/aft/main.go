@@ -22,11 +22,11 @@ var commands = []struct {
 }{
 	{"Start", [][3]string{
 		{"setup", "", "add a host, create launchers, add the PATH block"},
-		{"on", "[--host H] [--dir D]", "agents started in this directory run on the host"},
+		{"on", "[--host H] [--dir D]", "this folder runs on the host; creates it there if needed"},
 		{"off", "", "run them locally again"},
 	}},
 	{"Sessions", [][3]string{
-		{"shell", "[--host H]", "a lag-free shell on the server"},
+		{"ssh", "[HOST]", "a terminal on the server that survives disconnects"},
 		{"ls", "", "sessions on every host"},
 		{"attach", "[NAME]", "reattach to a session"},
 		{"kill", "NAME", "stop a session"},
@@ -38,7 +38,6 @@ var commands = []struct {
 	{"Launchers", [][3]string{
 		{"agents add", "NAME...", "programs that run in sessions on the server"},
 		{"tools add", "NAME...", "commands like git and gh that run there once"},
-		{"exec", "[--host H] -- CMD", "run one command on the server"},
 	}},
 	{"Maintain", [][3]string{
 		{"status", "", "where you are, hosts, sessions, ports, projects"},
@@ -46,11 +45,70 @@ var commands = []struct {
 		{"uninstall", "", "remove everything Aft added, everywhere"},
 		{"completion", "bash|zsh|fish", "shell completion"},
 		{"version", "", "print the version"},
+		{"help", "", "this list"},
 	}},
 }
 
-// aliases are other names people reach for.
-var aliases = map[string]string{"list": "ls", "sessions": "ls", "--version": "version", "-v": "version"}
+// meant maps names people reach for, including commands aft no longer has, to
+// what they are after. A command is a word, never a flag, so --help is
+// answered with a suggestion rather than accepted.
+var meant = map[string]string{
+	"list": "ls", "sessions": "ls", "ps": "ls",
+	"end": "kill", "stop": "kill", "rm": "kill",
+	"shell": "ssh", "connect": "ssh",
+	"use": "host use", "hosts": "host",
+	"clone": "on", "ports": "status", "exec": "tools add", "run": "tools add",
+	"check": "doctor", "init": "setup", "install": "setup", "remove": "uninstall",
+}
+
+// suggest returns the command someone probably meant by an unknown word, or
+// empty: a known slip, the word without its dashes, or a near spelling.
+func suggest(word string) string {
+	w := strings.ToLower(strings.TrimLeft(word, "-"))
+	switch w {
+	case "h":
+		w = "help"
+	case "v":
+		w = "version"
+	}
+	if m, ok := meant[w]; ok {
+		return m
+	}
+	best, bestD := "", 3
+	for _, g := range commands {
+		for _, c := range g.cmds {
+			name := strings.Fields(c[0])[0]
+			if name == w && w != word {
+				return name // --help, -version
+			}
+			if d := distance(w, name); d < bestD && d <= len(name)/2 {
+				best, bestD = name, d
+			}
+		}
+	}
+	return best
+}
+
+// distance is the edit distance between a and b.
+func distance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
 
 func printUsage() {
 	fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
@@ -113,11 +171,8 @@ func inFiles(files []string) string {
 }
 
 func run(cmd string, args []string) int {
-	if a, ok := aliases[cmd]; ok {
-		cmd = a
-	}
 	switch cmd {
-	case "help", "-h", "--help":
+	case "help":
 		printUsage()
 		return 0
 	case "version":
@@ -137,8 +192,8 @@ func run(cmd string, args []string) int {
 		return cmdOn(args)
 	case "off":
 		return cmdOff(args)
-	case "shell":
-		return cmdShell(args)
+	case "ssh":
+		return cmdSSH(args)
 	case "ls":
 		return cmdLs(args)
 	case "attach":
@@ -149,8 +204,6 @@ func run(cmd string, args []string) int {
 		return cmdStatus(args)
 	case "doctor":
 		return cmdDoctor(args)
-	case "exec":
-		return cmdExec(args)
 	case "mount":
 		return cmdMount(args)
 	case "agents", "tools":
@@ -162,8 +215,12 @@ func run(cmd string, args []string) int {
 	case "completion":
 		return cmdCompletion(args)
 	}
-	ui.Error("unknown command %q", cmd)
-	ui.Hint("aft help lists the commands")
+	ui.Error("Unknown command: '%s'", cmd)
+	if m := suggest(cmd); m != "" {
+		fmt.Fprintln(os.Stderr, "Did you mean: "+ui.Command("`aft "+m+"`")+"?")
+	} else {
+		ui.Hint("aft help lists the commands")
+	}
 	return 2
 }
 

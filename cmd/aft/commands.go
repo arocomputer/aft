@@ -314,7 +314,6 @@ func cmdOn(args []string) int {
 	fs := flags("on")
 	hostName := fs.String("host", "", "host name from aft setup")
 	dir := fs.String("dir", "", "directory on the server (default: same path relative to home)")
-	noClone := fs.Bool("no-clone", false, "never offer to clone")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -330,18 +329,16 @@ func cmdOn(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	// The project is exactly this folder. An aft.toml here can pin its host and
+	// server directory for every machine.
 	root := cwd
-	repo, repoRoot, hasRepo := config.LoadRepo(cwd)
-	if hasRepo {
-		root = repoRoot
+	if repo, repoRoot, ok := config.LoadRepo(cwd); ok && repoRoot == cwd {
 		if *hostName == "" {
 			*hostName = repo.Host
 		}
 		if *dir == "" {
 			*dir = repo.Dir
 		}
-	} else if gitRoot, err := gitTop(cwd); err == nil {
-		root = gitRoot
 	}
 	// A project on a network mount already lives on the server; map it in place
 	// with no clone and no sync. This runs unless the user forced --dir.
@@ -386,19 +383,10 @@ func cmdOn(args []string) int {
 		if mounted {
 			return fail(fmt.Errorf("the mount maps to %s on %s, but that path is missing; check aft mount list", *dir, h.Name))
 		}
-		ui.Warn("%s does not exist on %s", *dir, h.Name)
-		script := "mkdir -p " + transport.Quote(*dir)
-		if url := gitRemote(root); url != "" && !*noClone {
-			if !ui.Confirm(fmt.Sprintf("Clone %s there?", url), false) {
-				return 1
-			}
-			script = "mkdir -p " + transport.Quote(filepath.Dir(*dir)) + " && git clone " + transport.Quote(url) + " " + transport.Quote(*dir)
-		} else if !ui.Confirm("Create it?", false) {
-			return 1
+		if _, err := transport.RunRaw(h, nil, "mkdir -p "+transport.Quote(*dir)); err != nil {
+			return fail(fmt.Errorf("could not create %s on %s: %w", *dir, h.Name, err))
 		}
-		if err := transport.Shell(h, script); err != nil {
-			return fail(fmt.Errorf("could not create %s: %w", *dir, err))
-		}
+		ui.OK("Created %s on %s", *dir, h.Name)
 	}
 	st.Projects[root] = config.Project{Host: h.Name, Dir: *dir}
 	if err := config.SaveState(st); err != nil {
@@ -441,16 +429,20 @@ func cmdOff(args []string) int {
 	return 0
 }
 
-// shellCommand is the session command behind aft shell: the user's login shell.
+// shellCommand is the session command behind aft ssh: the user's login shell.
 var shellCommand = []string{"sh", "-c", `exec "${SHELL:-/bin/sh}" -l`}
 
-// cmdShell opens a login shell on the server in a session, or reattaches to
-// the one already open in this directory.
-func cmdShell(args []string) int {
-	fs := flags("shell")
-	hostName := fs.String("host", "", "host name from aft setup")
-	if err := fs.Parse(args); err != nil {
+// cmdSSH opens a login shell on a host in a session, or reattaches to the one
+// already open in this directory: like ssh, but it survives disconnects and
+// typing is predicted. With no host it uses the project's, or the default.
+func cmdSSH(args []string) int {
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "usage: aft ssh [HOST]")
 		return 2
+	}
+	hostName := new(string)
+	if len(args) == 1 {
+		*hostName = args[0]
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -554,7 +546,7 @@ func describe(r session.Record) string {
 		name = filepath.Base(r.Command[0])
 	}
 	if strings.Join(r.Command, " ") == strings.Join(shellCommand, " ") {
-		name = "shell" // aft shell's login-shell wrapper
+		name = "shell" // aft ssh's login-shell wrapper
 	}
 	for _, a := range config.DefaultAgents {
 		if name == a {
@@ -1053,47 +1045,6 @@ func (d *doctor) summary(took time.Duration) {
 	}
 }
 
-// cmdExec runs one command on the server without a session.
-func cmdExec(args []string) int {
-	fs := flags("exec")
-	hostName := fs.String("host", "", "host name from aft setup")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) > 0 && rest[0] == "--" {
-		rest = rest[1:]
-	}
-	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: aft exec [--host H] -- COMMAND [ARG...]")
-		return 2
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return fail(err)
-	}
-	st, _ := config.LoadState()
-	cwd, _ := os.Getwd()
-	root, p, on := st.FindProject(cwd)
-	if *hostName == "" && on {
-		*hostName = p.Host
-	}
-	h, err := cfg.Host(*hostName)
-	if err != nil {
-		return fail(err)
-	}
-	dir := ""
-	if on {
-		if err := transport.EnsureMaster(h); err != nil {
-			return fail(err)
-		}
-		if dir, err = resolveRemoteDir(h, config.RemoteDir(root, p, cwd)); err != nil {
-			return fail(err)
-		}
-	}
-	return launcher.RunTool(h, dir, nil, rest)
-}
-
 // mirrors reads the ports each running client mirrors, keyed by session.
 func mirrors() map[string][]int {
 	out := map[string][]int{}
@@ -1247,7 +1198,7 @@ func cmdCompletion(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: aft completion bash|zsh|fish")
 		return 2
 	}
-	words := "setup on off shell ls attach kill host mount status doctor exec agents tools uninstall completion version help"
+	words := "setup on off ssh ls attach kill host mount status doctor agents tools uninstall completion version help"
 	switch args[0] {
 	case "bash":
 		fmt.Printf("_aft() { COMPREPLY=( $(compgen -W '%s' -- \"${COMP_WORDS[COMP_CWORD]}\") ); }\ncomplete -F _aft aft\n", words)
@@ -1262,22 +1213,6 @@ func cmdCompletion(args []string) int {
 		return 2
 	}
 	return 0
-}
-
-func gitTop(dir string) (string, error) {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func gitRemote(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
 
 func remoteDirExists(h transport.Host, dir string) (bool, error) {

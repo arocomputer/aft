@@ -18,7 +18,7 @@ aft ls                 # sessions on every host
 aft attach fox         # reattach to the session called fox
 aft attach             # reattach; picks from a list when several are running
 aft kill fox           # stop the application and the session
-aft shell              # a login shell on the server in a session
+aft ssh                # a terminal on the server that survives disconnects
 aft status             # here on/off, hosts, sessions
 ```
 
@@ -55,9 +55,11 @@ sleeps or drops off the network: the client sends a heartbeat every ten
 seconds, and after thirty silent seconds the session lets it go. `aft ls` says
 which sessions are attached.
 
-`aft shell` opens a login shell on the server in a session, in the project's
-directory when the project is on. Run it again in the same place and it comes
-back to that shell.
+`aft ssh` opens your login shell on the server in a session: like `ssh`, but
+it survives disconnects and sleep, and typing is predicted locally, as `mosh`
+does. It starts in the project's directory when the project is on. Name a host
+to pick one, as in `aft ssh studio`. Run it again in the same place and it
+comes back to that shell.
 
 Aft never stops a session on its own. `aft kill` does, and so does the
 application exiting.

@@ -21,7 +21,6 @@ not configured, hooked or wrapped; any program that runs in a terminal works.
 ```sh
 aft agents add gemini      # a launcher for another program
 aft tools add git gh       # commands that run on the server, once each
-aft exec -- make test      # one command on the server, no session
 ```
 
 **Agents and tools.** An agent, such as `claude`, starts in a session: it

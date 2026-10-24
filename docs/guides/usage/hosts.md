@@ -103,7 +103,7 @@ When you start an agent or open a shell, Aft decides the host in this order:
 
 | Precedence | Source | Example |
 | --- | --- | --- |
-| 1 (highest) | the `--host` flag | `aft shell --host studio` |
+| 1 (highest) | the `--host` flag | `aft on --host studio` |
 | 2 | a project's committed `aft.toml` | `host = "mini"` |
 | 3 | the top-level `use` key | `use = "mini"` |
 

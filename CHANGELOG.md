@@ -68,13 +68,20 @@ stays on your machine, and typing feels local.
   machine that is also its own host never nests.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
-- `aft shell`, `aft ls`, `aft attach`, `aft kill`, `aft exec`, `aft status`,
+- `aft ssh`, `aft ls`, `aft attach`, `aft kill`, `aft status`,
   `aft doctor`, `aft host` (with `add`, `rm` and `use`), `aft agents add` and
   `aft tools add`.
 - Tools: `aft tools add git gh` makes those commands run once on the server,
   in the project's directory, wherever aft is on, with the terminal or pipes
   passed through and the exit code returned. Agents still run in sessions.
-- `aft shell` comes back to the shell already open in the same directory.
+- `aft ssh [HOST]`, a terminal on the server that survives disconnects with
+  predicted typing, comes back to the shell already open in the same
+  directory.
+- `aft on` is exactly the folder you are in, with no search for a project
+  root, and creates the server directory when it is missing.
+- An unknown command, including a flag such as `--help`, answers with
+  `Did you mean: `aft help`?`: commands are words, and slips, near spellings
+  and retired names point to the command meant.
 - A session detaches when its terminal goes away: a closed tab, another
   computer attaching, or a laptop that sleeps, which the client's heartbeat
   reveals within thirty seconds. `aft ls` shows which sessions are attached.
@@ -109,9 +116,10 @@ stays on your machine, and typing feels local.
 
 ### Removed
 
-- `aft detach` (detaching follows the terminal), `aft clone` (`aft on` offers
-  to clone or create the directory), and `aft ports` and `aft use`, now part of
-  `aft status` and `aft host`.
+- `aft detach` (detaching follows the terminal), `aft clone` (`aft on` creates
+  the directory; clone with git as a tool), `aft exec` (tools), `aft shell`
+  (now `aft ssh`), and `aft ports` and `aft use`, now part of `aft status` and
+  `aft host`.
 
 - Workspaces, project records, `connect`, `open`, `run`, port watch, systemd and
   launchd services, migration, the picker and the dry-run uninstall.
