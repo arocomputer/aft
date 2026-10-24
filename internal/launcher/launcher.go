@@ -7,9 +7,11 @@ package launcher
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -96,6 +98,11 @@ func RunTool(h transport.Host, dir string, wrapper, argv []string) int {
 	if dir != "" {
 		script = "cd " + transport.Quote(dir) + " && " + script
 	}
+	if h.IsLocal() {
+		// On this machine the command must be the real one, not its launcher,
+		// which would take it back to wherever the project is on.
+		script = "export PATH=" + transport.Quote(pathWithoutLaunchers()) + "; " + script
+	}
 	if err := transport.Shell(h, script); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -105,6 +112,20 @@ func RunTool(h transport.Host, dir string, wrapper, argv []string) int {
 		return 255
 	}
 	return 0
+}
+
+// pathWithoutLaunchers is PATH with aft's launchers directory left out.
+func pathWithoutLaunchers() string {
+	launchers, _ := filepath.EvalSymlinks(home.Launchers())
+	var keep []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		real, _ := filepath.EvalSymlinks(dir)
+		if dir == "" || filepath.Clean(dir) == home.Launchers() || (real != "" && real == launchers) {
+			continue
+		}
+		keep = append(keep, dir)
+	}
+	return strings.Join(keep, string(os.PathListSeparator))
 }
 
 // askExisting asks whether to attach to the agent already running here, or
@@ -118,7 +139,14 @@ func askExisting(agent, id, title string, attached bool) bool {
 	if attached {
 		hint = "another terminal is showing it; this one takes over"
 	}
-	return ui.Choose(q, []ui.Option{{Label: "Attach to it", Hint: hint}, {Label: "Start a new one"}}, 0) == 0
+	switch ui.Choose(q, []ui.Option{{Label: "Attach to it", Hint: hint}, {Label: "Start a new one"}}, 0) {
+	case 0:
+		return true
+	case 1:
+		return false
+	}
+	os.Exit(130) // backed out: as Ctrl-C would have, start nothing
+	return false
 }
 
 // SessionOptions builds client options for a project, resolving settings from
@@ -126,7 +154,11 @@ func askExisting(agent, id, title string, attached bool) bool {
 func SessionOptions(cfg config.Config, host, root string, p config.Project) (terminal.Options, error) {
 	var repo *config.RepoConfig
 	if root != "" {
-		if r, _, ok := config.LoadRepo(root); ok {
+		r, _, err := config.LoadRepo(root)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return terminal.Options{}, err
+		}
+		if err == nil {
 			repo = &r
 		}
 	}
@@ -186,7 +218,8 @@ func execReal(name string, args []string) int {
 	return 0
 }
 
-// RealBinary finds name on PATH, skipping Aft's shim directory.
+// RealBinary finds name on PATH, skipping Aft's launchers directory, where
+// the symlink of that name points back at aft.
 func RealBinary(name string) (string, error) {
 	shims, _ := filepath.EvalSymlinks(home.Launchers())
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
@@ -206,7 +239,23 @@ func RealBinary(name string) (string, error) {
 	return "", exec.ErrNotFound
 }
 
-// InstallLaunchers creates a launcher symlink for each agent that points at self.
+// ValidName says why name cannot have a launcher, or nil: a launcher is a
+// file named after a command, and aft tells what it was started as by that
+// name, so it must not be one aft gives another meaning.
+func ValidName(name string) error {
+	switch {
+	case name == "" || strings.ContainsAny(name, "/ \t\n") || name == "." || name == "..":
+		return fmt.Errorf("%q is not a command name", name)
+	case strings.HasPrefix(name, "aft"):
+		return fmt.Errorf("%q would be taken for aft itself", name)
+	case slices.Contains(home.ShimNames, name):
+		return fmt.Errorf("%q is a command aft already stands in for inside sessions", name)
+	}
+	return nil
+}
+
+// InstallLaunchers creates a launcher symlink for each agent that points at
+// self; a name that cannot be a launcher is skipped.
 func InstallLaunchers(self string, agents []string, st *config.State) error {
 	if err := home.Ensure(); err != nil {
 		return err
@@ -216,7 +265,7 @@ func InstallLaunchers(self string, agents []string, st *config.State) error {
 		seen[s] = true
 	}
 	for _, a := range agents {
-		if a == "" || a == "aft" || strings.ContainsAny(a, "/ \t") {
+		if ValidName(a) != nil {
 			continue
 		}
 		link := filepath.Join(home.Launchers(), a)
@@ -297,10 +346,17 @@ func ShellFiles() (posix []string, fish string) {
 func InstallShellBlock(st *config.State) ([]string, error) {
 	posix, fish := ShellFiles()
 	var changed []string
+	// A recorded block counts only while it is still in the file: dotfiles
+	// get restored from elsewhere, and then the line must go back in.
 	recorded := map[string]bool{}
+	kept := st.ShellBlocks[:0]
 	for _, b := range st.ShellBlocks {
-		recorded[b.File] = true
+		if raw, err := os.ReadFile(b.File); err == nil && strings.Contains(string(raw), b.Block) {
+			recorded[b.File] = true
+			kept = append(kept, b)
+		}
 	}
+	st.ShellBlocks = kept
 	for _, f := range posix {
 		if recorded[f] {
 			continue

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -35,18 +35,40 @@ func flags(name string) *flag.FlagSet {
 	return fs
 }
 
+// ask reads one line from the terminal. It reads byte by byte, so nothing
+// typed after the newline is swallowed before the raw-mode prompt that may
+// follow.
 func ask(prompt, def string) string {
 	if def != "" {
 		fmt.Printf("%s [%s]: ", prompt, def)
 	} else {
 		fmt.Printf("%s: ", prompt)
 	}
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
+	var line []byte
+	for b := make([]byte, 1); ; {
+		if n, err := os.Stdin.Read(b); n == 0 || err != nil || b[0] == '\n' {
+			break
+		}
+		line = append(line, b[0])
+	}
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
 		return def
 	}
-	return line
+	return string(line)
+}
+
+// selfPath is the running aft binary by its real path, which launchers and
+// shims point at; when the path cannot be resolved it is used as is.
+func selfPath() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(self); err == nil {
+		self = real
+	}
+	return self, nil
 }
 
 // connect opens the shared SSH connection to h behind a spinner. It tries
@@ -94,11 +116,10 @@ func cmdSetup(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	self, err := os.Executable()
+	self, err := selfPath()
 	if err != nil {
 		return fail(err)
 	}
-	self, _ = filepath.EvalSymlinks(self)
 
 	dest := *hostFlag
 	if dest == "" && !*yes {
@@ -113,7 +134,9 @@ func cmdSetup(args []string) int {
 			return fail(err)
 		}
 		keepDefault(&cfg)
-		cfg.Hosts[n] = config.HostConfig{SSH: dest}
+		hc := cfg.Hosts[n] // a host set up again keeps its settings
+		hc.SSH = dest
+		cfg.Hosts[n] = hc
 		h, _ := cfg.Host(n)
 		if err := connect(h); err != nil {
 			return fail(err)
@@ -141,7 +164,10 @@ func cmdSetup(args []string) int {
 	// Decide how the PATH line reaches the shell. People who manage their
 	// dotfiles want to add it themselves, so ask rather than edit blindly.
 	if cfg.EditDotfiles == nil && !*yes {
-		b := chooseEditDotfiles()
+		b, ok := chooseEditDotfiles()
+		if !ok {
+			return 130
+		}
 		cfg.EditDotfiles = &b
 	}
 	if cfg.EditingDotfiles() {
@@ -168,7 +194,9 @@ func cmdSetup(args []string) int {
 
 // chooseEditDotfiles asks whether aft should edit the shell config itself,
 // defaulting to no when the shell config looks managed.
-func chooseEditDotfiles() bool {
+// chooseEditDotfiles asks whether setup may edit the shell config; ok is
+// false when the user backs out of setup.
+func chooseEditDotfiles() (edit, ok bool) {
 	def := 0
 	if launcher.DotfilesManaged() {
 		def = 1
@@ -177,7 +205,7 @@ func chooseEditDotfiles() bool {
 		{Label: "Edit my shell config for me", Hint: "~/.zshrc or ~/.bashrc"},
 		{Label: "Show me the line, I manage my dotfiles", Hint: "chezmoi, stow, nix, a repo"},
 	}, def)
-	return i == 0
+	return i == 0, i >= 0
 }
 
 // cmdHost manages the [host.<name>] tables in config.toml. With no verb it
@@ -265,8 +293,24 @@ func cmdHost(args []string) int {
 		if cfg.Use == name {
 			cfg.Use = "" // fall back to the only remaining host, or to aft host use
 		}
+		// Projects on it and mounts of it would only fail from now on.
+		cfg.Mounts = slices.DeleteFunc(cfg.Mounts, func(m config.Mount) bool { return m.Host == name })
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
+		}
+		if st, err := config.LoadState(); err == nil {
+			var off []string
+			for root, p := range st.Projects {
+				if p.Host == name {
+					delete(st.Projects, root)
+					off = append(off, ui.Path(root))
+				}
+			}
+			if len(off) > 0 {
+				config.SaveState(st)
+				sort.Strings(off)
+				ui.Note("turned off %s, which ran on it", strings.Join(off, ", "))
+			}
 		}
 		ui.OK("Removed host %s from your config", ui.Bold(name))
 		fmt.Println(ui.Dim("Whatever Aft installed on it stays; run aft uninstall on that machine to clean it up."))
@@ -355,7 +399,11 @@ func cmdOn(args []string) int {
 	// from either spelling (see config.FindProject). An aft.toml here can pin
 	// its host and server directory for every machine.
 	root := config.RealPath(cwd)
-	if repo, repoRoot, ok := config.LoadRepo(cwd); ok && repoRoot == cwd {
+	repo, repoRoot, err := config.LoadRepo(cwd)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fail(err)
+	}
+	if err == nil && repoRoot == cwd {
 		if *hostName == "" {
 			*hostName = repo.Host
 		}
@@ -503,6 +551,9 @@ func checkHostName(name string) error {
 	if isCommand(name) || meant[name] != "" {
 		return fmt.Errorf("%q is an aft command, so aft %s could not open it; pick another name", name, name)
 	}
+	if name == "local" {
+		return errors.New("\"local\" is this machine; pick another name")
+	}
 	return nil
 }
 
@@ -549,20 +600,24 @@ func adoptHost(cfg *config.Config, dest string, probe bool) (transport.Host, boo
 	}
 	keepDefault(cfg)
 	cfg.Hosts[name] = config.HostConfig{SSH: dest}
+	h, _ := cfg.Host(name)
+	// The host is written down only once it works, so a typo leaves nothing
+	// behind to time out on from then on.
+	if err := connect(h); err != nil {
+		delete(cfg.Hosts, name)
+		fail(err)
+		return transport.Host{}, false
+	}
+	if _, err := ensureServer(h); err != nil {
+		delete(cfg.Hosts, name)
+		fail(err)
+		return transport.Host{}, false
+	}
 	if err := config.Save(*cfg); err != nil {
 		fail(err)
 		return transport.Host{}, false
 	}
 	ui.Note("added %s as host %s; aft %s opens it from now on", dest, ui.Bold(name), name)
-	h, _ := cfg.Host(name)
-	if err := connect(h); err != nil {
-		fail(err)
-		return transport.Host{}, false
-	}
-	if _, err := ensureServer(h); err != nil {
-		fail(err)
-		return transport.Host{}, false
-	}
 	return h, true
 }
 
@@ -783,7 +838,10 @@ func showRemains(h transport.Host, r session.Record) int {
 		}
 	}
 	ui.Warn("%s (%s) on %s %s%s, with no terminal attached", r.ID, ansi.Strip(describe(r)), h.Name, how, when)
-	if len(r.Command) > 0 {
+	switch {
+	case session.IsShell(r.Command):
+		ui.Hint("aft %s opens a new shell there", h.Name)
+	case len(r.Command) > 0:
 		ui.Hint("run %s again in %s to start over; many agents can resume their last conversation", filepath.Base(r.Command[0]), ui.Path(r.Dir))
 	}
 	return 0
@@ -833,6 +891,9 @@ func cmdAttach(args []string) int {
 				return 2
 			}
 			i := ui.Choose("Attach to which session?", opts, 0)
+			if i < 0 {
+				return 130
+			}
 			found = found[i : i+1]
 		}
 		h, id, rec = found[0].h, found[0].r.ID, found[0].r
@@ -984,15 +1045,18 @@ func cmdStatus(args []string) int {
 		}
 	}
 	listed := map[string]bool{}
+	complete := true
 	for _, hs := range all {
+		complete = complete && hs.err == nil
 		for _, r := range hs.list {
 			listed[r.ID] = true
 			fmt.Println(ui.Mark("info") + " " + ui.Bold(r.ID) + " (" + describe(r) + ")" + ui.Dim(" · ") + state(r) + ui.Dim(" on "+hs.host.Name+" · "+started(r)))
 		}
 	}
-	for _, id := range mirroredSessions(listed) {
+	m := mirrors()
+	for _, id := range mirroredSessions(m, listed, complete) {
 		list := make([]string, 0, 4)
-		for _, p := range mirrors()[id] {
+		for _, p := range m[id] {
 			list = append(list, fmt.Sprintf("localhost:%d", p))
 		}
 		fmt.Println(ui.Mark("info") + " " + strings.Join(list, ", ") + ui.Dim(" · mirrored from "+id))
@@ -1008,14 +1072,18 @@ func orAHost(name string) string {
 	return name
 }
 
-// mirroredSessions lists sessions with mirrored ports, in order, dropping the
-// record a client left behind when it was killed: ports are mirrored only
-// while a client runs, and a running client's session is listed.
-func mirroredSessions(listed map[string]bool) []string {
+// mirroredSessions lists the sessions in m with mirrored ports, in order.
+// When every host answered (complete), the record a client left behind when
+// it was killed is dropped: ports are mirrored only while a client runs, and
+// a running client's session is listed. A host that did not answer may hold
+// the session, so nothing is dropped then.
+func mirroredSessions(m map[string][]int, listed map[string]bool, complete bool) []string {
 	var ids []string
-	for id := range mirrors() {
+	for id := range m {
 		if !listed[id] {
-			os.Remove(filepath.Join(home.Sockets(), "mirrors-"+id+".json"))
+			if complete {
+				os.Remove(filepath.Join(home.Sockets(), "mirrors-"+id+".json"))
+			}
 			continue
 		}
 		ids = append(ids, id)
@@ -1135,7 +1203,7 @@ func (d *doctor) repair(text, hint string, fn func() error, done string) {
 // repairs (reinstall a stale or missing server, re-add the PATH line); --json
 // prints machine-readable findings; --host limits host checks to one host.
 func cmdDoctor(args []string) int {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs := flags("doctor")
 	doFix := fs.Bool("fix", false, "apply the safe repairs")
 	asJSON := fs.Bool("json", false, "print findings as JSON")
 	only := fs.String("host", "", "check only this host")
@@ -1147,7 +1215,7 @@ func cmdDoctor(args []string) int {
 		return fail(err)
 	}
 	st, _ := config.LoadState()
-	self, _ := os.Executable()
+	self, _ := selfPath()
 	d := &doctor{fix: *doFix}
 	var hosts []string
 	for _, n := range cfg.HostNames() {
@@ -1157,8 +1225,8 @@ func cmdDoctor(args []string) int {
 	}
 	start := time.Now()
 	if !*asJSON {
-		// Three checks here, three per host.
-		d.live = ui.Start("Checking this machine", 3+3*len(hosts))
+		// Three checks here, one for this folder, three per host.
+		d.live = ui.Start("Checking this machine", 4+3*len(hosts))
 	}
 
 	d.section("This machine")
@@ -1193,7 +1261,10 @@ func cmdDoctor(args []string) int {
 	}
 	if len(missing) > 0 {
 		d.repair("launchers missing: "+strings.Join(missing, ", "), "run aft setup", func() error {
-			return launcher.InstallLaunchers(self, cfg.Launched(), &st)
+			if err := launcher.InstallLaunchers(self, cfg.Launched(), &st); err != nil {
+				return err
+			}
+			return config.SaveState(st)
 		}, "reinstalled launchers")
 	} else {
 		d.ok(fmt.Sprintf("%d launchers", len(cfg.Launched())))
@@ -1345,17 +1416,19 @@ func cmdLaunchers(kind string, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	self, err := os.Executable()
+	self, err := selfPath()
 	if err != nil {
 		return fail(err)
 	}
-	self, _ = filepath.EvalSymlinks(self)
 	have := map[string]bool{}
 	for _, n := range cfg.Launched() {
 		have[n] = true
 	}
 	var added []string
 	for _, n := range args[1:] {
+		if err := launcher.ValidName(n); err != nil {
+			return fail(err)
+		}
 		if have[n] {
 			fmt.Println(ui.Dim(n + " already has a launcher."))
 			continue

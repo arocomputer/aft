@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/arocomputer/aft/internal/config"
+	"github.com/arocomputer/aft/internal/home"
 )
 
 // TestShellBlockRoundTrip installs the PATH block into a shell file, leaving
@@ -70,15 +71,14 @@ func TestEditedBlockIsKept(t *testing.T) {
 func TestRealBinarySkipsShims(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AFT_HOME", filepath.Join(dir, ".aft"))
-	shims := filepath.Join(dir, ".aft", "shims")
 	realDir := filepath.Join(dir, "bin")
-	os.MkdirAll(shims, 0o755)
+	os.MkdirAll(home.Launchers(), 0o755)
 	os.MkdirAll(realDir, 0o755)
-	// A shim and a real binary of the same name.
-	os.Symlink("/does/not/matter", filepath.Join(shims, "claude"))
+	// A launcher and a real binary of the same name; the launcher resolves.
 	real := filepath.Join(realDir, "claude")
 	os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755)
-	t.Setenv("PATH", shims+string(os.PathListSeparator)+realDir)
+	os.Symlink(real, filepath.Join(home.Launchers(), "claude"))
+	t.Setenv("PATH", home.Launchers()+string(os.PathListSeparator)+realDir)
 	got, err := RealBinary("claude")
 	if err != nil || got != real {
 		t.Fatalf("got %q %v, want %q", got, err, real)
@@ -146,5 +146,39 @@ func TestPathInShellConfig(t *testing.T) {
 	os.WriteFile(rc, []byte("alias ll='ls -l'\n"+Block()), 0o644)
 	if !PathInShellConfig(config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: Block()}}}) {
 		t.Fatal("aft's own block is missed")
+	}
+}
+
+// TestShellBlockComesBackWhenTheFileLostIt reinstalls the PATH block in a
+// recorded file that no longer contains it, as after dotfiles are restored,
+// instead of trusting the record.
+func TestShellBlockComesBackWhenTheFileLostIt(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("SHELL", "/bin/zsh")
+	rc := filepath.Join(h, ".zshrc")
+	os.WriteFile(rc, []byte("alias ll='ls -l'\n"), 0o644)
+	st := config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: Block()}}}
+	changed, err := InstallShellBlock(&st)
+	if err != nil || len(changed) != 1 {
+		t.Fatalf("changed %v err %v", changed, err)
+	}
+	if raw, _ := os.ReadFile(rc); !strings.Contains(string(raw), Block()) {
+		t.Fatalf("block not put back:\n%s", raw)
+	}
+}
+
+// TestValidName refuses launcher names aft could not tell apart from its
+// own commands and shims.
+func TestValidName(t *testing.T) {
+	for _, bad := range []string{"", "aft", "aftx", "aft-server", "open", "xclip", "foo bar", "a/b"} {
+		if ValidName(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	for _, good := range []string{"claude", "gh", "git", "cursor-agent"} {
+		if err := ValidName(good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
 	}
 }

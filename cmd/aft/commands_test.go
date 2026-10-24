@@ -80,3 +80,13 @@ func TestCompletions(t *testing.T) {
 		t.Errorf("after host rm: %v", got)
 	}
 }
+
+// TestHostNameLocalIsRefused keeps "local" for this machine.
+func TestHostNameLocalIsRefused(t *testing.T) {
+	if checkHostName("local") == nil {
+		t.Fatal("local accepted as a host name")
+	}
+	if err := checkHostName("mini"); err != nil {
+		t.Fatal(err)
+	}
+}

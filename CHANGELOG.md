@@ -188,6 +188,14 @@ stays on your machine, and typing feels local.
   host. A newer server missing its shims is set up, never replaced. An
   upload cut short by Ctrl-C leaves no truncated file on the server. A TIFF
   on the macOS pasteboard pastes as an image.
+- Setup and `aft doctor --fix` put the PATH line back when a restored shell
+  config has lost it, instead of trusting their notes. A host that cannot be
+  reached is never written to the config; `aft setup` on a host you already
+  have keeps its settings; `aft host rm` turns off the projects that ran on
+  it. Escape or Ctrl-C in a prompt backs out instead of taking the default.
+  A launcher name that aft could not tell from its own commands is refused.
+  A broken `aft.toml` is reported, not ignored. A host table without `ssh` is
+  an error rather than this machine.
 - Hyperlinks (OSC 8) are kept per cell and restored by a repaint, so a link
   on screen stays clickable after a reattach.
 - Copy mode's status bar names no keys; the guide lists them.

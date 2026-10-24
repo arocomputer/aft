@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
 
@@ -109,7 +110,15 @@ func (s *screen) render(lines []string) {
 	if s.prev > 0 {
 		fmt.Fprintf(os.Stderr, "\x1b[%dA", s.prev) // move to the block's first line
 	}
+	// A line wider than the terminal would wrap and throw the redraw off.
+	width := 0
+	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 1 {
+		width = w - 1
+	}
 	for _, l := range lines {
+		if width > 0 && lipgloss.Width(l) > width {
+			l = ansi.Truncate(l, width, "")
+		}
 		fmt.Fprint(os.Stderr, "\r\x1b[K"+l+"\r\n")
 	}
 	s.prev = len(lines)
@@ -128,7 +137,8 @@ func (s *screen) clear() {
 	s.prev = 0
 }
 
-// Confirm asks a yes/no question, returning def when there is no terminal.
+// Confirm asks a yes/no question, returning def when there is no terminal
+// and false when the user backs out with Escape, q or Ctrl-C.
 func Confirm(question string, def bool) bool {
 	if !Interactive() {
 		return def
@@ -167,7 +177,7 @@ func Confirm(question string, def bool) bool {
 			return value
 		case keyCancel:
 			sc.clear()
-			return def
+			return false
 		}
 	}
 }
@@ -178,8 +188,9 @@ type Option struct {
 	Hint  string
 }
 
-// Choose presents a single-choice list and returns the selected index, or def
-// when there is no terminal.
+// Choose presents a single-choice list and returns the selected index: def
+// when there is no terminal, and -1 when the user backs out with Escape, q
+// or Ctrl-C, which callers treat as "do nothing".
 func Choose(title string, options []Option, def int) int {
 	if !Interactive() || len(options) == 0 {
 		return def
@@ -228,7 +239,7 @@ func Choose(title string, options []Option, def int) int {
 			return index
 		case keyCancel:
 			sc.clear()
-			return def
+			return -1
 		}
 	}
 }

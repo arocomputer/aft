@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,7 +34,7 @@ type Config struct {
 	Predict      *bool                 `toml:"predict,omitempty"`
 	UDP          *bool                 `toml:"udp,omitempty"`           // reach sessions over UDP when the host allows it; nil means yes
 	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
-	DetachKey    string                `toml:"detach,omitempty"`        // key after the prefix that detaches
+	DetachKey    string                `toml:"detach,omitempty"`        // a key that detaches on its own, besides prefix then d; off by default
 	EditDotfiles *bool                 `toml:"edit_dotfiles,omitempty"` // let setup edit the shell config; nil means yes
 	Wrapper      []string              `toml:"wrapper,omitempty"`       // default command wrapper on the host
 	Env          []string              `toml:"env,omitempty"`           // extra variables to pass to the host
@@ -102,8 +103,6 @@ type Settings struct {
 	UDP     bool
 	Ports   string
 	Env     []string
-	Alive   int
-	Persist int
 }
 
 // Resolve merges settings for a host and an optional repository config.
@@ -115,8 +114,6 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 		UDP:     c.UDP == nil || *c.UDP,
 		Ports:   c.Ports,
 		Env:     append([]string(nil), c.Env...),
-		Alive:   h.Alive,
-		Persist: h.Persist,
 	}
 	if len(h.Wrapper) > 0 {
 		s.Wrapper = h.Wrapper
@@ -148,7 +145,6 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 // their dotfiles.
 func (c Config) EditingDotfiles() bool { return c.EditDotfiles == nil || *c.EditDotfiles }
 
-// Path is the config file.
 // Launched is every name with a launcher: the agents, then the tools.
 func (c Config) Launched() []string { return append(append([]string{}, c.Agents...), c.Tools...) }
 
@@ -163,6 +159,7 @@ func (c Config) IsTool(name string) bool {
 	return false
 }
 
+// Path is the config file.
 func Path() string { return filepath.Join(home.Dir(), "config.toml") }
 
 // StatePath is the state file.
@@ -188,6 +185,12 @@ func Load() (Config, error) {
 	case "", "ask", "attach", "new":
 	default:
 		return c, fmt.Errorf("%s: existing must be ask, attach or new, not %q", Path(), c.Existing)
+	}
+	for name, h := range c.Hosts {
+		if h.SSH == "" {
+			// Without a destination the host would be taken for this machine.
+			return c, fmt.Errorf("%s: host %q has no ssh destination", Path(), name)
+		}
 	}
 	return c, nil
 }
@@ -371,31 +374,42 @@ func RemoteDir(root string, p Project, dir string) string {
 
 // LoadRepo reads aft.toml from dir or its parents, returning the root it was
 // found in.
-func LoadRepo(dir string) (RepoConfig, string, bool) {
+// LoadRepo finds the nearest aft.toml at or above dir and returns it with
+// the directory it is in. With none the error is fs.ErrNotExist; a file that
+// does not parse is an error naming it, never silently ignored.
+func LoadRepo(dir string) (RepoConfig, string, error) {
 	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
-		b, err := os.ReadFile(filepath.Join(d, "aft.toml"))
+		path := filepath.Join(d, "aft.toml")
+		b, err := os.ReadFile(path)
 		if err == nil {
 			var r RepoConfig
-			if toml.Unmarshal(b, &r) == nil {
-				return r, d, true
+			if err := toml.Unmarshal(b, &r); err != nil {
+				return RepoConfig{}, d, fmt.Errorf("%s: %w", path, err)
 			}
-			return RepoConfig{}, d, false
+			return r, d, nil
 		}
 		if filepath.Dir(d) == d {
-			return RepoConfig{}, "", false
+			return RepoConfig{}, "", fs.ErrNotExist
 		}
 	}
 }
 
-// DefaultRemoteDir maps a local directory to the same path relative to home.
+// DefaultRemoteDir maps a local directory to the same path relative to home,
+// whichever spelling of home it is under: the real one, as project roots are
+// stored, or the one in HOME.
 func DefaultRemoteDir(local string) string {
 	h, err := os.UserHomeDir()
-	if err == nil {
-		if rel, err := filepath.Rel(h, local); err == nil && !strings.HasPrefix(rel, "..") {
-			if rel == "." {
-				return "~"
+	if err != nil {
+		return local
+	}
+	for _, d := range spellings(local) {
+		for _, root := range []string{h, RealPath(h)} {
+			if rel, ok := relInside(d, root); ok {
+				if rel == "." {
+					return "~"
+				}
+				return "~/" + filepath.ToSlash(rel)
 			}
-			return "~/" + filepath.ToSlash(rel)
 		}
 	}
 	return local
@@ -417,7 +431,12 @@ func DetachByte(s string) (byte, error) {
 	if s == "" || s == "off" || s == "none" {
 		return 0, nil
 	}
-	s = strings.TrimPrefix(strings.TrimPrefix(s, "ctrl-"), "^")
+	// One prefix form: "ctrl-]" or "^]"; "ctrl-^" names Ctrl-^ itself.
+	if rest, ok := strings.CutPrefix(s, "ctrl-"); ok {
+		s = rest
+	} else if rest, ok := strings.CutPrefix(s, "^"); ok && rest != "" {
+		s = rest
+	}
 	if len(s) != 1 {
 		return 0, fmt.Errorf("detach must look like \"ctrl-]\"")
 	}
