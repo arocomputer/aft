@@ -806,7 +806,12 @@ func cmdDoctor(args []string) int {
 		d.info("off (aft on makes agents here run on a host)")
 	}
 
-	if len(cfg.Hosts) == 0 {
+	// A machine whose projects all run on itself needs no host.
+	runsHere := len(st.Projects) > 0
+	for _, p := range st.Projects {
+		runsHere = runsHere && p.Host == "local"
+	}
+	if len(cfg.Hosts) == 0 && !runsHere {
 		d.section("Hosts")
 		d.bad("no host configured", "run aft setup")
 	}
