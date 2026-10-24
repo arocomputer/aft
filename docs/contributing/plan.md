@@ -214,7 +214,7 @@ Keys, ProxyJump, agent, config and host trust all come from the user's
 setup. The connection carries four things:
 
 - **A session channel,** opened as
-  `ssh -tt host ~/.local/share/aft/server attach ID`.
+  `ssh -tt host ~/.local/share/aft/aft-server attach ID`.
 - **The bridge socket,** a Unix socket forwarded back to your machine.
 - **Port mirrors,** added on the live connection with `ssh -O forward`.
 - **Short server calls,** such as listing sessions.
@@ -223,7 +223,7 @@ The transport is TCP. Prediction hides network stalls for typing, but not
 for output. UDP can be considered later if lossy networks prove a problem.
 
 **Server install.** Aft copies its own static binary for the server's OS and
-architecture to `~/.local/share/aft/server` on the server. It verifies the hash and pins
+architecture to `~/.local/share/aft/aft-server` on the server. It verifies the hash and pins
 the binary to the client's version. macOS arm64 builds are signed ad hoc by
 the Go linker. A binary copied over SSH carries no quarantine flag.
 
@@ -322,9 +322,10 @@ aft uninstall                remove everything Aft added, everywhere
 aft completion bash|zsh|fish
 ```
 
-The server runs on the host as its own binary with the subcommands `attach`,
-`new`, `udp`, `ls`, `end` and `listeners`, plus the bridge shims. For the host
-`local`, the aft binary runs it as the hidden `aft __server`.
+The server runs on the host as `aft-server`, its own binary, as mosh-server
+is mosh's, with the subcommands `attach`, `new`, `udp`, `ls`, `end`,
+`remains` and `listeners`, plus the bridge shims. For the host `local`, the
+aft binary is the server when started under the name `aft-server`.
 
 ## 12. Settings
 

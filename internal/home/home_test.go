@@ -63,3 +63,20 @@ func TestMigrateKeepsLiveSessions(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrateRenamesServer gives a server binary installed under its old name
+// its new one, aft-server.
+func TestMigrateRenamesServer(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("AFT_HOME", "")
+	os.MkdirAll(Data(), 0o700)
+	os.WriteFile(filepath.Join(Data(), "server"), []byte("bin"), 0o700)
+	Migrate()
+	if b, err := os.ReadFile(Server()); err != nil || string(b) != "bin" || filepath.Base(Server()) != "aft-server" {
+		t.Fatalf("server not renamed: %q %v", b, err)
+	}
+	if _, err := os.Lstat(filepath.Join(Data(), "server")); err == nil {
+		t.Fatal("the old name is still there")
+	}
+}

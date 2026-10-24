@@ -19,7 +19,7 @@ import (
 	"github.com/arocomputer/aft/internal/session"
 )
 
-// Server binaries are placed here by ./x servers as gzipped server-<os>-<arch>
+// Server binaries are placed here by ./x servers as gzipped aft-server-<os>-<arch>
 // and embedded into aft for installation on hosts.
 //
 //go:embed embed
@@ -27,7 +27,7 @@ var bins embed.FS
 
 // Blob returns the embedded server for a platform, decompressed.
 func Blob(goos, goarch string) ([]byte, error) {
-	gz, err := bins.ReadFile("embed/server-" + goos + "-" + goarch + ".gz")
+	gz, err := bins.ReadFile("embed/aft-server-" + goos + "-" + goarch + ".gz")
 	if err != nil || len(gz) == 0 {
 		return nil, fmt.Errorf("this aft build has no server for %s/%s; run ./x build", goos, goarch)
 	}

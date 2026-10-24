@@ -35,8 +35,8 @@ Aft has three parts. Keep new code inside one of them.
 Supporting packages, not parts of their own:
 
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
-  invoked under an agent's name. `cmd/server` is the server binary,
-  cross-compiled per platform into `internal/session/install/embed` (gzipped)
+  invoked under an agent's name. `cmd/aft-server` is the server binary, as
+  mosh-server is mosh's, cross-compiled per platform into `internal/session/install/embed` (gzipped)
   and carried inside aft for install. `cmd/aft/selftest.go` is the guided
   hands-on harness, isolated in a throwaway home.
 - `internal/vt` is the terminal emulator both sides use: the terminal's shadow

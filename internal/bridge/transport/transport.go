@@ -90,7 +90,7 @@ func RemoteHome() string {
 }
 
 // RemoteServer is the installed server binary's path on a host.
-func RemoteServer() string { return RemoteHome() + "/server" }
+func RemoteServer() string { return RemoteHome() + "/" + home.ServerName }
 
 // RemotePrefix sets AFT_HOME for the server when the remote home is overridden.
 func RemotePrefix() string {
@@ -268,10 +268,6 @@ func Output(h Host, stdin io.Reader, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// LocalServerCommand is the hidden aft subcommand that runs the session server
-// on this machine. Its underscores keep it apart from every host name.
-const LocalServerCommand = "__server"
-
 // serverCommand builds the command that runs a server subcommand on the host.
 func serverCommand(h Host, args []string) (*exec.Cmd, error) {
 	if h.IsLocal() {
@@ -279,7 +275,10 @@ func serverCommand(h Host, args []string) (*exec.Cmd, error) {
 		if err != nil {
 			return nil, err
 		}
-		return exec.Command(self, append([]string{LocalServerCommand}, args...)...), nil
+		// The aft binary is the server when started as aft-server.
+		cmd := exec.Command(self, args...)
+		cmd.Args[0] = home.ServerName
+		return cmd, nil
 	}
 	remote := RemotePrefix() + RemoteServer() + " " + shellJoin(args)
 	return exec.Command("ssh", append(sshArgs(h, true, "-T"), remote)...), nil
