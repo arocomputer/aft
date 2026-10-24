@@ -6,8 +6,8 @@ import "testing"
 // mount winning, and leaves unmounted paths alone.
 func TestMapLocal(t *testing.T) {
 	c := Config{Mounts: []Mount{
-		{Local: "/Volumes/Room", Host: "server", Remote: "/home/fschr/room"},
-		{Local: "/Volumes/Room/code", Host: "server", Remote: "/srv/code"},
+		{Local: "/Volumes/Room", Host: "server", Path: "/home/fschr/room"},
+		{Local: "/Volumes/Room/code", Host: "server", Path: "/srv/code"},
 	}}
 	cases := []struct {
 		in, host, remote string

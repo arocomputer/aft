@@ -21,27 +21,28 @@ import (
 // DefaultAgents are the launchers setup creates when they are installed.
 var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
 
-// Config is ~/.aft/config.toml. Global keys set defaults; a host or a
-// repository's aft.toml can override most of them.
+// Config is ~/.aft/config.toml. Top-level keys set defaults; a [host.<name>]
+// table or a repository's aft.toml can override most of them. Keys are flat and
+// snake_case; a host is addressed by name, so its table is singular: host.mini.
 type Config struct {
-	DefaultHost     string                `toml:"default_host"`
-	Agents          []string              `toml:"agents"`
-	Predict         *bool                 `toml:"predict,omitempty"`
-	DetachKey       string                `toml:"detach_key"`
-	Prefix          *string               `toml:"prefix,omitempty"` // key for copy mode and detach; nil means the default ctrl-]
-	PathIntegration string                `toml:"path_integration"` // "edit" (default) or "manual"
-	Wrapper         []string              `toml:"wrapper"`          // default command wrapper on the server
-	Hosts           map[string]HostConfig `toml:"hosts"`
-	Env             EnvConfig             `toml:"env"`
-	Ports           PortsConfig           `toml:"ports"`
-	Mounts          []Mount               `toml:"mounts"`
+	DefaultHost  string                `toml:"default_host"`
+	Agents       []string              `toml:"agents"`
+	Predict      *bool                 `toml:"predict,omitempty"`
+	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
+	DetachKey    string                `toml:"detach,omitempty"`        // key after the prefix that detaches
+	EditDotfiles *bool                 `toml:"edit_dotfiles,omitempty"` // let setup edit the shell config; nil means yes
+	Wrapper      []string              `toml:"wrapper,omitempty"`       // default command wrapper on the host
+	Env          []string              `toml:"env,omitempty"`           // extra variables to pass to the host
+	Ports        string                `toml:"ports,omitempty"`         // default mirror range, e.g. "3000-3999"
+	Hosts        map[string]HostConfig `toml:"host"`
+	Mounts       []Mount               `toml:"mount"`
 }
 
-// HostConfig describes one server and overrides global settings for it.
+// HostConfig describes one host and overrides the top-level settings for it.
 type HostConfig struct {
 	SSH     string   `toml:"ssh"`               // destination, may carry ssh options
-	Home    string   `toml:"home,omitempty"`    // server home on the server, default ~/.aft
-	Wrapper []string `toml:"wrapper,omitempty"` // command wrapper on the server
+	Home    string   `toml:"home,omitempty"`    // Aft's home on the host, default ~/.aft
+	Wrapper []string `toml:"wrapper,omitempty"` // command wrapper on the host
 	Predict *bool    `toml:"predict,omitempty"` // prediction for sessions on this host
 	Ports   string   `toml:"ports,omitempty"`   // mirror range for this host
 	Env     []string `toml:"env,omitempty"`     // extra variables to pass to this host
@@ -49,24 +50,14 @@ type HostConfig struct {
 	Persist int      `toml:"persist,omitempty"` // ControlPersist seconds, 0 = default
 }
 
-// Mount maps a locally mounted tree to the server directory it comes from, for
-// network mounts such as SMB or NFS where the files are the server's and the
-// Mac only views them. A project under Local needs no clone and no sync; aft
-// just runs commands against the real path on the server.
+// Mount maps a locally mounted tree to the host directory it comes from, for
+// network mounts such as SMB or NFS where the files are the host's and the
+// local machine only views them. A project under Local needs no clone and no
+// sync; aft just runs commands against the real path on the host.
 type Mount struct {
-	Local  string `toml:"local"`  // the local mountpoint, e.g. /Volumes/Room
-	Host   string `toml:"host"`   // the aft host the mount comes from
-	Remote string `toml:"remote"` // the server path the mount exposes, e.g. /home/fschr/room
-}
-
-// EnvConfig lists extra variables that may cross to the server.
-type EnvConfig struct {
-	Pass []string `toml:"pass"`
-}
-
-// PortsConfig sets the mirrored range.
-type PortsConfig struct {
-	Mirror string `toml:"mirror"`
+	Local string `toml:"local"` // the local mountpoint, e.g. /Volumes/Room
+	Host  string `toml:"host"`  // the host the mount comes from
+	Path  string `toml:"path"`  // the host path the mount exposes, e.g. /home/fschr/room
 }
 
 // Project is one directory that is on.
@@ -89,13 +80,14 @@ type State struct {
 	Binary      string             `json:"binary"`
 }
 
-// RepoConfig is an optional aft.toml at a repository root.
+// RepoConfig is an optional aft.toml at a repository root. It pins a project to
+// a host so every machine that clones the repo runs it on the same host.
 type RepoConfig struct {
-	Host    string      `toml:"host"`
-	Dir     string      `toml:"dir"`
-	Ports   PortsConfig `toml:"ports"`
-	Wrapper []string    `toml:"wrapper"` // command wrapper for this project
-	Env     []string    `toml:"env"`     // extra variables for this project
+	Host    string   `toml:"host"`
+	Dir     string   `toml:"dir"`
+	Ports   string   `toml:"ports"`
+	Wrapper []string `toml:"wrapper"` // command wrapper for this project
+	Env     []string `toml:"env"`     // extra variables for this project
 }
 
 // Settings are the effective per-session settings after merging global, host
@@ -115,8 +107,8 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 	s := Settings{
 		Wrapper: c.Wrapper,
 		Predict: c.PredictOn(),
-		Ports:   c.Ports.Mirror,
-		Env:     append([]string(nil), c.Env.Pass...),
+		Ports:   c.Ports,
+		Env:     append([]string(nil), c.Env...),
 		Alive:   h.Alive,
 		Persist: h.Persist,
 	}
@@ -134,17 +126,18 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 		if len(repo.Wrapper) > 0 {
 			s.Wrapper = repo.Wrapper
 		}
-		if repo.Ports.Mirror != "" {
-			s.Ports = repo.Ports.Mirror
+		if repo.Ports != "" {
+			s.Ports = repo.Ports
 		}
 		s.Env = append(s.Env, repo.Env...)
 	}
 	return s
 }
 
-// EditDotfiles reports whether setup should edit shell config files itself.
-// Manual mode prints the line instead, for people who manage dotfiles.
-func (c Config) EditDotfiles() bool { return c.PathIntegration != "manual" }
+// EditingDotfiles reports whether setup should edit shell config files itself,
+// the default. When off it prints the line instead, for people who manage
+// their dotfiles.
+func (c Config) EditingDotfiles() bool { return c.EditDotfiles == nil || *c.EditDotfiles }
 
 // Path is the config file.
 func Path() string { return filepath.Join(home.Dir(), "config.toml") }
@@ -325,7 +318,7 @@ func (c Config) PrefixKey() (byte, error) {
 	return DetachByte(s)
 }
 
-// DetachByte turns a detach_key setting such as "ctrl-]" into a byte.
+// DetachByte turns a detach setting such as "ctrl-]" into a byte.
 func DetachByte(s string) (byte, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" || s == "off" || s == "none" {
@@ -333,7 +326,7 @@ func DetachByte(s string) (byte, error) {
 	}
 	s = strings.TrimPrefix(strings.TrimPrefix(s, "ctrl-"), "^")
 	if len(s) != 1 {
-		return 0, fmt.Errorf("detach_key must look like \"ctrl-]\"")
+		return 0, fmt.Errorf("detach must look like \"ctrl-]\"")
 	}
 	ch := s[0]
 	switch {
@@ -342,7 +335,7 @@ func DetachByte(s string) (byte, error) {
 	case ch >= '[' && ch <= '_':
 		return ch - '[' + 27, nil
 	}
-	return 0, fmt.Errorf("detach_key must be a control character such as \"ctrl-]\"")
+	return 0, fmt.Errorf("detach must be a control character such as \"ctrl-]\"")
 }
 
 // MapLocal returns the host and server directory for a local path that lives
@@ -364,6 +357,6 @@ func (c Config) MapLocal(local string) (host, remote string, ok bool) {
 		return "", "", false
 	}
 	suffix := filepath.ToSlash(strings.TrimPrefix(local, filepath.Clean(chosen.Local)))
-	remote = strings.TrimRight(chosen.Remote, "/") + suffix
+	remote = strings.TrimRight(chosen.Path, "/") + suffix
 	return chosen.Host, remote, true
 }

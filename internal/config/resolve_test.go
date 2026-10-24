@@ -14,8 +14,8 @@ func TestResolveLayers(t *testing.T) {
 	c := Config{
 		Predict: &yes,
 		Wrapper: []string{"login"},
-		Ports:   PortsConfig{Mirror: "3000-9999"},
-		Env:     EnvConfig{Pass: []string{"GLOBAL"}},
+		Ports:   "3000-9999",
+		Env:     []string{"GLOBAL"},
 		Hosts: map[string]HostConfig{
 			"box": {Wrapper: []string{"nix", "develop", "-c"}, Predict: boolp(false), Ports: "4000-4100", Env: []string{"HOSTV"}},
 		},
@@ -32,7 +32,7 @@ func TestResolveLayers(t *testing.T) {
 		t.Fatalf("env should accumulate global+host: %v", s.Env)
 	}
 	// Project overrides host.
-	repo := &RepoConfig{Wrapper: []string{"docker", "exec", "-i", "dev"}, Ports: PortsConfig{Mirror: "5000-5001"}, Env: []string{"REPOV"}}
+	repo := &RepoConfig{Wrapper: []string{"docker", "exec", "-i", "dev"}, Ports: "5000-5001", Env: []string{"REPOV"}}
 	s = c.Resolve("box", repo)
 	if !reflect.DeepEqual(s.Wrapper, []string{"docker", "exec", "-i", "dev"}) || s.Ports != "5000-5001" {
 		t.Fatalf("project overrides not applied: %+v", s)
@@ -46,12 +46,13 @@ func TestResolveLayers(t *testing.T) {
 	}
 }
 
-// TestEditDotfiles pins the manual opt-out.
-func TestEditDotfiles(t *testing.T) {
-	if !(Config{}).EditDotfiles() {
+// TestEditingDotfiles pins the default-on and the explicit opt-out.
+func TestEditingDotfiles(t *testing.T) {
+	if !(Config{}).EditingDotfiles() {
 		t.Fatal("default should edit")
 	}
-	if (Config{PathIntegration: "manual"}).EditDotfiles() {
-		t.Fatal("manual should not edit")
+	no := false
+	if (Config{EditDotfiles: &no}).EditingDotfiles() {
+		t.Fatal("edit_dotfiles=false should not edit")
 	}
 }
