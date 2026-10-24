@@ -41,9 +41,14 @@ func NewID() string {
 }
 
 // cleanTitle turns a window title into a session's description: apps such as
-// Claude Code prefix it with a status glyph that changes while they work.
+// Claude Code prefix it with a status glyph (✳, ⠐) that changes while they
+// work. Only such glyphs, non-ASCII symbols and punctuation, are stripped from
+// the front, so a title like ~/room/code or [1] build keeps its first
+// character.
 func cleanTitle(t string) string {
-	t = strings.TrimLeftFunc(t, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	t = strings.TrimLeftFunc(t, func(r rune) bool {
+		return unicode.IsSpace(r) || (r > unicode.MaxASCII && (unicode.IsSymbol(r) || unicode.IsPunct(r)))
+	})
 	t = strings.TrimSpace(t)
 	if r := []rune(t); len(r) > 60 {
 		t = string(r[:59]) + "…"

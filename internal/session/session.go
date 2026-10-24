@@ -392,7 +392,7 @@ func (s *Session) serveClient(conn net.Conn) {
 		return
 	}
 	if first.Type == proto.Resize && cols == 0 {
-		// A control-only connection (ls, end, kick) never attaches.
+		// A control-only connection (end, udp) never attaches.
 		s.control(c, r)
 		return
 	}

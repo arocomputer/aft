@@ -43,3 +43,13 @@ func TestKeepDefault(t *testing.T) {
 		t.Fatalf("default is %q, want server", cfg.UsedHost())
 	}
 }
+
+// TestNameFor names a host after the machine in its SSH destination, and never
+// after an aft command.
+func TestNameFor(t *testing.T) {
+	for dest, want := range map[string]string{"box": "box", "-p 2222 fschr@box.example.com": "box", "user@10.0.0.7": "10-0-0-7", "ls.example.com": "ls-example-com"} {
+		if got := nameFor(dest); got != want {
+			t.Errorf("nameFor(%q) = %q, want %q", dest, got, want)
+		}
+	}
+}
