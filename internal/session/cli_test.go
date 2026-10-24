@@ -38,6 +38,9 @@ func isolate(t *testing.T) {
 	t.Setenv("AFT_HOME", dir)
 	t.Setenv("AFT_TEST_AS_SERVER", "1")
 	t.Setenv("SHELL", "/bin/sh")
+	// Sessions run through the login shell, which reads the profile; a
+	// developer's own dotfiles must not print into a test's screen.
+	t.Setenv("HOME", dir)
 }
 
 type conn struct {
