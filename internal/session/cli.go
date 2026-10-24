@@ -97,10 +97,12 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			id = o.ID
 		}
 		offer, err := OfferUDP(id)
-		if err != nil {
+		if err != nil && len(args) == 2 {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		// A session that started is reported even without UDP, so the client
+		// attaches to it over SSH instead of thinking it failed to start.
 		json.NewEncoder(stdout).Encode(struct {
 			ID string `json:"id"`
 			udp.Offer
@@ -166,9 +168,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				code = 2
 				continue
 			}
-			if _, err := os.Stat(remainsPath(id)); err == nil {
-				ClearRemains(id) // it already ended; kill just forgets it
-				continue
+			if _, err := Load(id); err != nil {
+				if _, err := os.Stat(remainsPath(id)); err == nil {
+					ClearRemains(id) // it already ended; kill just forgets it
+					continue
+				}
 			}
 			if err := Control(id, proto.End); err != nil {
 				fmt.Fprintln(stderr, err)

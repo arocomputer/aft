@@ -235,9 +235,12 @@ func (c *session) dial() (link, error) {
 				return nil, fmt.Errorf("could not start the session: %w", err)
 			}
 			if err == nil && json.Unmarshal(out, &got) == nil {
-				c.id, c.offer, c.udpAddr = got.ID, &got.Offer, addr
-				if conn, err := udp.Dial(addr, got.Offer); err == nil {
-					return udpLink{conn}, nil
+				c.id = got.ID
+				if got.Port != 0 {
+					c.offer, c.udpAddr = &got.Offer, addr
+					if conn, err := udp.Dial(addr, got.Offer); err == nil {
+						return udpLink{conn}, nil
+					}
 				}
 			}
 			// UDP is blocked, or the server or session predates it.

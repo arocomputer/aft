@@ -303,3 +303,17 @@ func TestEndingUnseenLeavesRemains(t *testing.T) {
 		t.Fatal("remains were not cleared after being shown")
 	}
 }
+
+// TestNewIDSkipsEndedNames keeps the name of a session that ended unseen, so
+// a new one never shares it with remains that kill would forget instead.
+func TestNewIDSkipsEndedNames(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	home.Ensure()
+	for _, n := range names[1:] {
+		writeJSON(RecordPath(n), Record{ID: n, Server: os.Getpid(), PID: os.Getpid()})
+	}
+	leaveRemains(Record{ID: names[0]}, Ending{At: time.Now().UTC().Format(time.RFC3339)})
+	if id := NewID(); id == names[0] {
+		t.Fatalf("reused %q, which an ended session still holds", id)
+	}
+}

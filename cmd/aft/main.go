@@ -55,7 +55,7 @@ var commands = []struct {
 var meant = map[string]string{
 	"list": "ls", "sessions": "ls", "ps": "ls",
 	"end": "kill", "stop": "kill", "rm": "kill",
-	"ssh": "HOST", "shell": "HOST", "connect": "HOST", "server": "HOST",
+	"ssh": "HOST", "shell": "HOST", "connect": "HOST",
 	"use": "host use", "hosts": "host",
 	"clone": "on", "ports": "status", "exec": "tools add", "run": "tools add",
 	"check": "doctor", "init": "setup", "install": "setup", "remove": "uninstall",

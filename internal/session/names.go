@@ -19,14 +19,13 @@ var names = strings.Fields(`
 	vole wasp whale wolf worm wren yak zebra
 `)
 
-// NewID picks a name no live session on this host uses, adding a number only
-// if every name is taken.
+// NewID picks a name no session on this host uses, live or ended with its
+// remains still kept, adding a number only if every name is taken.
 func NewID() string {
 	taken := map[string]bool{}
-	if list, err := List(); err == nil {
-		for _, r := range list {
-			taken[r.ID] = true
-		}
+	list, _ := List()
+	for _, r := range append(list, Remains()...) {
+		taken[r.ID] = true
 	}
 	for n := 1; ; n++ {
 		for _, i := range rand.Perm(len(names)) {
