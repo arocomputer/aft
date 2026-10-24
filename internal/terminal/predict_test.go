@@ -384,3 +384,17 @@ func TestNoticeKeepsTheAppsCursor(t *testing.T) {
 		t.Fatalf("after: %q cursor %+v", full.Line(0), full.Cursor())
 	}
 }
+
+// TestNoticeKeepsAPendingWrap draws a notice while the cursor waits at the
+// last column to wrap: afterwards the next character still starts the next
+// line, as it would have without the notice.
+func TestNoticeKeepsAPendingWrap(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(10, 5, &out, true)
+	p.Output([]byte("\x1b[3;1H0123456789"))
+	p.Notice("note")
+	p.Output([]byte("X"))
+	if s := screenOf(&out, 10, 5); s.Line(2) != "0123456789" || s.Line(3) != "X" {
+		t.Fatalf("rows: %q / %q", s.Line(2), s.Line(3))
+	}
+}

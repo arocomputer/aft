@@ -502,6 +502,14 @@ func (s *Session) openUDP() (udp.Offer, error) {
 			for {
 				conn, err := l.Accept()
 				if err != nil {
+					// The listener died; forget it, so the next ReqUDP opens a
+					// new one instead of offering a dead port.
+					s.udpMu.Lock()
+					if s.udp == l {
+						s.udp = nil
+					}
+					s.udpMu.Unlock()
+					log.Printf("session %s: UDP listener stopped: %v", s.opts.ID, err)
 					return
 				}
 				go s.serveClient(conn)

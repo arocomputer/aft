@@ -116,3 +116,30 @@ func TestMoveShellBlocks(t *testing.T) {
 		t.Fatalf("not moved:\n%s", got)
 	}
 }
+
+// TestServerPathFollowsMounts names a pasted file on this host's mount, also
+// through a symlink to the mount, and ignores a longer mount on another host.
+func TestServerPathFollowsMounts(t *testing.T) {
+	mount := t.TempDir()
+	os.MkdirAll(filepath.Join(mount, "code"), 0o755)
+	link := filepath.Join(t.TempDir(), "room")
+	if err := os.Symlink(mount, link); err != nil {
+		t.Skip(err)
+	}
+	cfg := config.Config{Hosts: map[string]config.HostConfig{"box": {SSH: "box"}, "other": {SSH: "other"}}, Mounts: []config.Mount{
+		{Local: mount, Host: "box", Path: "/srv/room"},
+		{Local: filepath.Join(mount, "code"), Host: "other", Path: "/elsewhere"},
+	}}
+	opts, err := SessionOptions(cfg, "box", "", config.Project{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for local, want := range map[string]string{
+		filepath.Join(link, "a.png"):          "/srv/room/a.png",
+		filepath.Join(mount, "code", "b.txt"): "/srv/room/code/b.txt",
+	} {
+		if got, ok := opts.ServerPath(local); !ok || got != want {
+			t.Errorf("ServerPath(%q) = %q, %v; want %q", local, got, ok, want)
+		}
+	}
+}

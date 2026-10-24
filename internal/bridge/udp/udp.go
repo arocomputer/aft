@@ -23,6 +23,7 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -60,6 +61,7 @@ type Listener struct {
 	Offer    Offer
 	admitted chan net.Conn
 	done     chan struct{} // closed by Close
+	once     sync.Once
 }
 
 // Listen opens a listener on a free port in the mosh range, with a fresh
@@ -88,6 +90,8 @@ func Listen() (*Listener, error) {
 // serve checks each connection's token on its own, so one that never sends
 // it cannot hold up the next. It ends when the listener closes.
 func (l *Listener) serve() {
+	// However accepting ends, Accept must report it rather than wait.
+	defer l.Close()
 	for {
 		c, err := l.ln.Accept(context.Background())
 		if err != nil {
@@ -138,11 +142,7 @@ func (l *Listener) admit(c *quic.Conn) (net.Conn, error) {
 
 // Close stops accepting; streams already open keep running.
 func (l *Listener) Close() error {
-	select {
-	case <-l.done:
-	default:
-		close(l.done)
-	}
+	l.once.Do(func() { close(l.done) })
 	return l.ln.Close()
 }
 

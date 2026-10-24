@@ -3,6 +3,8 @@ package terminal
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,5 +32,32 @@ func TestPastedMountFileNamesTheServerPath(t *testing.T) {
 	f, err := proto.Read(bufio.NewReader(bytes.NewReader(<-c.outbound)))
 	if err != nil || string(f.Payload) != `/srv/share/a\ b.txt`+string(pasteEnd) {
 		t.Fatalf("sent %q, %v", f.Payload, err)
+	}
+}
+
+// TestCancelledUploadClosesThePaste cancels an upload with Ctrl-C: the paste's
+// start marker already went to the app, so an end marker follows, or the app
+// would take every later key as pasted text.
+func TestCancelledUploadClosesThePaste(t *testing.T) {
+	c := &session{outbound: make(chan []byte, 4), sendDone: make(chan struct{}), pred: NewPredictor(40, 5, io.Discard, true), unflash: make(chan struct{}, 1)}
+	c.holding = true
+	c.finishUpload(uploadResult{paste: []byte("/x.png" + string(pasteEnd)), err: context.Canceled})
+	f, err := proto.Read(bufio.NewReader(bytes.NewReader(<-c.outbound)))
+	if err != nil || string(f.Payload) != string(pasteEnd) {
+		t.Fatalf("sent %q, want just the end marker", f.Payload)
+	}
+}
+
+// TestCtrlCAfterUploadReachesTheApp presses Ctrl-C once the upload has
+// finished but before its result is handled: the key is held and sent, not
+// spent on a cancel that can no longer happen.
+func TestCtrlCAfterUploadReachesTheApp(t *testing.T) {
+	c := &session{outbound: make(chan []byte, 4), sendDone: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the upload finished
+	c.holding, c.uploadCtx, c.cancelUpload = true, ctx, cancel
+	c.handleKeys([]Token{{Kind: TokOther, Bytes: []byte{0x03}}})
+	if len(c.held) != 1 {
+		t.Fatalf("held %d keys, want the Ctrl-C", len(c.held))
 	}
 }

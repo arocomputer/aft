@@ -67,7 +67,7 @@ func PastedFiles(paste string) ([]string, bool) {
 // removable volume. A path elsewhere, such as /etc/nginx/nginx.conf, is more
 // likely a path on the server they are naming, so it stays text.
 func Droppable(path string) bool {
-	roots := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/Volumes", "/media", "/mnt"}
+	roots := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/Volumes", "/media", "/run/media", "/mnt"}
 	if h, err := os.UserHomeDir(); err == nil {
 		roots = append(roots, h)
 	}
