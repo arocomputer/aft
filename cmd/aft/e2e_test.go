@@ -214,8 +214,8 @@ func TestDetachAndReattach(t *testing.T) {
 	id := ""
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
-		if len(f) > 1 && f[0] == "local" {
-			id = f[1]
+		if len(f) > 1 && f[1] == "local" {
+			id = f[0]
 		}
 	}
 	if id == "" {

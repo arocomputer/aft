@@ -136,10 +136,14 @@ func MasterAlive(h Host) bool {
 	return cmd.Run() == nil
 }
 
-// EnsureMasterBatch reconnects without a terminal, for use while attached.
+// EnsureMasterBatch connects without a terminal, so it never prompts: for use
+// while attached, or behind a spinner.
 func EnsureMasterBatch(h Host) error {
 	if h.IsLocal() || MasterAlive(h) {
 		return nil
+	}
+	if err := home.Ensure(); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

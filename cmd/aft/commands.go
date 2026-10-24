@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"text/tabwriter"
+	"sync"
+	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
@@ -41,6 +44,33 @@ func ask(prompt, def string) string {
 		return def
 	}
 	return line
+}
+
+// connect opens the shared SSH connection to h behind a spinner. It tries
+// without a terminal first and, if SSH needs one (a passphrase, a new host
+// key), clears the spinner and asks in the terminal.
+func connect(h transport.Host) error {
+	if h.IsLocal() || transport.MasterAlive(h) {
+		return nil
+	}
+	l := ui.Start("Connecting to "+h.Name, 0)
+	defer l.Stop()
+	if transport.EnsureMasterBatch(h) == nil {
+		return nil
+	}
+	l.Pause()
+	defer l.Resume()
+	return transport.EnsureMaster(h)
+}
+
+// ensureServer installs or updates the server on h behind a spinner.
+func ensureServer(h transport.Host) (session.Info, error) {
+	var info session.Info
+	err := ui.Spin("Checking the server on "+h.Name, func() (err error) {
+		info, err = install.Ensure(h)
+		return err
+	})
+	return info, err
 }
 
 // cmdSetup adds a server and prepares this machine.
@@ -77,20 +107,19 @@ func cmdSetup(args []string) int {
 		}
 		cfg.Hosts[n] = config.HostConfig{SSH: dest}
 		h, _ := cfg.Host(n)
-		fmt.Printf("Connecting to %s…\n", dest)
-		if err := transport.EnsureMaster(h); err != nil {
+		if err := connect(h); err != nil {
 			return fail(err)
 		}
-		info, err := install.Ensure(h)
+		info, err := ensureServer(h)
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Server ready on %s (%s/%s).\n", n, info.OS, info.Arch)
-		found := agentsIn(info.Agents)
-		if len(found) == 0 {
-			fmt.Println("No agents found on the server yet. Install one there (claude, codex, opencode, pi) and run aft doctor.")
+		ui.OK("Server ready on %s %s", ui.Bold(n), ui.Dim(info.OS+"/"+info.Arch+" · "+info.Version))
+		if found := agentsIn(info.Agents); len(found) == 0 {
+			ui.Warn("no agents on %s yet; install one there (claude, codex, opencode, pi)", n)
+			ui.Hint("then run aft doctor")
 		} else {
-			fmt.Printf("Agents on the server: %s\n", strings.Join(found, ", "))
+			ui.OK("Agents on %s: %s", n, strings.Join(found, ", "))
 		}
 	}
 	if len(cfg.Agents) == 0 {
@@ -99,7 +128,7 @@ func cmdSetup(args []string) int {
 	if err := launcher.InstallLaunchers(self, cfg.Agents, &st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("Launchers for %s are in %s.\n", strings.Join(cfg.Agents, ", "), home.Launchers())
+	ui.OK("Launchers for %s %s", strings.Join(cfg.Agents, ", "), ui.Dim("in "+ui.Path(home.Launchers())))
 
 	// Decide how the PATH line reaches the shell. People who manage their
 	// dotfiles want to add it themselves, so ask rather than edit blindly.
@@ -113,14 +142,11 @@ func cmdSetup(args []string) int {
 			return fail(err)
 		}
 		for _, f := range changed {
-			ui.Note("added the aft PATH line to %s", f)
-		}
-		if len(changed) > 0 {
-			fmt.Println("Open a new terminal so it takes effect.")
+			ui.OK("Added the PATH line to %s %s", ui.Path(f), ui.Dim("· open a new terminal so it takes effect"))
 		}
 	} else {
 		fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
-		fmt.Println("\n    export PATH=\"" + launcher.PathDir + ":$PATH\"")
+		fmt.Println("\n    " + ui.Command("export PATH=\""+launcher.PathDir+":$PATH\"") + "\n")
 	}
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
@@ -128,7 +154,7 @@ func cmdSetup(args []string) int {
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Println("Next: cd into a project and run aft on, then start your agent as usual.")
+	fmt.Println("\n" + ui.Bold("Next") + "  cd into a project, run " + ui.Command("aft on") + ", then start your agent as usual.")
 	return 0
 }
 
@@ -163,19 +189,20 @@ func cmdHost(args []string) int {
 	switch verb {
 	case "", "ls", "list":
 		if len(cfg.Hosts) == 0 {
-			fmt.Println("No hosts yet. Add one with: aft host add NAME SSH-DESTINATION")
+			fmt.Println("No hosts yet.")
+			ui.Hint("aft host add NAME SSH-DESTINATION")
 			return 0
 		}
 		used := cfg.UsedHost()
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		var rows [][]string
 		for _, n := range cfg.HostNames() {
 			mark := ""
 			if n == used {
-				mark = "(used by default)"
+				mark = ui.Accent("default")
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", n, cfg.Hosts[n].SSH, mark)
+			rows = append(rows, []string{ui.Bold(n), cfg.Hosts[n].SSH, mark})
 		}
-		w.Flush()
+		ui.Table([]string{"HOST", "SSH", ""}, rows)
 		return 0
 
 	case "add":
@@ -191,23 +218,22 @@ func cmdHost(args []string) int {
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Added host %s (%s). Installing the server…\n", name, dest)
+		ui.OK("Added host %s %s", ui.Bold(name), ui.Dim(dest))
 		h, _ := cfg.Host(name)
-		if err := transport.EnsureMaster(h); err != nil {
-			fmt.Fprintf(os.Stderr, "aft: saved, but could not connect yet: %v\n", err)
-			fmt.Fprintln(os.Stderr, "Fix the SSH destination, then run: aft doctor --fix")
+		if err := connect(h); err != nil {
+			ui.Error("saved, but could not connect yet: %v", err)
+			ui.Hint("fix the SSH destination, then run aft doctor --fix")
 			return 1
 		}
-		info, err := install.Ensure(h)
+		info, err := ensureServer(h)
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Server ready on %s (%s/%s).\n", name, info.OS, info.Arch)
-		switch {
-		case cfg.UsedHost() == name:
-			fmt.Printf("%s is used by default.\n", name)
-		default:
-			fmt.Printf("Run aft use %s to make it the default, or pass --host %s per command.\n", name, name)
+		ui.OK("Server ready on %s %s", ui.Bold(name), ui.Dim(info.OS+"/"+info.Arch+" · "+info.Version))
+		if cfg.UsedHost() == name {
+			fmt.Println(ui.Dim(name + " is used by default."))
+		} else {
+			ui.Hint("aft use %s makes it the default, or pass --host %s per command", name, name)
 		}
 		return 0
 
@@ -227,16 +253,18 @@ func cmdHost(args []string) int {
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Removed host %s from your config. Whatever Aft installed on it is left as is; run aft uninstall on that machine to clean it up.\n", name)
+		ui.OK("Removed host %s from your config", ui.Bold(name))
+		fmt.Println(ui.Dim("Whatever Aft installed on it stays; run aft uninstall on that machine to clean it up."))
 		switch used := cfg.UsedHost(); {
 		case used != "":
-			fmt.Printf("%s is now used by default.\n", used)
+			fmt.Println(ui.Dim(used + " is now used by default."))
 		case len(cfg.Hosts) > 1:
-			fmt.Println("Pick which host to use by default with: aft use NAME")
+			ui.Hint("aft use NAME picks the default host")
 		}
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "aft host: unknown verb %q (use: add, rm, or no verb to list)\n", verb)
+	ui.Error("aft host: unknown verb %q", verb)
+	ui.Hint("aft host lists, aft host add NAME DEST adds, aft host rm NAME removes")
 	return 2
 }
 
@@ -252,7 +280,8 @@ func cmdUse(args []string) int {
 			fmt.Println(used)
 			return 0
 		}
-		fmt.Fprintln(os.Stderr, "no host is used by default; set one with: aft use NAME")
+		ui.Warn("no host is used by default")
+		ui.Hint("aft use NAME")
 		return 1
 	}
 	if len(args) != 1 {
@@ -267,7 +296,7 @@ func cmdUse(args []string) int {
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("Using %s by default.\n", name)
+	ui.OK("Using %s by default", ui.Bold(name))
 	return 0
 }
 
@@ -334,10 +363,10 @@ func cmdOn(args []string) int {
 	if *dir == "" {
 		*dir = config.DefaultRemoteDir(root)
 	}
-	if err := transport.EnsureMaster(h); err != nil {
+	if err := connect(h); err != nil {
 		return fail(err)
 	}
-	if _, err := install.Ensure(h); err != nil {
+	if _, err := ensureServer(h); err != nil {
 		return fail(err)
 	}
 	if !mounted {
@@ -362,7 +391,7 @@ func cmdOn(args []string) int {
 		if url == "" || *noClone {
 			return fail(fmt.Errorf("%s does not exist on %s; create it there or pass --dir", *dir, h.Name))
 		}
-		fmt.Printf("%s does not exist on %s.\n", *dir, h.Name)
+		ui.Warn("%s does not exist on %s", *dir, h.Name)
 		if !ui.Confirm(fmt.Sprintf("Clone %s there?", url), false) {
 			return 1
 		}
@@ -374,9 +403,16 @@ func cmdOn(args []string) int {
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("On. Agents started under %s run on %s in %s.\n", root, h.Name, *dir)
+	p := config.Project{Host: h.Name, Dir: *dir}
+	ui.OK("On  %s %s %s", ui.Path(root), ui.Dim("→"), where(p))
+	if h.IsLocal() {
+		fmt.Println(ui.Dim("Agents started here now run in sessions on this machine."))
+	} else {
+		fmt.Println(ui.Dim("Agents started here now run on " + h.Name + "."))
+	}
 	if !launcher.OnPath() {
-		fmt.Println("Note: Aft's launchers are not first on PATH in this shell. Open a new terminal or run aft doctor.")
+		ui.Warn("aft's launchers are not first on PATH in this shell")
+		ui.Hint("open a new terminal, or run aft doctor")
 	}
 	return 0
 }
@@ -393,14 +429,14 @@ func cmdOff(args []string) int {
 	}
 	root, _, ok := st.FindProject(cwd)
 	if !ok {
-		fmt.Println("Already off here.")
+		fmt.Println(ui.Dim("Already off here."))
 		return 0
 	}
 	delete(st.Projects, root)
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("Off. Agents started under %s run locally.\n", root)
+	ui.OK("Off  %s %s", ui.Path(root), ui.Dim("· agents started here run locally"))
 	return 0
 }
 
@@ -426,10 +462,10 @@ func cmdClone(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := transport.EnsureMaster(h); err != nil {
+	if err := connect(h); err != nil {
 		return fail(err)
 	}
-	if _, err := install.Ensure(h); err != nil {
+	if _, err := ensureServer(h); err != nil {
 		return fail(err)
 	}
 	dir, err := resolveRemoteDir(h, config.DefaultRemoteDir(local))
@@ -450,7 +486,8 @@ func cmdClone(args []string) int {
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("Cloned to %s:%s. cd %s and start your agent.\n", h.Name, dir, local)
+	ui.OK("Cloned to %s, and it is on", ui.Bold(h.Name)+ui.Dim(":"+dir))
+	ui.Hint("cd %s and start your agent", ui.Path(local))
 	return 0
 }
 
@@ -493,32 +530,57 @@ type hostSessions struct {
 	err  error
 }
 
+// allSessions asks every host for its sessions at once, connecting without a
+// terminal where no connection is open, behind a spinner.
 func allSessions(cfg config.Config) []hostSessions {
 	var out []hostSessions
-	names := cfg.HostNames()
 	if list, _ := session.List(); len(list) > 0 {
 		out = append(out, hostSessions{host: transport.Local, list: list})
 	}
-	for _, n := range names {
-		h, err := cfg.Host(n)
-		if err != nil {
-			continue
+	names := cfg.HostNames()
+	remote := make([]hostSessions, len(names))
+	label := "Asking " + strings.Join(names, ", ") + " for sessions"
+	ui.Spin(label, func() error {
+		var wg sync.WaitGroup
+		for i, n := range names {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				h, err := cfg.Host(n)
+				hs := hostSessions{host: h, err: err}
+				if err == nil {
+					hs.err = transport.EnsureMasterBatch(h)
+				}
+				if hs.err == nil {
+					raw, err := transport.Output(h, nil, "ls")
+					if hs.err = err; err == nil {
+						json.Unmarshal(raw, &hs.list)
+					}
+				}
+				remote[i] = hs
+			}()
 		}
-		hs := hostSessions{host: h}
-		if !transport.MasterAlive(h) {
-			hs.err = errors.New("not connected")
-			out = append(out, hs)
-			continue
-		}
-		raw, err := transport.Output(h, nil, "ls")
-		if err != nil {
-			hs.err = err
-		} else {
-			json.Unmarshal(raw, &hs.list)
-		}
-		out = append(out, hs)
+		wg.Wait()
+		return nil
+	})
+	return append(out, remote...)
+}
+
+// where names the host and directory a project runs in.
+func where(p config.Project) string {
+	if p.Host == "local" {
+		return "this machine" + ui.Dim(" in "+ui.Path(p.Dir))
 	}
-	return out
+	return p.Host + ui.Dim(":"+p.Dir)
+}
+
+// started renders a record's start time as how long ago it was.
+func started(r session.Record) string {
+	t, err := time.Parse(time.RFC3339, r.Started)
+	if err != nil {
+		return r.Started
+	}
+	return ui.Ago(t)
 }
 
 // cmdLs lists sessions on every host.
@@ -527,27 +589,31 @@ func cmdLs(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	type row struct{ host, id, cmd, dir, started string }
-	var rows []row
+	var rows [][]string
+	var failed []hostSessions
+	last := ""
 	for _, hs := range allSessions(cfg) {
 		if hs.err != nil {
-			rows = append(rows, row{hs.host.Name, "(" + hs.err.Error() + ")", "", "", ""})
+			failed = append(failed, hs)
 			continue
 		}
 		for _, r := range hs.list {
-			rows = append(rows, row{hs.host.Name, r.ID, strings.Join(r.Command, " "), r.Dir, r.Started})
+			last = r.ID
+			rows = append(rows, []string{ui.Bold(r.ID), hs.host.Name, strings.Join(r.Command, " "), ui.Path(r.Dir), ui.Dim(started(r))})
 		}
 	}
 	if len(rows) == 0 {
-		fmt.Println("No sessions.")
-		return 0
+		fmt.Println(ui.Dim("No sessions."))
+	} else {
+		ui.Table([]string{"SESSION", "HOST", "COMMAND", "DIRECTORY", "STARTED"}, rows)
+		if len(rows) == 1 {
+			ui.Hint("aft attach %s", last)
+		}
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "HOST\tSESSION\tCOMMAND\tDIRECTORY\tSTARTED")
-	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.host, r.id, r.cmd, r.dir, r.started)
+	for _, hs := range failed {
+		ui.Warn("could not reach %s: %v", hs.host.Name, hs.err)
+		ui.Hint("aft doctor --host %s", hs.host.Name)
 	}
-	w.Flush()
 	return 0
 }
 
@@ -594,11 +660,19 @@ func cmdAttach(args []string) int {
 			return fail(errors.New("no sessions to attach to"))
 		}
 		if len(found) > 1 {
-			fmt.Fprintln(os.Stderr, "aft: several sessions; pass an id:")
-			for _, f := range found {
-				fmt.Fprintf(os.Stderr, "  %s on %s: %s\n", f.r.ID, f.h.Name, strings.Join(f.r.Command, " "))
+			opts := make([]ui.Option, len(found))
+			for i, f := range found {
+				opts[i] = ui.Option{Label: f.r.ID, Hint: f.h.Name + " · " + strings.Join(f.r.Command, " ") + " · " + started(f.r)}
 			}
-			return 2
+			if !ui.Interactive() {
+				ui.Error("several sessions; pass an id")
+				for _, o := range opts {
+					fmt.Fprintf(os.Stderr, "  %s  %s\n", o.Label, o.Hint)
+				}
+				return 2
+			}
+			i := ui.Choose("Attach to which session?", opts, 0)
+			found = found[i : i+1]
 		}
 		h, id = found[0].h, found[0].r.ID
 	} else if *hostName != "" {
@@ -647,14 +721,14 @@ func cmdControl(what string, args []string) int {
 		return fail(err)
 	}
 	if what == "end" {
-		fmt.Println("Ended", id)
+		ui.OK("Ended %s", ui.Bold(id))
 	} else {
-		fmt.Println("Detached", id)
+		ui.OK("Detached %s %s", ui.Bold(id), ui.Dim("· it keeps running"))
 	}
 	return 0
 }
 
-// cmdStatus summarizes hosts, connections, sessions and mirrors.
+// cmdStatus summarizes where you are, hosts, sessions and projects.
 func cmdStatus(args []string) int {
 	cfg, err := config.Load()
 	if err != nil {
@@ -662,38 +736,56 @@ func cmdStatus(args []string) int {
 	}
 	st, _ := config.LoadState()
 	cwd, _ := os.Getwd()
+	all := allSessions(cfg)
+	row := func(label string, lines ...string) {
+		for i, l := range lines {
+			if i > 0 {
+				label = ""
+			}
+			fmt.Printf("%s %s\n", ui.Bold(fmt.Sprintf("%-9s", label)), l)
+		}
+	}
+	mapping := func(root string, p config.Project) string { return ui.Path(root) + ui.Dim(" → ") + where(p) }
 	if root, p, ok := st.FindProject(cwd); ok {
-		fmt.Printf("Here: on (%s → %s:%s)\n", root, p.Host, p.Dir)
+		row("Here", ui.Mark("ok")+" on  "+mapping(root, p))
 	} else {
-		fmt.Println("Here: off")
+		row("Here", ui.Mark("info")+" off "+ui.Dim("· aft on makes agents here run on a host"))
 	}
-	for _, n := range cfg.HostNames() {
-		h, _ := cfg.Host(n)
-		state := "connected"
-		if !transport.MasterAlive(h) {
-			state = "not connected"
-		}
-		mark := ""
-		if n == cfg.UsedHost() {
-			mark = " (default)"
-		}
-		fmt.Printf("Host %s%s: %s, %s\n", n, mark, h.SSH, state)
-	}
-	for _, hs := range allSessions(cfg) {
+	var hosts, sessions []string
+	for _, hs := range all {
 		for _, r := range hs.list {
-			fmt.Printf("Session %s on %s: %s in %s\n", r.ID, hs.host.Name, strings.Join(r.Command, " "), r.Dir)
+			sessions = append(sessions, ui.Bold(r.ID)+"  "+strings.Join(r.Command, " ")+ui.Dim("  on "+hs.host.Name+" · "+started(r)))
 		}
+		if hs.host.IsLocal() {
+			continue
+		}
+		line := ui.Mark("ok") + " " + hs.host.Name + ui.Dim("  connected")
+		if hs.err != nil {
+			line = ui.Mark("fix") + " " + hs.host.Name + ui.Dim("  unreachable: "+hs.err.Error())
+		}
+		if hs.host.Name == cfg.UsedHost() {
+			line += "  " + ui.Accent("default")
+		}
+		hosts = append(hosts, line)
 	}
+	if len(hosts) > 0 {
+		row("Hosts", hosts...)
+	}
+	if len(sessions) == 0 {
+		sessions = []string{ui.Dim("none")}
+	}
+	row("Sessions", sessions...)
 	if len(st.Projects) > 0 {
-		fmt.Println("Projects on:")
 		roots := make([]string, 0, len(st.Projects))
 		for r := range st.Projects {
 			roots = append(roots, r)
 		}
 		sort.Strings(roots)
+		var lines []string
 		for _, r := range roots {
-			fmt.Printf("  %s → %s:%s\n", r, st.Projects[r].Host, st.Projects[r].Dir)
+			lines = append(lines, mapping(r, st.Projects[r]))
 		}
+		row("Projects", lines...)
 	}
 	return 0
 }
@@ -709,39 +801,65 @@ type docFinding struct {
 }
 
 // doctor accumulates findings under the current section and, when fixing, runs
-// each repair as its check is added.
+// each repair as its check is added. With live set it prints each finding as
+// it lands, above a spinner that says what is being checked.
 type doctor struct {
 	fix      bool
 	cur      string
+	shown    string
+	live     *ui.Live
 	findings []docFinding
 }
 
 func (d *doctor) section(s string) { d.cur = s }
-func (d *doctor) ok(text string) {
-	d.findings = append(d.findings, docFinding{d.cur, "ok", text, "", false})
+
+// step says what the doctor is checking now.
+func (d *doctor) step(s string) {
+	if d.live != nil {
+		d.live.Step(s)
+	}
 }
-func (d *doctor) info(text string) {
-	d.findings = append(d.findings, docFinding{d.cur, "info", text, "", false})
+
+func (d *doctor) add(f docFinding) {
+	d.findings = append(d.findings, f)
+	if d.live == nil {
+		return
+	}
+	if f.Level != "info" {
+		d.live.Advance()
+	}
+	if f.Section != d.shown {
+		d.live.Println("\n" + ui.Bold(f.Section))
+		d.shown = f.Section
+	}
+	text := f.Text
+	if f.Level == "info" {
+		text = ui.Dim(text)
+	}
+	d.live.Println("  " + ui.Mark(f.Level) + " " + text)
+	if f.Hint != "" {
+		d.live.Println("    " + ui.Dim("→ "+f.Hint))
+	}
 }
-func (d *doctor) warn(text, h string) {
-	d.findings = append(d.findings, docFinding{d.cur, "warn", text, h, false})
-}
-func (d *doctor) bad(text, hint string) {
-	d.findings = append(d.findings, docFinding{d.cur, "fix", text, hint, false})
-}
+
+func (d *doctor) ok(text string)         { d.add(docFinding{d.cur, "ok", text, "", false}) }
+func (d *doctor) info(text string)       { d.add(docFinding{d.cur, "info", text, "", false}) }
+func (d *doctor) warn(text, hint string) { d.add(docFinding{d.cur, "warn", text, hint, false}) }
+func (d *doctor) bad(text, hint string)  { d.add(docFinding{d.cur, "fix", text, hint, false}) }
 
 // repair records a fixable finding. Under --fix it runs fn and, on success,
 // turns the finding into an ok line describing what it did.
 func (d *doctor) repair(text, hint string, fn func() error, done string) {
 	f := docFinding{d.cur, "fix", text, hint, false}
 	if d.fix {
+		d.step("Fixing: " + text)
 		if err := fn(); err == nil {
 			f.Level, f.Text, f.Hint, f.Fixed = "ok", text+" — "+done, "", true
 		} else {
 			f.Hint = err.Error()
 		}
 	}
-	d.findings = append(d.findings, f)
+	d.add(f)
 }
 
 // cmdDoctor inspects everything Aft depends on, grouped by where a problem would
@@ -763,11 +881,22 @@ func cmdDoctor(args []string) int {
 	st, _ := config.LoadState()
 	self, _ := os.Executable()
 	d := &doctor{fix: *doFix}
+	var hosts []string
+	for _, n := range cfg.HostNames() {
+		if *only == "" || n == *only {
+			hosts = append(hosts, n)
+		}
+	}
+	start := time.Now()
+	if !*asJSON {
+		// Three checks here, three per host.
+		d.live = ui.Start("Checking this machine", 3+3*len(hosts))
+	}
 
 	d.section("This machine")
-	d.info("aft " + version + ", home " + home.Dir() + ", plumbing " + home.Data())
+	d.info("aft " + version + " · " + ui.Path(home.Dir()) + " · " + ui.Path(home.Data()))
 	if _, err := exec.LookPath("ssh"); err == nil {
-		d.ok("ssh present")
+		d.ok("ssh")
 	} else {
 		d.bad("ssh missing", "install OpenSSH")
 	}
@@ -784,26 +913,31 @@ func cmdDoctor(args []string) int {
 	default:
 		d.bad("launchers not on PATH (manual mode)", "add "+launcher.PathDir+" to your PATH")
 	}
+	var missing, hostOnly []string
 	for _, a := range cfg.Agents {
 		if !launcher.Installed(a) {
-			d.repair("launcher "+a+" missing", "run aft setup", func() error {
-				return launcher.InstallLaunchers(self, cfg.Agents, &st)
-			}, "reinstalled launchers")
-			continue
+			missing = append(missing, a)
+		} else if _, err := launcher.RealBinary(a); err != nil {
+			hostOnly = append(hostOnly, a)
 		}
-		if _, err := launcher.RealBinary(a); err == nil {
-			d.info("launcher " + a + " (local copy found)")
-		} else {
-			d.info("launcher " + a + " (no local copy; runs only on a host)")
-		}
+	}
+	if len(missing) > 0 {
+		d.repair("launchers missing: "+strings.Join(missing, ", "), "run aft setup", func() error {
+			return launcher.InstallLaunchers(self, cfg.Agents, &st)
+		}, "reinstalled launchers")
+	} else {
+		d.ok(fmt.Sprintf("%d launchers", len(cfg.Agents)))
+	}
+	if len(hostOnly) > 0 {
+		d.info("no local copy, so these run only on a host: " + strings.Join(hostOnly, ", "))
 	}
 
 	d.section("Here")
 	cwd, _ := os.Getwd()
 	if root, p, ok := st.FindProject(cwd); ok {
-		d.info("on: " + root + " → " + p.Host + ":" + p.Dir)
+		d.info("on · " + ui.Path(root) + " → " + ansi.Strip(where(p)))
 	} else {
-		d.info("off (aft on makes agents here run on a host)")
+		d.info("off · aft on makes agents here run on a host")
 	}
 
 	// A machine whose projects all run on itself needs no host.
@@ -815,21 +949,31 @@ func cmdDoctor(args []string) int {
 		d.section("Hosts")
 		d.bad("no host configured", "run aft setup")
 	}
-	for _, n := range cfg.HostNames() {
-		if *only != "" && n != *only {
-			continue
-		}
+	for _, n := range hosts {
 		title := "Host " + n
 		if n == cfg.UsedHost() {
 			title += " (default)"
 		}
 		d.section(title)
 		h, _ := cfg.Host(n)
-		if err := transport.EnsureMaster(h); err != nil {
+		d.step("Connecting to " + n)
+		err := transport.EnsureMasterBatch(h)
+		if err != nil && d.live != nil {
+			// SSH may need the terminal for a passphrase or a new host key.
+			d.live.Pause()
+			err = transport.EnsureMaster(h)
+			d.live.Resume()
+		}
+		if err != nil {
 			d.bad("cannot connect ("+h.SSH+")", err.Error())
+			if d.live != nil {
+				d.live.Advance()
+				d.live.Advance()
+			}
 			continue
 		}
-		d.ok("connected (" + h.SSH + ")")
+		d.ok("connected " + ui.Dim("· "+h.SSH))
+		d.step("Checking the server on " + n)
 		info, err := install.Info(h)
 		switch {
 		case err != nil || info.Version == "":
@@ -838,50 +982,42 @@ func cmdDoctor(args []string) int {
 			d.repair("bridge shims missing", "run aft setup", func() error { _, e := install.Ensure(h); return e }, "reinstalled the server")
 		default:
 			if ok, e := install.UpToDate(info); e == nil && !ok {
-				d.repair("server out of date ("+info.Version+")", "run aft setup", func() error { _, e := install.Ensure(h); return e }, "updated the server")
+				d.repair("server out of date ("+info.Version+")", "run aft doctor --fix", func() error { _, e := install.Ensure(h); return e }, "updated the server")
 			} else {
-				d.ok("server ready (" + info.OS + "/" + info.Arch + ", " + info.Version + ")")
+				d.ok("server ready " + ui.Dim("· "+info.OS+"/"+info.Arch+" · "+info.Version))
 			}
-			if found := agentsIn(info.Agents); len(found) > 0 {
-				d.info("agents: " + strings.Join(found, ", "))
-			} else {
-				d.warn("no agents on the host", "install one there (claude, codex, ...)")
-			}
+		}
+		if found := agentsIn(info.Agents); len(found) > 0 {
+			d.ok("agents " + ui.Dim("· "+strings.Join(found, ", ")))
+		} else {
+			d.warn("no agents on the host", "install one there (claude, codex, ...)")
 		}
 	}
 
+	if d.live != nil {
+		d.live.Stop()
+	}
 	if *asJSON {
+		for i := range d.findings {
+			d.findings[i].Text = ansi.Strip(d.findings[i].Text)
+		}
 		b, _ := json.MarshalIndent(d.findings, "", "  ")
 		fmt.Println(string(b))
 	} else {
-		d.print()
+		d.summary(time.Since(start))
 	}
-	fixes := 0
 	for _, f := range d.findings {
 		if f.Level == "fix" {
-			fixes++
+			return 1
 		}
-	}
-	if fixes > 0 {
-		return 1
 	}
 	return 0
 }
 
-// print writes the findings grouped by section, each line marked by level.
-func (d *doctor) print() {
-	mark := map[string]string{"ok": "ok  ", "info": "    ", "warn": "warn", "fix": "fix "}
-	section, fixes, warns := "", 0, 0
+// summary closes the report with one line: all good, or what is left to do.
+func (d *doctor) summary(took time.Duration) {
+	fixes, warns := 0, 0
 	for _, f := range d.findings {
-		if f.Section != section {
-			fmt.Printf("\n%s\n", f.Section)
-			section = f.Section
-		}
-		line := "  " + mark[f.Level] + " " + f.Text
-		if f.Hint != "" {
-			line += " — " + f.Hint
-		}
-		fmt.Println(line)
 		switch f.Level {
 		case "fix":
 			fixes++
@@ -890,15 +1026,17 @@ func (d *doctor) print() {
 		}
 	}
 	fmt.Println()
+	t := ui.Dim(fmt.Sprintf(" · %.1fs", took.Seconds()))
 	switch {
 	case fixes > 0 && d.fix:
-		fmt.Printf("%d still to fix (could not be repaired automatically).\n", fixes)
+		fmt.Println(ui.Mark("fix") + fmt.Sprintf(" %d still to fix; they could not be repaired automatically", fixes) + t)
 	case fixes > 0:
-		fmt.Printf("%d to fix, %d recommended. Run aft doctor --fix to apply the safe repairs.\n", fixes, warns)
+		fmt.Println(ui.Mark("fix") + fmt.Sprintf(" %d to fix, %d recommended", fixes, warns) + t)
+		ui.Hint("aft doctor --fix applies the safe repairs")
 	case warns > 0:
-		fmt.Printf("All good, %d recommended improvement(s) above.\n", warns)
+		fmt.Println(ui.Mark("warn") + fmt.Sprintf(" All good, %d recommended above", warns) + t)
 	default:
-		fmt.Println("Everything looks good.")
+		fmt.Println(ui.Mark("ok") + " Everything looks good" + t)
 	}
 }
 
@@ -960,7 +1098,7 @@ func cmdExec(args []string) int {
 // cmdPorts shows the mirrored ports recorded by running clients.
 func cmdPorts(args []string) int {
 	entries, _ := os.ReadDir(home.Sockets())
-	any := false
+	var rows [][]string
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "mirrors-") {
 			continue
@@ -971,13 +1109,18 @@ func cmdPorts(args []string) int {
 		}
 		var ports []int
 		if json.Unmarshal(b, &ports) == nil && len(ports) > 0 {
-			any = true
-			fmt.Printf("%s: %v\n", strings.TrimSuffix(strings.TrimPrefix(e.Name(), "mirrors-"), ".json"), ports)
+			list := make([]string, len(ports))
+			for i, p := range ports {
+				list[i] = fmt.Sprintf("localhost:%d", p)
+			}
+			rows = append(rows, []string{ui.Bold(strings.TrimSuffix(strings.TrimPrefix(e.Name(), "mirrors-"), ".json")), strings.Join(list, "  ")})
 		}
 	}
-	if !any {
-		fmt.Println("No ports are mirrored right now.")
+	if len(rows) == 0 {
+		fmt.Println(ui.Dim("No ports are mirrored right now."))
+		return 0
 	}
+	ui.Table([]string{"SESSION", "MIRRORED"}, rows)
 	return 0
 }
 
@@ -1003,7 +1146,7 @@ func cmdAgents(args []string) int {
 	name := args[1]
 	for _, a := range cfg.Agents {
 		if a == name {
-			fmt.Println(name, "already has a launcher.")
+			fmt.Println(ui.Dim(name + " already has a launcher."))
 			return 0
 		}
 	}
@@ -1017,7 +1160,7 @@ func cmdAgents(args []string) int {
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("%s now runs on the server wherever aft is on.\n", name)
+	ui.OK("%s now runs on the server wherever aft is on", ui.Bold(name))
 	return 0
 }
 
@@ -1036,31 +1179,32 @@ func cmdUninstall(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	fmt.Println("This will:")
+	fmt.Println(ui.Bold("This will:"))
 	for _, n := range cfg.HostNames() {
-		fmt.Printf("  end Aft sessions and remove ~/.aft, ~/.local/share/aft and pasted files on %s\n", n)
+		fmt.Printf("  %s end Aft sessions and remove ~/.aft, ~/.local/share/aft and pasted files on %s\n", ui.Dim("•"), ui.Bold(n))
 	}
 	for _, b := range st.ShellBlocks {
-		fmt.Printf("  remove the aft block from %s\n", b.File)
+		fmt.Printf("  %s remove the aft block from %s\n", ui.Dim("•"), ui.Path(b.File))
 	}
-	fmt.Printf("  remove %s (config, state, logs) and %s (launchers, sockets)\n", home.Dir(), home.Data())
-	fmt.Println("Your code, SSH config and each agent's own data stay.")
+	fmt.Printf("  %s remove %s %s and %s %s\n", ui.Dim("•"), ui.Path(home.Dir()), ui.Dim("(config, state, logs)"), ui.Path(home.Data()), ui.Dim("(launchers, sockets)"))
+	fmt.Println(ui.Dim("Your code, SSH config and each agent's own data stay."))
 	if !*yes && !ui.Confirm("Continue?", false) {
 		return 1
 	}
 	code := 0
 	for _, n := range cfg.HostNames() {
 		h, _ := cfg.Host(n)
-		if err := transport.EnsureMaster(h); err != nil {
-			fmt.Fprintf(os.Stderr, "aft: could not reach %s: %v (remove ~/.aft and ~/.local/share/aft there by hand)\n", n, err)
+		if err := connect(h); err != nil {
+			ui.Error("could not reach %s: %v", n, err)
+			ui.Hint("remove ~/.aft and ~/.local/share/aft there by hand")
 			code = 1
 			continue
 		}
-		if _, err := transport.Output(h, nil, "uninstall"); err != nil {
-			fmt.Fprintf(os.Stderr, "aft: %s: %v\n", n, err)
+		if err := ui.Spin("Removing Aft from "+n, func() error { _, err := transport.Output(h, nil, "uninstall"); return err }); err != nil {
+			ui.Error("%s: %v", n, err)
 			code = 1
 		} else {
-			fmt.Printf("Removed Aft from %s.\n", n)
+			ui.OK("Removed Aft from %s", ui.Bold(n))
 		}
 		transport.CloseMaster(h)
 	}
@@ -1071,10 +1215,11 @@ func cmdUninstall(args []string) int {
 	}
 	removed, kept := launcher.RemoveShellBlocks(&st)
 	for _, f := range removed {
-		fmt.Printf("Removed the aft block from %s.\n", f)
+		ui.OK("Removed the aft block from %s", ui.Path(f))
 	}
 	for _, f := range kept {
-		fmt.Printf("Left %s alone: its aft block was edited. Remove the lines between %q and %q yourself.\n", f, "# >>> aft >>>", "# <<< aft <<<")
+		ui.Warn("left %s alone: its aft block was edited", ui.Path(f))
+		ui.Hint("remove the lines between %q and %q yourself", "# >>> aft >>>", "# <<< aft <<<")
 		code = 1
 	}
 	launcher.RemoveLaunchers(&st)
@@ -1082,11 +1227,11 @@ func cmdUninstall(args []string) int {
 		if err := os.RemoveAll(d); err != nil {
 			return fail(err)
 		}
-		fmt.Printf("Removed %s.\n", d)
+		ui.OK("Removed %s", ui.Path(d))
 	}
 	os.RemoveAll(home.Temp()) // pasted files, if the local host received any
 	if self, err := os.Executable(); err == nil {
-		fmt.Printf("The aft binary itself is at %s; delete it however you installed it.\n", self)
+		fmt.Println(ui.Dim("The aft binary itself is at " + ui.Path(self) + "; delete it however you installed it."))
 	}
 	return code
 }

@@ -53,6 +53,13 @@ stays on your machine, and typing feels local.
   `~/.local/share/aft`, on macOS and Linux alike. An older install moves
   itself on first run, sessions keep running across the move, and the PATH
   block Aft added is rewritten.
+- One look across every command: colored marks (✓ ! ✗) that never rely on
+  color alone, aligned tables, short `~` paths and relative times. Slow steps
+  show a spinner on stderr, and `aft doctor` shows each check as it finishes
+  above a progress bar. Grouped `aft help`; `aft list` works as `aft ls`;
+  `aft attach` with several sessions offers a picker.
+- `aft ls` and `aft status` connect to each host themselves, all at once,
+  instead of reporting hosts with no open connection as unreachable.
 - Launchers run the real program inside an Aft session, so a session on a
   machine that is also its own host never nests.
 - Listening ports on the server are mirrored to the local loopback while

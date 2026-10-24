@@ -1,6 +1,13 @@
 package ui
 
-import "testing"
+import (
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 // TestDecodeKey pins the keypress classification the prompts rely on.
 func TestDecodeKey(t *testing.T) {
@@ -44,5 +51,21 @@ func TestNonInteractiveFallback(t *testing.T) {
 	}
 	if Choose("x", []Option{{Label: "a"}, {Label: "b"}}, 1) != 1 {
 		t.Fatal("Choose must return its default without a terminal")
+	}
+}
+
+// TestTableAlignsStyledCells pads columns by visible width, so styled cells
+// line up with plain ones.
+func TestTableAlignsStyledCells(t *testing.T) {
+	r, w, _ := os.Pipe()
+	saved := os.Stdout
+	os.Stdout = w
+	Table([]string{"ID", "HOST"}, [][]string{{"\x1b[1mab\x1b[0m", "x"}, {"abcd", "y"}})
+	os.Stdout = saved
+	w.Close()
+	out, _ := io.ReadAll(r)
+	lines := strings.Split(ansi.Strip(string(out)), "\n")
+	if lines[1] != "ab    x" || lines[2] != "abcd  y" {
+		t.Fatalf("misaligned:\n%s", ansi.Strip(string(out)))
 	}
 }

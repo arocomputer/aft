@@ -12,33 +12,58 @@ import (
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
 	"github.com/arocomputer/aft/internal/session"
+	"github.com/arocomputer/aft/internal/ui"
 )
 
-const usage = `aft — your agents on your server, your terminal on your machine
+// commands is the help screen: groups of command, arguments and summary.
+var commands = []struct {
+	group string
+	cmds  [][3]string
+}{
+	{"Start", [][3]string{
+		{"setup", "", "add a host, create launchers, add the PATH block"},
+		{"on", "[--host H] [--dir D]", "agents started in this directory run on the host"},
+		{"off", "", "run them locally again"},
+		{"clone", "URL [DIR]", "clone on the server, create a local handle, turn it on"},
+	}},
+	{"Sessions", [][3]string{
+		{"shell", "[--host H]", "a lag-free shell on the server"},
+		{"ls", "", "sessions on every host"},
+		{"attach", "[ID]", "reattach to a session"},
+		{"detach", "ID", "detach whoever is attached"},
+		{"end", "ID", "stop a session"},
+	}},
+	{"Hosts", [][3]string{
+		{"host", "[add|rm]", "list your hosts, or add or remove one"},
+		{"use", "[NAME]", "show or set the host used when --host is omitted"},
+		{"exec", "[--host H] -- CMD", "run one command on the server"},
+		{"ports", "", "mirrored ports"},
+		{"mount", "list|add|remove", "map a network-mounted folder"},
+	}},
+	{"Maintain", [][3]string{
+		{"status", "", "where you are, hosts, sessions, projects"},
+		{"doctor", "[--fix]", "check SSH, server, agents, launchers, shell block"},
+		{"agents add", "NAME", "launch another program through Aft"},
+		{"uninstall", "", "remove everything Aft added, everywhere"},
+		{"completion", "bash|zsh|fish", "shell completion"},
+		{"version", "", "print the version"},
+	}},
+}
 
-  aft setup                     add a host, create launchers, add the PATH block
-  aft host [add|rm]             list your hosts, or add or remove one
-  aft use [NAME]                show or set the host used when --host is omitted
-  aft on [--host H] [--dir D]   agents started in this directory run on the host
-  aft off                       run them locally again
-  aft clone URL [DIR]           clone on the server, create a local handle, turn it on
-  aft shell [--host H]          a lag-free shell on the server
-  aft ls                        sessions on every host
-  aft attach [ID]               reattach to a session
-  aft detach ID                 detach whoever is attached
-  aft end ID                    stop a session
-  aft status                    where you are, hosts, sessions, projects
-  aft doctor                    check SSH, server, agents, launchers, shell block
-  aft exec [--host H] -- CMD    run one command on the server
-  aft ports                     mirrored ports
-  aft mount list | add ... | remove LOCAL   map a network-mounted folder
-  aft agents add NAME           launch another program through Aft
-  aft uninstall                 remove everything Aft added, everywhere
-  aft completion bash|zsh|fish
-  aft version
+// aliases are other names people reach for.
+var aliases = map[string]string{"list": "ls", "sessions": "ls", "--version": "version", "-v": "version"}
 
-In a project that is on, run claude, codex, opencode or pi exactly as before.
-`
+func printUsage() {
+	fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
+	for _, g := range commands {
+		fmt.Println("\n" + ui.Bold(g.group))
+		for _, c := range g.cmds {
+			name := fmt.Sprintf("%-11s", c[0])
+			fmt.Printf("  %s %s%s\n", ui.Accent(name), fmt.Sprintf("%-22s", c[1]), ui.Dim(c[2]))
+		}
+	}
+	fmt.Println("\n" + ui.Dim("In a project that is on, run claude, codex, opencode or pi exactly as before."))
+}
 
 // version is set by the build.
 var version = "dev"
@@ -59,7 +84,7 @@ func main() {
 		os.Exit(launcher.Launch(base, os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stdout, usage)
+		printUsage()
 		os.Exit(0)
 	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
@@ -74,9 +99,10 @@ func moveShellBlocks() {
 	}
 	kept := launcher.MoveShellBlocks(&st)
 	config.SaveState(st)
-	fmt.Fprintf(os.Stderr, "aft: launchers moved to %s; open a new shell to use them.\n", home.Launchers())
+	ui.Note("launchers moved to %s; open a new shell to use them", ui.Path(home.Launchers()))
 	if len(st.ShellBlocks) == 0 || len(kept) > 0 {
-		fmt.Fprintf(os.Stderr, "aft: put this first on your PATH instead of $HOME/.aft/launchers%s:\n    export PATH=\"%s:$PATH\"\n", inFiles(kept), launcher.PathDir)
+		ui.Warn("put this first on your PATH instead of $HOME/.aft/launchers%s:", inFiles(kept))
+		fmt.Fprintf(os.Stderr, "    export PATH=\"%s:$PATH\"\n", launcher.PathDir)
 	}
 }
 
@@ -88,11 +114,14 @@ func inFiles(files []string) string {
 }
 
 func run(cmd string, args []string) int {
+	if a, ok := aliases[cmd]; ok {
+		cmd = a
+	}
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Fprint(os.Stdout, usage)
+		printUsage()
 		return 0
-	case "version", "--version":
+	case "version":
 		fmt.Println("aft", version)
 		return 0
 	case "server":
@@ -142,11 +171,13 @@ func run(cmd string, args []string) int {
 	case "completion":
 		return cmdCompletion(args)
 	}
-	fmt.Fprintf(os.Stderr, "aft: unknown command %q\n%s", cmd, usage)
+	ui.Error("unknown command %q", cmd)
+	ui.Hint("aft help lists the commands")
 	return 2
 }
 
+// fail reports err on stderr and returns the exit code for a failed command.
 func fail(err error) int {
-	fmt.Fprintln(os.Stderr, "aft:", err)
+	ui.Error("%v", err)
 	return 1
 }
