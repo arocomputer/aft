@@ -17,8 +17,11 @@ import (
 // Output for every command, so aft reads the same everywhere. Results and data
 // go to stdout; warnings, errors and the live spinner go to stderr. Colors are
 // the terminal's own ANSI colors, so they follow its theme, and each stream
-// drops them when it is not a terminal or NO_COLOR is set. A mark always comes
-// with its color, so nothing depends on color alone.
+// drops them when it is not a terminal or NO_COLOR is set. Only the 16 colors
+// the terminal's theme defines are used, so they are the user's own, and
+// secondary text is faint rather than gray: faint is the user's text color,
+// dimmed, which stays readable on any theme where "bright black" may not. A
+// mark always comes with its color, so nothing depends on color alone.
 var (
 	stdout = lipgloss.NewRenderer(os.Stdout)
 	stderr = lipgloss.NewRenderer(os.Stderr)
@@ -36,9 +39,11 @@ func style(r *lipgloss.Renderer, color string) lipgloss.Style {
 	return r.NewStyle().Foreground(lipgloss.Color(color))
 }
 
+func faint(r *lipgloss.Renderer) lipgloss.Style { return r.NewStyle().Faint(true) }
+
 // Bold, Dim and Accent style text for stdout.
 func Bold(s string) string   { return stdout.NewStyle().Bold(true).Render(s) }
-func Dim(s string) string    { return style(stdout, "8").Render(s) }
+func Dim(s string) string    { return faint(stdout).Render(s) }
 func Accent(s string) string { return style(stdout, "6").Render(s) }
 
 // Mark returns the colored mark for a level: ok, warn, fix or info.
@@ -53,7 +58,7 @@ func mark(r *lipgloss.Renderer, level string) string {
 	case "fix":
 		return style(r, "1").Render(markBad)
 	}
-	return style(r, "8").Render(markInfo)
+	return faint(r).Render(markInfo)
 }
 
 // OK reports a finished action on stdout.
@@ -76,13 +81,20 @@ func Error(format string, a ...any) {
 	fmt.Fprintln(os.Stderr, mark(stderr, "fix")+" "+fmt.Sprintf(format, a...))
 }
 
-// Hint prints the next thing to run, indented under the line above, to stderr.
+// Hint prints the next thing to do, indented under the line above, to stderr.
+// It is in the user's own text color: a hint is what they should read next.
 func Hint(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, "  "+style(stderr, "8").Render("→ "+fmt.Sprintf(format, a...)))
+	fmt.Fprintln(os.Stderr, "  "+style(stderr, "6").Render("→")+" "+fmt.Sprintf(format, a...))
+}
+
+// Suggest prints, under an error, the command the user probably meant, in
+// bold accent so it is not skimmed past.
+func Suggest(cmd string) {
+	fmt.Fprintln(os.Stderr, "  "+style(stderr, "6").Render("→")+" did you mean "+style(stderr, "6").Bold(true).Render(cmd)+"?")
 }
 
 // Command styles a command the user can copy.
-func Command(s string) string { return Accent(s) }
+func Command(s string) string { return style(stdout, "6").Bold(true).Render(s) }
 
 // Path shortens a local path under the home directory to ~.
 func Path(p string) string {
@@ -206,8 +218,8 @@ func (l *Live) draw() {
 	if l.total > 0 {
 		const width = 16
 		n := width * l.done / l.total
-		bar := style(stderr, "6").Render(strings.Repeat("━", n)) + style(stderr, "8").Render(strings.Repeat("─", width-n))
-		line += "  " + bar + " " + style(stderr, "8").Render(fmt.Sprintf("%d/%d", l.done, l.total))
+		bar := style(stderr, "6").Render(strings.Repeat("━", n)) + faint(stderr).Render(strings.Repeat("─", width-n))
+		line += "  " + bar + " " + faint(stderr).Render(fmt.Sprintf("%d/%d", l.done, l.total))
 	}
 	// A line wider than the terminal would wrap and break the redraw.
 	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 0 && lipgloss.Width(line) >= w {

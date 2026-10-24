@@ -20,7 +20,7 @@ import (
 
 func styles() (accent, dim, cursor lipgloss.Style) {
 	accent = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	dim = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dim = lipgloss.NewStyle().Faint(true)
 	cursor = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	return
 }

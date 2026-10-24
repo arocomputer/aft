@@ -217,7 +217,7 @@ func run(cmd string, args []string) int {
 	}
 	ui.Error("unknown command %q", cmd)
 	if m := suggest(cmd); m != "" {
-		ui.Hint("did you mean %s?", ui.Command("aft "+m))
+		ui.Suggest("aft " + m)
 	} else {
 		ui.Hint("aft help lists the commands")
 	}
