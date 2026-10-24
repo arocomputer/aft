@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -515,6 +516,30 @@ func (p *Predictor) Repaint() {
 	p.displaced = false
 }
 
+// Notice draws a one-line message in reverse video across the top row, then
+// puts the cursor back where it was. It moves the cursor explicitly rather
+// than with save and restore (ESC 7 / ESC 8), which would overwrite a cursor
+// the application saved itself. RestoreRow takes the notice down.
+func (p *Predictor) Notice(text string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.shadow.InGround() {
+		return
+	}
+	cols, _ := p.shadow.Size()
+	text = runewidth.Truncate(text, cols, "")
+	out := vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(cols-runewidth.StringWidth(text), 0)) + "\x1b[0m"
+	row, col := p.realRow, p.realCol
+	if !p.posKnown {
+		cur := p.shadow.Cursor()
+		row, col = cur.Row, cur.Col
+	}
+	p.w.Write([]byte(out + vt.CUP(row, col)))
+	p.realRow, p.realCol, p.posKnown = row, col, true
+	p.penKnown = false
+	p.displaced = true
+}
+
 // RestoreRow redraws one row from the shadow, taking back a notice drawn
 // over it.
 func (p *Predictor) RestoreRow(r int) {
@@ -532,9 +557,15 @@ func (p *Predictor) RestoreRow(r int) {
 		}
 		out += vt.SGR(cell.Attr) + cellRune(cell)
 	}
-	p.w.Write([]byte(out))
+	row, col := p.realRow, p.realCol
+	if !p.posKnown {
+		cur := p.shadow.Cursor()
+		row, col = cur.Row, cur.Col
+	}
+	p.w.Write([]byte(out + vt.CUP(row, col)))
+	p.realRow, p.realCol, p.posKnown = row, col, true
+	p.penKnown = false
 	p.displaced = true
-	p.posKnown, p.penKnown = false, false
 }
 
 // Shadow exposes the emulator for tests.

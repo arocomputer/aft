@@ -363,3 +363,24 @@ func TestCursorWaitsForUndrawnPredictions(t *testing.T) {
 		t.Fatalf("cursor at col %d over %q, want 3", s.Cursor().Col, s.Line(0))
 	}
 }
+
+// TestNoticeKeepsTheAppsCursor draws a notice on the top row without the
+// terminal's save and restore, which the application may be using itself,
+// and puts the cursor back; RestoreRow takes the notice down.
+func TestNoticeKeepsTheAppsCursor(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1Htop line\x1b[3;5H"))
+	out.Reset()
+	p.Notice("aft · reconnecting")
+	if bytes.Contains(out.Bytes(), []byte("\x1b7")) || bytes.Contains(out.Bytes(), []byte("\x1b8")) {
+		t.Fatal("notice used save and restore cursor")
+	}
+	p.RestoreRow(0)
+	full := vt.New(40, 5)
+	full.Write([]byte("\x1b[1;1Htop line\x1b[3;5H"))
+	full.Write(out.Bytes())
+	if full.Line(0) != "top line" || full.Cursor().Row != 2 {
+		t.Fatalf("after: %q cursor %+v", full.Line(0), full.Cursor())
+	}
+}

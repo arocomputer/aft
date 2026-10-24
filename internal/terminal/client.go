@@ -46,11 +46,14 @@ type Options struct {
 	Wrapper   []string // optional command to run the agent inside
 	Predict   bool
 	UDP       bool // reach the session over UDP when the host allows it
-	Ports     ports.Range
-	DetachKey byte // 0 disables
-	Prefix    byte // 0 disables; opens copy mode and detach
-	LatencyMS int  // simulated one-way delay each direction, for the selftest
-	Quiet     bool
+	// ServerPath names a local file on the host when it is already there,
+	// through a mounted folder; a pasted file it names is not uploaded.
+	ServerPath func(local string) (string, bool)
+	Ports      ports.Range
+	DetachKey  byte // 0 disables
+	Prefix     byte // 0 disables; opens copy mode and detach
+	LatencyMS  int  // simulated one-way delay each direction, for the selftest
+	Quiet      bool
 }
 
 // Run attaches the terminal to a session and returns the process exit code.
@@ -147,6 +150,8 @@ type session struct {
 
 	command []string      // what the session runs, for the leaving message
 	unflash chan struct{} // a flashed notice is due to be taken down
+
+	cancelUpload func() // stops the paste upload in progress, if any
 
 	offer      *udp.Offer // how to reach the session over UDP, once it offered
 	udpAddr    string     // the host's address for UDP
@@ -412,6 +417,18 @@ func (c *session) loop(proc link) int {
 				var typed []byte
 				var err error
 				proc, typed, err = c.reconnect(keys)
+				var gone sessionEnded
+				if errors.As(err, &gone) {
+					c.pred.Repaint() // clear the reconnecting notice
+					id, host := c.id, c.o.Host.Name
+					c.message = func() {
+						ui.Warn("%s ended on %s while this terminal was away", id, host)
+						if gone.Remains {
+							ui.Hint("aft attach %s shows its last screen and how it ended", id)
+						}
+					}
+					return 1
+				}
 				if errors.Is(err, errLeft) {
 					c.pred.Repaint() // clear the reconnecting notice
 					c.message = c.detachMessage("left %s while disconnected; it keeps running")
@@ -462,6 +479,8 @@ func (c *session) readFrames(proc link) <-chan frameOrErr {
 func (c *session) handleKeys(toks []Token) bool {
 	for _, t := range toks {
 		switch {
+		case c.holding && len(t.Bytes) == 1 && t.Bytes[0] == 0x03 && c.cancelUpload != nil:
+			c.cancelUpload() // Ctrl-C while a pasted file uploads cancels it
 		case c.holding:
 			c.held = append(c.held, t)
 		case c.copy != nil:
@@ -697,6 +716,10 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			}
 		}
 		if err := transport.EnsureMasterBatch(c.o.Host); err == nil {
+			// The host is back; reattaching only makes sense if the session is.
+			if ended := c.ended(); ended != nil {
+				return nil, nil, ended
+			}
 			if proc, err := c.open(false); err == nil {
 				c.pred.Reset()
 				c.title("")
@@ -724,19 +747,44 @@ func (c *session) flash(text string) {
 	})
 }
 
+// sessionEnded is reconnect giving up because the session is gone: it ended
+// while the client was away (Remains says so), or it vanished.
+type sessionEnded struct{ Remains bool }
+
+func (sessionEnded) Error() string { return "the session ended" }
+
+// ended asks the host whether this client's session still runs. It returns
+// nil when it does, or when the host cannot say, so reconnecting goes on.
+func (c *session) ended() error {
+	out, err := transport.Output(c.o.Host, nil, "ls", "--all")
+	if err != nil {
+		return nil
+	}
+	var list []struct {
+		ID    string           `json:"id"`
+		Ended *json.RawMessage `json:"ended"`
+	}
+	if json.Unmarshal(out, &list) != nil {
+		return nil
+	}
+	for _, r := range list {
+		if r.ID == c.id {
+			if r.Ended == nil {
+				return nil
+			}
+			return sessionEnded{Remains: true}
+		}
+	}
+	return sessionEnded{}
+}
+
 // errLeft is reconnect giving up because the user left; the session runs on.
 var errLeft = errors.New("left while disconnected")
 
-// notice draws a one-line message over the top row while the connection is
-// down, as mosh does, since a title is easy to miss. The repaint that follows
-// a reconnect draws over it.
-func (c *session) notice(text string) {
-	if r := []rune(text); len(r) > c.cols {
-		text = string(r[:c.cols])
-	}
-	pad := c.cols - len([]rune(text))
-	c.out.Write([]byte("\x1b7\x1b[1;1H\x1b[0;7m" + text + strings.Repeat(" ", max(pad, 0)) + "\x1b[0m\x1b8"))
-}
+// notice draws a one-line message over the top row, as mosh does, since a
+// title is easy to miss: while the connection is down, where the repaint on
+// reconnect draws over it, and through flash, which takes it down itself.
+func (c *session) notice(text string) { c.pred.Notice(text) }
 
 // writeMirrors records the currently mirrored ports so `aft status` can report
 // them. It is keyed by session id and removed when the client exits.

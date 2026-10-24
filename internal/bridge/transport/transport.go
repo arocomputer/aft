@@ -169,7 +169,11 @@ func MasterAlive(h Host) bool {
 
 // EnsureMasterBatch connects without a terminal, so it never prompts: for use
 // while attached, or behind a spinner.
-func EnsureMasterBatch(h Host) error {
+func EnsureMasterBatch(h Host) error { return EnsureMasterWithin(h, 10) }
+
+// EnsureMasterWithin is EnsureMasterBatch giving up on an unreachable host
+// after secs seconds, for listings that should not wait on an offline machine.
+func EnsureMasterWithin(h Host, secs int) error {
 	if h.IsLocal() || MasterAlive(h) {
 		return nil
 	}
@@ -178,7 +182,13 @@ func EnsureMasterBatch(h Host) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ssh", sshArgs(h, true, "-fN")...)
+	args := sshArgs(h, true, "-fN")
+	for i, a := range args {
+		if strings.HasPrefix(a, "ConnectTimeout=") {
+			args[i] = fmt.Sprintf("ConnectTimeout=%d", secs)
+		}
+	}
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -281,14 +291,28 @@ func (p *Proc) Stderr() string { return strings.TrimSpace(p.stderr.String()) }
 
 // Output runs a server subcommand to completion and returns its stdout.
 func Output(h Host, stdin io.Reader, args ...string) ([]byte, error) {
+	return OutputContext(context.Background(), h, stdin, args...)
+}
+
+// OutputContext is Output that stops the command when ctx is cancelled.
+func OutputContext(ctx context.Context, h Host, stdin io.Reader, args ...string) ([]byte, error) {
 	cmd, err := serverCommand(h, args)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Stdin = stdin
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { cmd.Process.Kill() })
+	defer stop()
+	err = cmd.Wait()
+	out := stdout.Bytes()
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {

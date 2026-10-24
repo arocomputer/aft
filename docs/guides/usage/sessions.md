@@ -139,8 +139,14 @@ owns the screen, the selection and the clipboard; aft does not get in the way.
   paths to files on your machine, aft uploads them over the existing
   connection and pastes the server paths instead, so the agent can open a
   screenshot, recording or document. The window title shows the upload; keys
-  you type meanwhile are sent after it, in order. A paste of ordinary text, or
-  of a path that does not exist on your machine, is sent unchanged.
+  you type meanwhile are sent after it, in order, and Ctrl-C cancels it. A
+  file in a mounted folder (see [Mounts](mounts.md)) is already on the server,
+  so its server path is pasted without copying it. Only files from where you
+  would drop them, your home, a temporary directory or an external drive, are
+  copied; a system path such as `/etc/hosts` is sent as typed, since it likely
+  names the server's file. Ordinary text, and a path that does not exist on
+  your machine, are sent unchanged. If a file cannot be sent, a line across
+  the top of the screen says why.
 
   Pasted files are temporary. They go in a private `aft-<uid>/clipboard`
   directory in the server's temporary space: `/var/tmp` on Linux, which is on
