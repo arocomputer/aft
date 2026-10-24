@@ -86,6 +86,10 @@ func param(params [][]int, i, def int) int {
 
 // csiDispatch handles a complete CSI sequence.
 func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final byte) {
+	// Only a printed character can be repeated: any sequence in between ends
+	// that, and CSI b itself repeats what came before it.
+	repeat := t.repeat
+	t.repeat = 0
 	if private == '?' {
 		t.csiPrivate(params, inter, final)
 		return
@@ -103,10 +107,9 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		}
 		return
 	}
-	n := param(params, 0, 1)
-	if final != 'b' {
-		t.repeat = 0
-	}
+	// A count is bounded by a screenful: anything larger has the same effect
+	// and would otherwise cost seconds of work for one sequence.
+	n := min(param(params, 0, 1), t.cols*t.rows)
 	switch final {
 	case '@':
 		t.gen++
@@ -160,10 +163,9 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 	case 'Z':
 		t.backTab(n)
 	case 'b': // REP: ncurses uses it for runs of one character
-		if t.repeat != 0 {
-			r := t.repeat
+		if repeat != 0 {
 			for ; n > 0; n-- {
-				t.print(r)
+				t.print(repeat)
 			}
 		}
 	case 'c':
@@ -515,6 +517,7 @@ func extendedColor(v []int, colon bool) (Color, int) {
 
 // oscDispatch handles operating system commands.
 func (t *Terminal) oscDispatch(s []byte) {
+	t.repeat = 0
 	str := string(s)
 	code, rest, _ := strings.Cut(str, ";")
 	switch code {
@@ -578,6 +581,7 @@ func (t *Terminal) clipboard(rest string) {
 
 // dcsDispatch handles device control strings; only XTGETTCAP gets an answer.
 func (t *Terminal) dcsDispatch(private byte, params [][]int, inter []byte, final byte, s []byte) {
+	t.repeat = 0
 	if len(inter) == 1 && inter[0] == '+' && final == 'q' {
 		var ok, bad []string
 		for _, name := range strings.Split(string(s), ";") {

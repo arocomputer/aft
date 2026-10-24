@@ -74,13 +74,15 @@ type RenderOptions struct {
 	Title bool
 }
 
-// Render returns escape sequences that reproduce the current screen, cursor
-// and modes on a terminal of the same size. The caller is expected to have a
-// fresh or reset terminal; Render starts by resetting attributes and modes it
-// does not set.
+// Render returns escape sequences that reproduce the current screen, cursor,
+// modes and character sets on a terminal of the same size. Render starts by
+// resetting the attributes, modes and character sets it does not set, so it
+// may be sent to a terminal an earlier Render left in any state.
 func (t *Terminal) Render(o RenderOptions) []byte {
 	var b bytes.Buffer
-	b.WriteString("\x1b[?25l\x1b[0m\x1b[?7h\x1b[?6l\x1b[4l\x1b[r")
+	// Hide the cursor, then reset attributes, modes and character sets the
+	// screen below does not set itself; the tail restores the real ones.
+	b.WriteString("\x1b[?25l\x1b[0m\x1b[?7h\x1b[?6l\x1b[4l\x1b[r\x0f\x1b(B\x1b)B")
 	if t.modes.AltScreen {
 		b.WriteString("\x1b[?1049h\x1b[H\x1b[2J")
 		t.paintRows(&b, true)
@@ -146,16 +148,7 @@ func (t *Terminal) Render(o RenderOptions) []byte {
 	}
 	// Character sets, so an ncurses application mid-way through drawing a
 	// box keeps drawing lines rather than letters.
-	for _, d := range []struct {
-		intro    string
-		graphics bool
-	}{{"\x1b(", t.charset.g0Graphics}, {"\x1b)", t.charset.g1Graphics}} {
-		if d.graphics {
-			b.WriteString(d.intro + "0")
-		} else {
-			b.WriteString(d.intro + "B")
-		}
-	}
+	b.WriteString("\x1b(" + gset(t.charset.g0Graphics) + "\x1b)" + gset(t.charset.g1Graphics))
 	if t.charset.shiftOut {
 		b.WriteByte(0x0E)
 	} else {
@@ -171,10 +164,22 @@ func (t *Terminal) Render(o RenderOptions) []byte {
 	}
 	b.WriteString(CUP(row, t.cur.Col))
 	b.WriteString(SGR(t.cur.Attr))
+	if t.cur.Attr.Link != 0 {
+		// The application is inside a link: what it prints next is part of it.
+		b.WriteString("\x1b]8;;" + t.LinkURL(t.cur.Attr.Link) + "\x1b\\")
+	}
 	if m.CursorVisible {
 		b.WriteString("\x1b[?25h")
 	}
 	return b.Bytes()
+}
+
+// gset names a G0/G1 designation: DEC special graphics or ASCII.
+func gset(graphics bool) string {
+	if graphics {
+		return "0"
+	}
+	return "B"
 }
 
 func (t *Terminal) paintRows(b *bytes.Buffer, position bool) {

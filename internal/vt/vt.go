@@ -122,10 +122,11 @@ func (c charsets) graphics() bool {
 	return c.g0Graphics
 }
 
-// decGraphics maps the DEC special graphics set, 0x60 to 0x7E, to Unicode.
+// decGraphics maps the DEC special graphics set, 0x5F to 0x7E, to Unicode;
+// 0x5F is blank there.
 var decGraphics = [...]rune{
-	'◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺',
-	'⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
+	' ', '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼',
+	'⎺', '⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
 }
 
 // Terminal is the emulator. It is not safe for concurrent use.
@@ -140,10 +141,12 @@ type Terminal struct {
 	modes      Modes
 	title      string
 	gen        uint64
-	repeat     rune // the last printed character, which CSI b repeats; 0 after anything else
+	repeat     rune // the last printed character, which CSI b repeats; 0 after any sequence
 
 	// Hyperlinks (OSC 8) by number, so a cell carries a small id and a repaint
-	// restores the link; links[0] is unused.
+	// restores the link; links[0] is unused. The table is compacted to the
+	// links still on a screen or in scrollback once it grows large, so a
+	// session that prints many distinct links does not keep them all.
 	links   []string
 	linkIDs map[string]uint32
 
@@ -210,6 +213,9 @@ func (t *Terminal) LinkURL(id uint32) string {
 	return t.links[id]
 }
 
+// maxLinks is how many distinct links are kept before the table is compacted.
+const maxLinks = 4096
+
 // linkID returns the id for url, adding it; an empty url is 0.
 func (t *Terminal) linkID(url string) uint32 {
 	if url == "" {
@@ -217,6 +223,9 @@ func (t *Terminal) linkID(url string) uint32 {
 	}
 	if id, ok := t.linkIDs[url]; ok {
 		return id
+	}
+	if len(t.links) >= maxLinks {
+		t.compactLinks()
 	}
 	if t.linkIDs == nil {
 		t.linkIDs = map[string]uint32{}
@@ -226,6 +235,33 @@ func (t *Terminal) linkID(url string) uint32 {
 	t.links = append(t.links, url)
 	t.linkIDs[url] = id
 	return id
+}
+
+// compactLinks renumbers the links a cell still refers to, on either screen
+// or in scrollback, and drops the rest.
+func (t *Terminal) compactLinks() {
+	old := t.links
+	t.links, t.linkIDs = []string{""}, map[string]uint32{}
+	renumber := func(cells []Cell) {
+		for i := range cells {
+			if id := cells[i].Attr.Link; id != 0 && int(id) < len(old) {
+				cells[i].Attr.Link = t.linkID(old[id])
+			}
+		}
+	}
+	renumber(t.main.cells)
+	renumber(t.alt.cells)
+	for _, line := range t.scrollback {
+		renumber(line)
+	}
+	if id := t.cur.Attr.Link; id != 0 && int(id) < len(old) {
+		t.cur.Attr.Link = t.linkID(old[id])
+	}
+	for _, c := range []*Cursor{&t.savedMain, &t.savedAlt} {
+		if id := c.Attr.Link; id != 0 && int(id) < len(old) {
+			c.Attr.Link = t.linkID(old[id])
+		}
+	}
 }
 
 // Gen returns the write generation, which increases whenever cells change.
@@ -444,8 +480,8 @@ func (t *Terminal) set(row, col int, c Cell) {
 }
 
 func (t *Terminal) print(r rune) {
-	if r >= 0x60 && r <= 0x7E && t.charset.graphics() {
-		r = decGraphics[r-0x60]
+	if r >= 0x5F && r <= 0x7E && t.charset.graphics() {
+		r = decGraphics[r-0x5F]
 	}
 	w := runewidth.RuneWidth(r)
 	if w == 0 {
@@ -547,6 +583,7 @@ func (t *Terminal) reverseIndex() {
 func (t *Terminal) scrollUp(n int) {
 	t.gen++
 	cells := t.active().cells
+	n = min(n, t.bot-t.top+1) // scrolling further than the region is tall clears it
 	for i := 0; i < n; i++ {
 		if !t.modes.AltScreen && t.top == 0 && t.bot == t.rows-1 {
 			line := make([]Cell, t.cols)
@@ -569,6 +606,7 @@ func (t *Terminal) scrollUp(n int) {
 func (t *Terminal) scrollDown(n int) {
 	t.gen++
 	cells := t.active().cells
+	n = min(n, t.bot-t.top+1)
 	for i := 0; i < n; i++ {
 		copy(cells[(t.top+1)*t.cols:(t.bot+1)*t.cols], cells[t.top*t.cols:t.bot*t.cols])
 		for c := 0; c < t.cols; c++ {
@@ -661,7 +699,7 @@ func (t *Terminal) setAltScreen(on bool, saveCursor bool) {
 	t.gen++
 	if on {
 		if saveCursor {
-			t.savedMain = t.cur
+			t.saveCursor() // as DECSC: the main screen's cursor and charsets
 		}
 		t.modes.AltScreen = true
 		for i := range t.alt.cells {
@@ -670,8 +708,7 @@ func (t *Terminal) setAltScreen(on bool, saveCursor bool) {
 	} else {
 		t.modes.AltScreen = false
 		if saveCursor {
-			t.cur = t.savedMain
-			t.clampCursor()
+			t.restoreCursor()
 		}
 	}
 	t.cur.Wrap = false
@@ -703,7 +740,7 @@ func (t *Terminal) reset() {
 	t.savedMain, t.savedAlt = Cursor{}, Cursor{}
 	t.charset, t.savedCharset = charsets{}, [2]charsets{}
 	t.repeat = 0
-	t.links, t.linkIDs = nil, nil
+	// Links stay: scrollback survives a reset and still refers to them.
 	t.title = ""
 	t.resizeTo(cols, rows, true)
 }
