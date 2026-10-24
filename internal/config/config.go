@@ -412,21 +412,37 @@ func DetachByte(s string) (byte, error) {
 // under a configured mount, choosing the most specific mount. The local path
 // should be resolved of symlinks by the caller, since a mountpoint is physical.
 func (c Config) MapLocal(local string) (host, remote string, ok bool) {
-	local = filepath.Clean(local)
+	if host, remote, ok = c.mapLocal(filepath.Clean(local), false); ok {
+		return host, remote, true
+	}
+	// Spelled through a symlink on either side (~/room may be /Volumes/Room),
+	// compare the real paths. The last element may not exist yet, so only
+	// its folder is resolved.
+	real := filepath.Join(resolve(filepath.Dir(local)), filepath.Base(local))
+	return c.mapLocal(real, true)
+}
+
+// mapLocal finds the most specific mount holding local; with resolved, each
+// mount's own path is compared by its real path.
+func (c Config) mapLocal(local string, resolved bool) (host, remote string, ok bool) {
 	best := -1
 	var chosen Mount
+	var chosenAt string
 	for _, m := range c.Mounts {
 		ml := filepath.Clean(m.Local)
+		if resolved {
+			ml = resolve(ml)
+		}
 		if local == ml || strings.HasPrefix(local, ml+string(filepath.Separator)) {
 			if len(ml) > best {
-				best, chosen = len(ml), m
+				best, chosen, chosenAt = len(ml), m, ml
 			}
 		}
 	}
 	if best < 0 {
 		return "", "", false
 	}
-	suffix := filepath.ToSlash(strings.TrimPrefix(local, filepath.Clean(chosen.Local)))
+	suffix := filepath.ToSlash(strings.TrimPrefix(local, chosenAt))
 	remote = strings.TrimRight(chosen.Path, "/") + suffix
 	return chosen.Host, remote, true
 }

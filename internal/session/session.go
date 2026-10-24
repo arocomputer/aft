@@ -492,6 +492,11 @@ done:
 func (s *Session) openUDP() (udp.Offer, error) {
 	s.udpMu.Lock()
 	defer s.udpMu.Unlock()
+	select {
+	case <-s.exited:
+		return udp.Offer{}, errors.New("the session has ended")
+	default:
+	}
 	if s.udp == nil {
 		l, err := udp.Listen()
 		if err != nil {

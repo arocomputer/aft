@@ -154,24 +154,10 @@ func SessionOptions(cfg config.Config, host, root string, p config.Project) (ter
 		Predict: s.Predict,
 		UDP:     s.UDP,
 		ServerPath: func(local string) (string, bool) {
-			// Only this host's mounts, and through a symlink too (~/room may
-			// be /Volumes/Room), as aft on resolves them.
-			mine := cfg
-			mine.Mounts = nil
-			for _, m := range cfg.Mounts {
-				if m.Host == host {
-					mine.Mounts = append(mine.Mounts, m)
-				}
-			}
-			if _, remote, ok := mine.MapLocal(local); ok {
-				return remote, true
-			}
-			if dir, err := filepath.EvalSymlinks(filepath.Dir(local)); err == nil {
-				if _, remote, ok := mine.MapLocal(filepath.Join(dir, filepath.Base(local))); ok {
-					return remote, true
-				}
-			}
-			return "", false
+			// The most specific mount says where the file really lives; it is
+			// on this host only if that mount is this host's.
+			mh, remote, ok := cfg.MapLocal(local)
+			return remote, ok && mh == host
 		},
 		Ports:     rng,
 		DetachKey: detach,

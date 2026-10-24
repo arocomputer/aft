@@ -529,7 +529,14 @@ func (p *Predictor) Notice(text string) {
 	cols, _ := p.shadow.Size()
 	text = runewidth.Truncate(text, cols, "")
 	out := vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(cols-runewidth.StringWidth(text), 0)) + "\x1b[0m"
-	p.w.Write([]byte(out + p.cursorBack()))
+	back := p.cursorBack()
+	if cur := p.shadow.Cursor(); !p.posKnown && cur.Wrap && cur.Row == 0 {
+		// Drawing the full row left the cursor waiting to wrap at its end,
+		// where the app had it; reprinting the app's cell would cut the
+		// notice short.
+		back = ""
+	}
+	p.w.Write([]byte(out + back))
 	p.penKnown = false
 	p.displaced = true
 }

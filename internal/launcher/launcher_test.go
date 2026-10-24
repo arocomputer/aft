@@ -118,7 +118,8 @@ func TestMoveShellBlocks(t *testing.T) {
 }
 
 // TestServerPathFollowsMounts names a pasted file on this host's mount, also
-// through a symlink to the mount, and ignores a longer mount on another host.
+// through a symlink to the mount, and not one under a more specific mount of
+// another host, since that file lives there.
 func TestServerPathFollowsMounts(t *testing.T) {
 	mount := t.TempDir()
 	os.MkdirAll(filepath.Join(mount, "code"), 0o755)
@@ -134,12 +135,10 @@ func TestServerPathFollowsMounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for local, want := range map[string]string{
-		filepath.Join(link, "a.png"):          "/srv/room/a.png",
-		filepath.Join(mount, "code", "b.txt"): "/srv/room/code/b.txt",
-	} {
-		if got, ok := opts.ServerPath(local); !ok || got != want {
-			t.Errorf("ServerPath(%q) = %q, %v; want %q", local, got, ok, want)
-		}
+	if got, ok := opts.ServerPath(filepath.Join(link, "a.png")); !ok || got != "/srv/room/a.png" {
+		t.Errorf("through the symlink: %q, %v", got, ok)
+	}
+	if got, ok := opts.ServerPath(filepath.Join(mount, "code", "b.txt")); ok {
+		t.Errorf("a file on other's mount was named on box: %q", got)
 	}
 }

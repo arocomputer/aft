@@ -703,9 +703,9 @@ func cmdLs(args []string) int {
 	for _, hs := range failed {
 		var ce *transport.ConnectError
 		if errors.As(hs.err, &ce) {
-			ui.Warn("%v", hs.err) // already names the host
+			ui.Warn("%v", hs.err) // names the host already
 		} else {
-			ui.Warn("could not reach %s: %v", hs.host.Name, hs.err)
+			ui.Warn("%s: %v", hs.host.Name, hs.err)
 		}
 		ui.Hint("aft doctor --host %s", hs.host.Name)
 	}
