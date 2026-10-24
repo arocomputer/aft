@@ -58,13 +58,17 @@ stays on your machine, and typing feels local.
   show a spinner on stderr, and `aft doctor` shows each check as it finishes
   above a progress bar. Grouped `aft help`; `aft list` works as `aft ls`;
   `aft attach` with several sessions offers a picker.
+- Sessions are named with short animal words (`fox`, `owl`, `yak`), unique on
+  their host, and `aft attach fox` reattaches to one. `aft ls` shows what each session
+  is from the program and the window title it sets, so a Claude Code session
+  reads as `Claude · Fix the login bug`.
 - `aft ls` and `aft status` connect to each host themselves, all at once,
   instead of reporting hosts with no open connection as unreachable.
 - Launchers run the real program inside an Aft session, so a session on a
   machine that is also its own host never nests.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
-- `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,
+- `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft kill`, `aft clone`,
   `aft exec`, `aft status`, `aft doctor`, `aft ports`, `aft host`, `aft use`
   and `aft agents add`.
 - `aft doctor` groups its checks by machine and ends each problem with the exact

@@ -538,6 +538,9 @@ func allSessions(cfg config.Config) []hostSessions {
 		out = append(out, hostSessions{host: transport.Local, list: list})
 	}
 	names := cfg.HostNames()
+	if len(names) == 0 {
+		return out
+	}
 	remote := make([]hostSessions, len(names))
 	label := "Asking " + strings.Join(names, ", ") + " for sessions"
 	ui.Spin(label, func() error {
@@ -574,6 +577,28 @@ func where(p config.Project) string {
 	return p.Host + ui.Dim(":"+p.Dir)
 }
 
+// describe says what a session is: the program, and what it says it is doing
+// (its window title), as in "Claude · Fix the login bug".
+func describe(r session.Record) string {
+	name := "session"
+	if len(r.Command) > 0 {
+		name = filepath.Base(r.Command[0])
+	}
+	if name == "sh" && strings.Contains(strings.Join(r.Command, " "), "SHELL") {
+		name = "shell" // aft shell's login-shell wrapper
+	}
+	for _, a := range config.DefaultAgents {
+		if name == a {
+			name = strings.ToUpper(name[:1]) + name[1:]
+		}
+	}
+	// Before it has a topic, an agent's title is often just its own name.
+	if r.Title == "" || strings.EqualFold(r.Title, name) || strings.EqualFold(r.Title, name+" Code") {
+		return name
+	}
+	return name + ui.Dim(" · ") + r.Title
+}
+
 // started renders a record's start time as how long ago it was.
 func started(r session.Record) string {
 	t, err := time.Parse(time.RFC3339, r.Started)
@@ -599,15 +624,17 @@ func cmdLs(args []string) int {
 		}
 		for _, r := range hs.list {
 			last = r.ID
-			rows = append(rows, []string{ui.Bold(r.ID), hs.host.Name, strings.Join(r.Command, " "), ui.Path(r.Dir), ui.Dim(started(r))})
+			rows = append(rows, []string{ui.Bold(r.ID) + " (" + describe(r) + ")", hs.host.Name, ui.Path(r.Dir), ui.Dim(started(r))})
 		}
 	}
 	if len(rows) == 0 {
 		fmt.Println(ui.Dim("No sessions."))
 	} else {
-		ui.Table([]string{"SESSION", "HOST", "COMMAND", "DIRECTORY", "STARTED"}, rows)
+		ui.Table([]string{"SESSION", "HOST", "DIRECTORY", "STARTED"}, rows)
 		if len(rows) == 1 {
 			ui.Hint("aft attach %s", last)
+		} else {
+			ui.Hint("aft attach NAME")
 		}
 	}
 	for _, hs := range failed {
@@ -662,7 +689,7 @@ func cmdAttach(args []string) int {
 		if len(found) > 1 {
 			opts := make([]ui.Option, len(found))
 			for i, f := range found {
-				opts[i] = ui.Option{Label: f.r.ID, Hint: f.h.Name + " · " + strings.Join(f.r.Command, " ") + " · " + started(f.r)}
+				opts[i] = ui.Option{Label: f.r.ID + " (" + ansi.Strip(describe(f.r)) + ")", Hint: f.h.Name + " · " + started(f.r)}
 			}
 			if !ui.Interactive() {
 				ui.Error("several sessions; pass an id")
@@ -700,7 +727,7 @@ func cmdControl(what string, args []string) int {
 	fs := flags(what)
 	hostName := fs.String("host", "", "host the session is on")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "usage: aft %s [--host H] ID\n", map[string]string{"kick": "detach", "end": "end"}[what])
+		fmt.Fprintf(os.Stderr, "usage: aft %s [--host H] ID\n", map[string]string{"kick": "detach", "end": "kill"}[what])
 		return 2
 	}
 	cfg, err := config.Load()
@@ -721,7 +748,7 @@ func cmdControl(what string, args []string) int {
 		return fail(err)
 	}
 	if what == "end" {
-		ui.OK("Ended %s", ui.Bold(id))
+		ui.OK("Killed %s", ui.Bold(id))
 	} else {
 		ui.OK("Detached %s %s", ui.Bold(id), ui.Dim("· it keeps running"))
 	}
@@ -754,7 +781,7 @@ func cmdStatus(args []string) int {
 	var hosts, sessions []string
 	for _, hs := range all {
 		for _, r := range hs.list {
-			sessions = append(sessions, ui.Bold(r.ID)+"  "+strings.Join(r.Command, " ")+ui.Dim("  on "+hs.host.Name+" · "+started(r)))
+			sessions = append(sessions, ui.Bold(r.ID)+" ("+describe(r)+")"+ui.Dim("  on "+hs.host.Name+" · "+started(r)))
 		}
 		if hs.host.IsLocal() {
 			continue
@@ -1242,7 +1269,7 @@ func cmdCompletion(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: aft completion bash|zsh|fish")
 		return 2
 	}
-	words := "setup on off clone shell ls attach detach end status doctor exec ports agents uninstall completion version help"
+	words := "setup on off clone shell ls attach detach kill status doctor exec ports agents uninstall completion version help"
 	switch args[0] {
 	case "bash":
 		fmt.Printf("_aft() { COMPREPLY=( $(compgen -W '%s' -- \"${COMP_WORDS[COMP_CWORD]}\") ); }\ncomplete -F _aft aft\n", words)

@@ -52,6 +52,7 @@ type Record struct {
 	Started string   `json:"started"` // RFC 3339
 	Cols    int      `json:"cols"`
 	Rows    int      `json:"rows"`
+	Title   string   `json:"title,omitempty"` // what the application says it is doing, from its window title
 }
 
 // SocketPath is where clients attach to a session.
@@ -291,6 +292,10 @@ func (s *Session) readPTY() {
 		if n > 0 {
 			s.mu.Lock()
 			s.term.Write(buf[:n])
+			if t := cleanTitle(s.term.Title()); t != s.record.Title {
+				s.record.Title = t
+				writeJSON(RecordPath(s.opts.ID), s.record)
+			}
 			if s.cur != nil {
 				s.cur.send(proto.Output, buf[:n])
 			}

@@ -316,8 +316,9 @@ aft off                      agents started here run locally
 aft clone URL [DIR]          clone on the server, create a local handle, turn it on
 aft shell                    a lag-free shell on the server
 aft ls                       sessions on all hosts
-aft attach [ID]              reattach
-aft detach [ID]              detach a session from another terminal
+aft attach [NAME]            reattach
+aft detach NAME              detach a session from another terminal
+aft kill NAME                stop a session
 aft status                   connection, sessions, mirrors
 aft doctor                   SSH, server, agents on the host, launchers, shell block
 aft exec -- CMD              one command on the server, no session

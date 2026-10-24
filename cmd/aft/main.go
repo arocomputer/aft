@@ -29,9 +29,9 @@ var commands = []struct {
 	{"Sessions", [][3]string{
 		{"shell", "[--host H]", "a lag-free shell on the server"},
 		{"ls", "", "sessions on every host"},
-		{"attach", "[ID]", "reattach to a session"},
-		{"detach", "ID", "detach whoever is attached"},
-		{"end", "ID", "stop a session"},
+		{"attach", "[NAME]", "reattach to a session"},
+		{"detach", "NAME", "detach whoever is attached"},
+		{"kill", "NAME", "stop a session"},
 	}},
 	{"Hosts", [][3]string{
 		{"host", "[add|rm]", "list your hosts, or add or remove one"},
@@ -150,7 +150,7 @@ func run(cmd string, args []string) int {
 		return cmdAttach(args)
 	case "detach":
 		return cmdControl("kick", args)
-	case "end":
+	case "kill":
 		return cmdControl("end", args)
 	case "status":
 		return cmdStatus(args)

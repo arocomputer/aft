@@ -202,7 +202,7 @@ func parseSessionArgs(name string, args []string) (Options, error) {
 		return o, fmt.Errorf("%s requires -- COMMAND", name)
 	}
 	if o.ID == "" {
-		o.ID = NewID(o.Command[0])
+		o.ID = NewID()
 	}
 	if !ValidID(o.ID) {
 		return o, fmt.Errorf("invalid session id %q", o.ID)

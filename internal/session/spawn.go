@@ -1,8 +1,6 @@
 package session
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,22 +18,6 @@ var idOK = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 // ValidID reports whether a session id is safe to use in paths.
 func ValidID(id string) bool { return idOK.MatchString(id) }
-
-// NewID derives a readable session id from the command name.
-func NewID(command string) string {
-	base := filepath.Base(command)
-	base = regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(base, "-")
-	base = strings.Trim(base, "-")
-	if base == "" {
-		base = "session"
-	}
-	if len(base) > 20 {
-		base = base[:20]
-	}
-	var b [2]byte
-	rand.Read(b[:])
-	return base + "-" + hex.EncodeToString(b[:])
-}
 
 // Start launches a detached session process for o and waits until its socket
 // accepts connections. server is the argv prefix that runs server

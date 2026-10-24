@@ -20,6 +20,7 @@ import (
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/terminal"
+	"github.com/arocomputer/aft/internal/ui"
 )
 
 // PassEnv are variables that always cross to the server.
@@ -65,7 +66,7 @@ func Launch(name string, args []string) int {
 	// Reattach to an existing detached session for this agent in this directory
 	// rather than starting a second one.
 	if id := existingSession(h, name, opts.Dir); id != "" {
-		fmt.Fprintf(os.Stderr, "aft: reattaching to %s (aft end %s for a fresh one)\n", id, id)
+		ui.Note("reattaching to %s %s", id, ui.Dim("· aft kill "+id+" starts a fresh one"))
 		opts.SessionID = id
 	}
 	return terminal.Run(opts)

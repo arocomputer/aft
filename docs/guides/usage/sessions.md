@@ -15,12 +15,19 @@ never blocks waiting for a terminal.
 
 ```sh
 aft ls                 # sessions on every host
-aft attach ID          # reattach; with one session, the id is optional
-aft detach ID          # detach whoever is attached, from another terminal
-aft end ID             # stop the application and the session
+aft attach fox         # reattach to the session called fox
+aft attach             # reattach; picks from a list when several are running
+aft detach fox         # detach whoever is attached, from another terminal
+aft kill fox           # stop the application and the session
 aft shell              # a login shell on the server in a session
 aft status             # here on/off, hosts, sessions
 ```
+
+Each session is named with a short animal word, unique on its host. `aft ls`
+says what each one is: the program, and the window title it sets. Claude Code
+titles its window with the conversation's topic, so its sessions read like
+`Claude · Fix the login bug`. Aft only reads the title the program already
+sends to the terminal; it never reads an agent's files.
 
 ## Typing
 
@@ -42,7 +49,7 @@ server repaints the screen, restores terminal modes, and asks the application
 to redraw. Ctrl-C while disconnected leaves the client; the session keeps
 running and `aft attach` returns to it. Closing the terminal window detaches.
 
-Aft never stops a session on its own. `aft end` does, and so does the
+Aft never stops a session on its own. `aft kill` does, and so does the
 application exiting.
 
 ## Environment and paths

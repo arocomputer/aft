@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/home"
 )
 
 // TestMain lets the test binary act as the server executable, so Start
@@ -220,5 +221,27 @@ func TestWrapperWrapsCommand(t *testing.T) {
 	out := c.collect(t, "COMMAND-RAN")
 	if !strings.Contains(out, "WRAPPER-RAN") {
 		t.Fatalf("wrapper did not run before the command: %q", out)
+	}
+}
+
+// TestNewIDSkipsNamesInUse gives a new session a word no live session on the
+// host has.
+func TestNewIDSkipsNamesInUse(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	home.Ensure()
+	for _, n := range names[1:] {
+		writeJSON(RecordPath(n), Record{ID: n, Server: os.Getpid(), PID: os.Getpid()})
+	}
+	if id := NewID(); id != names[0] {
+		t.Fatalf("got %q, want the only free name %q", id, names[0])
+	}
+}
+
+// TestCleanTitle drops the status glyph an agent puts before its title.
+func TestCleanTitle(t *testing.T) {
+	for in, want := range map[string]string{"✳ Fix login": "Fix login", "⠐ Fix login": "Fix login", "zsh": "zsh", "": ""} {
+		if got := cleanTitle(in); got != want {
+			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
