@@ -836,10 +836,11 @@ func cmdKill(args []string) int {
 	}
 	id := fs.Arg(0)
 	var h transport.Host
+	var rec session.Record
 	if *hostName != "" {
 		h, err = cfg.Host(*hostName)
 	} else {
-		h, _, err = findSession(cfg, id)
+		h, rec, err = findSession(cfg, id)
 	}
 	if err != nil {
 		return fail(err)
@@ -847,7 +848,11 @@ func cmdKill(args []string) int {
 	if _, err := transport.Output(h, nil, "end", id); err != nil {
 		return fail(err)
 	}
-	ui.OK("Killed %s", ui.Bold(id))
+	if rec.Ended != nil {
+		ui.OK("Forgot %s %s", ui.Bold(id), ui.Dim("· it had already ended"))
+	} else {
+		ui.OK("Killed %s", ui.Bold(id))
+	}
 	return 0
 }
 
