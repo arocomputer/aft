@@ -526,17 +526,14 @@ func (p *Predictor) Notice(text string) {
 	if !p.shadow.InGround() {
 		return
 	}
+	// It stops short of the last column, so drawing it never leaves the
+	// terminal waiting to wrap, whatever width the terminal gives each
+	// character; callers keep notices to plain ASCII punctuation.
 	cols, _ := p.shadow.Size()
-	text = runewidth.Truncate(text, cols, "")
-	out := vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(cols-runewidth.StringWidth(text), 0)) + "\x1b[0m"
-	back := p.cursorBack()
-	if cur := p.shadow.Cursor(); !p.posKnown && cur.Wrap && cur.Row == 0 {
-		// Drawing the full row left the cursor waiting to wrap at its end,
-		// where the app had it; reprinting the app's cell would cut the
-		// notice short.
-		back = ""
-	}
-	p.w.Write([]byte(out + back))
+	width := max(cols-1, 0)
+	text = runewidth.Truncate(text, width, "")
+	out := vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(width-runewidth.StringWidth(text), 0)) + "\x1b[0m"
+	p.w.Write([]byte(out + p.cursorBack()))
 	p.penKnown = false
 	p.displaced = true
 }

@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"net"
@@ -315,5 +316,26 @@ func TestNewIDSkipsEndedNames(t *testing.T) {
 	leaveRemains(Record{ID: names[0]}, Ending{At: time.Now().UTC().Format(time.RFC3339)})
 	if id := NewID(); id == names[0] {
 		t.Fatalf("reused %q, which an ended session still holds", id)
+	}
+}
+
+// TestGoneSessionSaysSo reaches for a session that is not running: attach
+// answers in the client's protocol and udp answers gone, so a client stops
+// instead of reconnecting, and says why.
+func TestGoneSessionSaysSo(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	leaveRemains(Record{ID: "fox"}, Ending{At: time.Now().UTC().Format(time.RFC3339), Code: 1})
+	var out bytes.Buffer
+	Main(nil, []string{"attach", "fox"}, strings.NewReader(""), &out, io.Discard)
+	f, err := proto.Read(bufio.NewReader(&out))
+	if err != nil || f.Type != proto.Error || !strings.Contains(string(f.Payload), "aft attach fox") {
+		t.Fatalf("attach answered %x %q %v", f.Type, f.Payload, err)
+	}
+	out.Reset()
+	Main(nil, []string{"udp", "fox"}, nil, &out, io.Discard)
+	var got struct{ Gone, Remains bool }
+	if json.Unmarshal(out.Bytes(), &got) != nil || !got.Gone || !got.Remains {
+		t.Fatalf("udp answered %q", out.String())
 	}
 }

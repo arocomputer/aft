@@ -199,19 +199,24 @@ func EnsureMasterWithin(h Host, secs int) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return &ConnectError{Host: h.Name, Msg: msg}
+		return &ConnectError{Host: h.Name, Dest: h.Dest(), Msg: msg}
 	}
 	return nil
 }
 
 // ConnectError is a failed connection without a terminal, naming the host as
-// the user calls it; SSH's message names the address. NeedsTerminal says
+// the user calls it and, when SSH's message does not, the address. NeedsTerminal says
 // whether SSH wanted to ask something (a passphrase, a new host key), so a
 // caller with a terminal can retry interactively; otherwise the host is
 // simply unreachable and asking would not help.
-type ConnectError struct{ Host, Msg string }
+type ConnectError struct{ Host, Dest, Msg string }
 
-func (e *ConnectError) Error() string { return "cannot reach " + e.Host + ": " + e.Msg }
+func (e *ConnectError) Error() string {
+	if e.Dest != "" && e.Dest != e.Host && !strings.Contains(e.Msg, e.Dest) {
+		return "cannot reach " + e.Host + " (" + e.Dest + "): " + e.Msg
+	}
+	return "cannot reach " + e.Host + ": " + e.Msg
+}
 
 // NeedsTerminal reports whether SSH stopped because it needed to ask.
 func (e *ConnectError) NeedsTerminal() bool {

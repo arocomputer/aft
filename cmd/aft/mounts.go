@@ -263,6 +263,9 @@ func cmdMount(args []string) int {
 			return 2
 		}
 		abs, _ := filepath.Abs(*local)
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real // mounts are kept by their real path; see MapLocal
+		}
 		cfg, err := config.Load()
 		if err != nil {
 			return fail(err)

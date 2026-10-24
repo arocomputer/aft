@@ -31,16 +31,24 @@ func TestMapLocal(t *testing.T) {
 	}
 }
 
-// TestMapLocalThroughSymlinks maps a path when the mount is configured through
-// a symlink and the path is its real spelling, as Finder pastes it.
+// TestMapLocalThroughSymlinks maps a path reached through a symlink to a
+// mount (~/room for /Volumes/Room), and still lets a more specific mount win
+// when only the real spelling reaches it.
 func TestMapLocalThroughSymlinks(t *testing.T) {
-	real := t.TempDir()
+	real, _ := filepath.EvalSymlinks(t.TempDir())
+	os.MkdirAll(filepath.Join(real, "code"), 0o755)
 	link := filepath.Join(t.TempDir(), "room")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skip(err)
 	}
-	c := Config{Mounts: []Mount{{Local: link, Host: "box", Path: "/srv/room"}}}
-	if h, r, ok := c.MapLocal(filepath.Join(real, "a.png")); !ok || h != "box" || r != "/srv/room/a.png" {
-		t.Fatalf("got %q %q %v", h, r, ok)
+	c := Config{Mounts: []Mount{
+		{Local: real, Host: "box", Path: "/srv/room"},
+		{Local: filepath.Join(real, "code"), Host: "other", Path: "/elsewhere"},
+	}}
+	if h, r, ok := c.MapLocal(filepath.Join(link, "a.png")); !ok || h != "box" || r != "/srv/room/a.png" {
+		t.Fatalf("through the symlink: %q %q %v", h, r, ok)
+	}
+	if h, r, ok := c.MapLocal(filepath.Join(link, "code", "b.txt")); !ok || h != "other" || r != "/elsewhere/b.txt" {
+		t.Fatalf("nested mount through the symlink: %q %q %v", h, r, ok)
 	}
 }

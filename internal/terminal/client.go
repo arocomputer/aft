@@ -111,6 +111,11 @@ func Run(o Options) int {
 	defer c.clearMirrors()
 
 	proc, err := c.open(true)
+	var gone sessionEnded
+	if errors.As(err, &gone) {
+		c.goneMessage(gone)()
+		return 1
+	}
 	if err != nil {
 		ui.Error("%v", err)
 		return 1
@@ -152,7 +157,6 @@ type session struct {
 	command []string      // what the session runs, for the leaving message
 	unflash chan struct{} // a flashed notice is due to be taken down
 
-	greeted      bool               // the current connection got the session's hello
 	cancelled    bool               // Ctrl-C cancelled the upload in progress
 	cancelUpload context.CancelFunc // stops the paste upload in progress
 	uploadCtx    context.Context    // done once the upload has finished or stopped
@@ -214,7 +218,6 @@ func (c *session) open(first bool) (link, error) {
 // use makes l the connection the writer and reader use, and sends the
 // handshake.
 func (c *session) use(l link) error {
-	c.greeted = false // until this connection's hello arrives
 	c.wmu.Lock()
 	c.wr, c.rd = l, l
 	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
@@ -240,16 +243,14 @@ func (c *session) dial() (link, error) {
 			var got struct {
 				ID string `json:"id"`
 				udp.Offer
+				Gone    bool `json:"gone"`    // the session is not running
+				Remains bool `json:"remains"` // and it left its last screen
 			}
 			if err != nil && c.id == "" && !strings.Contains(err.Error(), "unknown server command") {
 				return nil, fmt.Errorf("could not start the session: %w", err)
 			}
-			if err != nil && c.id != "" && strings.Contains(err.Error(), "is not running") {
-				// Asked to open UDP, the host says the session is gone; make
-				// sure, then stop rather than attach to nothing.
-				if gone := c.ended(); gone != nil {
-					return nil, gone
-				}
+			if err == nil && json.Unmarshal(out, &got) == nil && got.Gone {
+				return nil, sessionEnded{Remains: got.Remains}
 			}
 			if err == nil && json.Unmarshal(out, &got) == nil {
 				c.id = got.ID
@@ -432,13 +433,7 @@ func (c *session) loop(proc link) int {
 				var gone sessionEnded
 				if errors.As(err, &gone) {
 					c.pred.Repaint() // clear the reconnecting notice
-					id, host := c.id, c.o.Host.Name
-					c.message = func() {
-						ui.Warn("%s ended on %s while this terminal was away", id, host)
-						if gone.Remains {
-							ui.Hint("aft attach %s shows its last screen and how it ended", id)
-						}
-					}
+					c.message = c.goneMessage(gone)
 					return 1
 				}
 				if errors.Is(err, errLeft) {
@@ -660,7 +655,6 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		var h proto.HelloInfo
 		if json.Unmarshal(f.Payload, &h) == nil {
 			c.id = h.ID
-			c.greeted = true
 			if len(h.Command) > 0 {
 				c.command = h.Command
 			}
@@ -707,7 +701,7 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 	lost := time.Now()
 	for attempt := 1; ; attempt++ {
 		if attempt > 1 {
-			c.notice(fmt.Sprintf("aft · no contact with %s for %ds · reconnecting · Ctrl-C leaves, the session keeps running", c.o.Host.Name, int(time.Since(lost).Seconds())))
+			c.notice(fmt.Sprintf("aft - no contact with %s for %ds - reconnecting - Ctrl-C leaves, the session keeps running", c.o.Host.Name, int(time.Since(lost).Seconds())))
 		}
 		wait := time.After(delay)
 	collect:
@@ -734,16 +728,9 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			}
 		}
 		if err := transport.EnsureMasterBatch(c.o.Host); err == nil {
-			// The host is back. If the last connection ended before the
-			// session even greeted it, the session may be gone: ask, rather
-			// than reattach forever. After an ordinary drop, skip the question.
-			// Over UDP the request to reattach answers that itself (see dial),
-			// so only SSH-only hosts ask first.
-			if !c.greeted || c.udpBlocked {
-				if ended := c.ended(); ended != nil {
-					return nil, nil, ended
-				}
-			}
+			// A session that is gone says so: the UDP request answers
+			// "gone" (see dial) and an SSH attach sends an Error frame, which
+			// ends the client with the reason. No extra question is needed.
 			proc, err := c.open(false)
 			var gone sessionEnded
 			if errors.As(err, &gone) {
@@ -776,37 +763,22 @@ func (c *session) flash(text string) {
 	})
 }
 
-// sessionEnded is reconnect giving up because the session is gone: it ended
-// while the client was away (Remains says so), or it vanished.
+// sessionEnded is the client giving up because the session is gone, as the
+// host answered: it ended unattended and left its remains, or it vanished.
 type sessionEnded struct{ Remains bool }
 
 func (sessionEnded) Error() string { return "the session ended" }
 
-// ended asks the host whether this client's session still runs. It returns
-// nil when it does, or when the host cannot say, so reconnecting goes on.
-func (c *session) ended() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := transport.OutputContext(ctx, c.o.Host, nil, "ls", "--all")
-	if err != nil {
-		return nil
-	}
-	var list []struct {
-		ID    string           `json:"id"`
-		Ended *json.RawMessage `json:"ended"`
-	}
-	if json.Unmarshal(out, &list) != nil {
-		return nil
-	}
-	for _, r := range list {
-		if r.ID == c.id {
-			if r.Ended == nil {
-				return nil
-			}
-			return sessionEnded{Remains: true}
+// goneMessage says the session is gone and, if it left its last screen, how
+// to see it.
+func (c *session) goneMessage(gone sessionEnded) func() {
+	id, host := c.id, c.o.Host.Name
+	return func() {
+		ui.Warn("%s is no longer running on %s", id, host)
+		if gone.Remains {
+			ui.Hint("aft attach %s shows its last screen and how it ended", id)
 		}
 	}
-	return sessionEnded{}
 }
 
 // errLeft is reconnect giving up because the user left; the session runs on.

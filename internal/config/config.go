@@ -409,40 +409,31 @@ func DetachByte(s string) (byte, error) {
 }
 
 // MapLocal returns the host and server directory for a local path that lives
-// under a configured mount, choosing the most specific mount. The local path
-// should be resolved of symlinks by the caller, since a mountpoint is physical.
+// under a configured mount, choosing the most specific mount. Mounts are kept
+// by their real path (aft mount add and detection both resolve it), so the
+// path is compared as given and, when its folder is reached through a
+// symlink (~/room may be /Volumes/Room), by its real spelling too; mounts
+// themselves are never resolved here, which could block on a network share
+// whose server is offline.
 func (c Config) MapLocal(local string) (host, remote string, ok bool) {
-	if host, remote, ok = c.mapLocal(filepath.Clean(local), false); ok {
-		return host, remote, true
+	local = filepath.Clean(local)
+	forms := []string{local}
+	if real := filepath.Join(resolve(filepath.Dir(local)), filepath.Base(local)); real != local {
+		forms = append(forms, real)
 	}
-	// Spelled through a symlink on either side (~/room may be /Volumes/Room),
-	// compare the real paths. The last element may not exist yet, so only
-	// its folder is resolved.
-	real := filepath.Join(resolve(filepath.Dir(local)), filepath.Base(local))
-	return c.mapLocal(real, true)
-}
-
-// mapLocal finds the most specific mount holding local; with resolved, each
-// mount's own path is compared by its real path.
-func (c Config) mapLocal(local string, resolved bool) (host, remote string, ok bool) {
 	best := -1
 	var chosen Mount
-	var chosenAt string
+	var rest string
 	for _, m := range c.Mounts {
 		ml := filepath.Clean(m.Local)
-		if resolved {
-			ml = resolve(ml)
-		}
-		if local == ml || strings.HasPrefix(local, ml+string(filepath.Separator)) {
-			if len(ml) > best {
-				best, chosen, chosenAt = len(ml), m, ml
+		for _, f := range forms {
+			if (f == ml || strings.HasPrefix(f, ml+string(filepath.Separator))) && len(ml) > best {
+				best, chosen, rest = len(ml), m, strings.TrimPrefix(f, ml)
 			}
 		}
 	}
 	if best < 0 {
 		return "", "", false
 	}
-	suffix := filepath.ToSlash(strings.TrimPrefix(local, chosenAt))
-	remote = strings.TrimRight(chosen.Path, "/") + suffix
-	return chosen.Host, remote, true
+	return chosen.Host, strings.TrimRight(chosen.Path, "/") + filepath.ToSlash(rest), true
 }

@@ -143,16 +143,16 @@ func (c *session) finishUpload(u uploadResult) bool {
 		// out already, so close it with nothing in between, or the app would
 		// take every later key as pasted text.
 		c.send(proto.Input, pasteEnd)
-		c.flash("aft · upload cancelled")
+		c.flash("aft - upload cancelled")
 		held := c.held
 		c.held = nil
 		return c.handleKeys(held)
 	}
 	if u.err != nil {
 		// The original paste goes through; say why it is a local path.
-		msg := "aft · could not send the pasted file to " + c.o.Host.Name + ": " + u.err.Error()
+		msg := "aft - could not send the pasted file to " + c.o.Host.Name + ": " + u.err.Error()
 		if errors.Is(u.err, fs.ErrPermission) {
-			msg = "aft · macOS would not let this terminal read the pasted file · give the terminal app Full Disk Access, or paste the saved file"
+			msg = "aft - macOS would not let this terminal read the pasted file - give the terminal app Full Disk Access, or paste the saved file"
 		}
 		c.flash(msg)
 	}

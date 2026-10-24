@@ -121,7 +121,7 @@ func TestMoveShellBlocks(t *testing.T) {
 // through a symlink to the mount, and not one under a more specific mount of
 // another host, since that file lives there.
 func TestServerPathFollowsMounts(t *testing.T) {
-	mount := t.TempDir()
+	mount, _ := filepath.EvalSymlinks(t.TempDir()) // kept by its real path, as aft mount add does
 	os.MkdirAll(filepath.Join(mount, "code"), 0o755)
 	link := filepath.Join(t.TempDir(), "room")
 	if err := os.Symlink(mount, link); err != nil {
