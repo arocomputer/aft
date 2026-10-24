@@ -108,8 +108,8 @@ stays on your machine, and typing feels local.
 - A session detaches when its terminal goes away: a closed tab, another
   computer attaching, or a laptop that sleeps, which the client's heartbeat
   reveals within thirty seconds. `aft ls` shows which sessions are attached.
-- `aft doctor` groups its checks by machine and ends each problem with the exact
-  command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
+- `aft doctor` prints one line per check, and one per host when all is well
+  there, and ends each problem with the exact command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
   stale or missing server, re-add the PATH line), `--json` prints findings for
   scripts, and `--host` limits the checks to one host.
 - macOS and Linux hosts are supported; the server is embedded (gzipped) for both
@@ -153,6 +153,8 @@ stays on your machine, and typing feels local.
   one. The install check is one round trip.
 - Backspace is predicted only over characters you typed: at an empty prompt
   it no longer erases the prompt before the application answers.
+- `aft status` and `aft doctor` are flat: one line per fact, no labels or
+  sections. A port record a killed client left behind no longer shows.
 - `aft completion` completes hosts and session names, not just commands.
   `aft ls` with nothing running says how to start one, `aft` alone on a fresh
   install says to run `aft setup`, and `aft doctor` sees launchers put on PATH

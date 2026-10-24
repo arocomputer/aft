@@ -951,69 +951,77 @@ func cmdStatus(args []string) int {
 	st, _ := config.LoadState()
 	cwd, _ := os.Getwd()
 	all := allSessions(cfg)
-	row := func(label string, lines ...string) {
-		for i, l := range lines {
-			if i > 0 {
-				label = ""
-			}
-			fmt.Printf("%s %s\n", ui.Bold(fmt.Sprintf("%-9s", label)), l)
-		}
-	}
 	mapping := func(root string, p config.Project) string { return ui.Path(root) + ui.Dim(" → ") + where(p) }
-	if root, p, ok := st.FindProject(cwd); ok {
-		row("Here", ui.Mark("ok")+" on  "+mapping(root, p))
+	// Where you are first, then every other project that is on.
+	here, _, ok := st.FindProject(cwd)
+	if ok {
+		fmt.Println(ui.Mark("ok") + " " + mapping(here, st.Projects[here]))
 	} else {
-		row("Here", ui.Mark("info")+" off "+ui.Dim("· aft on makes agents here run on a host"))
+		fmt.Println(ui.Mark("info") + " " + ui.Path(cwd) + ui.Dim(" is off · aft on makes agents here run on "+orAHost(cfg.UsedHost())))
 	}
-	var hosts, sessions []string
-	for _, hs := range all {
-		for _, r := range hs.list {
-			sessions = append(sessions, ui.Bold(r.ID)+" ("+describe(r)+")  "+state(r)+ui.Dim("  on "+hs.host.Name+" · "+started(r)))
+	roots := make([]string, 0, len(st.Projects))
+	for r := range st.Projects {
+		if r != here {
+			roots = append(roots, r)
 		}
+	}
+	sort.Strings(roots)
+	for _, r := range roots {
+		fmt.Println(ui.Mark("info") + " " + mapping(r, st.Projects[r]))
+	}
+	for _, hs := range all {
 		if hs.host.IsLocal() {
 			continue
 		}
-		line := ui.Mark("ok") + " " + hs.host.Name + ui.Dim("  connected")
+		name := hs.host.Name
+		if name == cfg.UsedHost() {
+			name += " " + ui.Accent("(default)")
+		}
 		if hs.err != nil {
-			line = ui.Mark("fix") + " " + hs.host.Name + ui.Dim("  unreachable: "+hs.err.Error())
+			fmt.Println(ui.Mark("fix") + " " + name + ui.Dim(" · unreachable: "+hs.err.Error()))
+		} else {
+			fmt.Println(ui.Mark("ok") + " " + name + ui.Dim(" · connected"))
 		}
-		if hs.host.Name == cfg.UsedHost() {
-			line += "  " + ui.Accent("default")
-		}
-		hosts = append(hosts, line)
 	}
-	if len(hosts) > 0 {
-		row("Hosts", hosts...)
-	}
-	if len(sessions) == 0 {
-		sessions = []string{ui.Dim("none")}
-	}
-	row("Sessions", sessions...)
-	if m := mirrors(); len(m) > 0 {
-		var lines []string
-		for id, ports := range m {
-			list := make([]string, len(ports))
-			for i, p := range ports {
-				list[i] = fmt.Sprintf("localhost:%d", p)
-			}
-			lines = append(lines, strings.Join(list, "  ")+ui.Dim("  from "+id))
+	listed := map[string]bool{}
+	for _, hs := range all {
+		for _, r := range hs.list {
+			listed[r.ID] = true
+			fmt.Println(ui.Mark("info") + " " + ui.Bold(r.ID) + " (" + describe(r) + ")" + ui.Dim(" · ") + state(r) + ui.Dim(" on "+hs.host.Name+" · "+started(r)))
 		}
-		sort.Strings(lines)
-		row("Ports", lines...)
 	}
-	if len(st.Projects) > 0 {
-		roots := make([]string, 0, len(st.Projects))
-		for r := range st.Projects {
-			roots = append(roots, r)
+	for _, id := range mirroredSessions(listed) {
+		list := make([]string, 0, 4)
+		for _, p := range mirrors()[id] {
+			list = append(list, fmt.Sprintf("localhost:%d", p))
 		}
-		sort.Strings(roots)
-		var lines []string
-		for _, r := range roots {
-			lines = append(lines, mapping(r, st.Projects[r]))
-		}
-		row("Projects", lines...)
+		fmt.Println(ui.Mark("info") + " " + strings.Join(list, ", ") + ui.Dim(" · mirrored from "+id))
 	}
 	return 0
+}
+
+// orAHost names the default host in a hint, or says "a host" without one.
+func orAHost(name string) string {
+	if name == "" {
+		return "a host"
+	}
+	return name
+}
+
+// mirroredSessions lists sessions with mirrored ports, in order, dropping the
+// record a client left behind when it was killed: ports are mirrored only
+// while a client runs, and a running client's session is listed.
+func mirroredSessions(listed map[string]bool) []string {
+	var ids []string
+	for id := range mirrors() {
+		if !listed[id] {
+			os.Remove(filepath.Join(home.Sockets(), "mirrors-"+id+".json"))
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // docFinding is one line of a doctor report: a check, its level, and if it is
@@ -1026,18 +1034,25 @@ type docFinding struct {
 	Fixed   bool   `json:"fixed,omitempty"`
 }
 
-// doctor accumulates findings under the current section and, when fixing, runs
-// each repair as its check is added. With live set it prints each finding as
-// it lands, above a spinner that says what is being checked.
+// doctor accumulates findings under the current section and, when fixing,
+// runs each repair as its check is added. With live set it prints as it goes,
+// above a spinner that says what is being checked: this machine's checks one
+// per line, and a host on one line when all is well there, or one line per
+// finding there otherwise, each naming the host.
 type doctor struct {
 	fix      bool
 	cur      string
-	shown    string
 	live     *ui.Live
 	findings []docFinding
+	held     []docFinding // the current host's findings, printed when it is done
 }
 
-func (d *doctor) section(s string) { d.cur = s }
+// section starts the findings for a place; a host's are held until the next
+// section or the end, so a healthy host prints as one line.
+func (d *doctor) section(s string) {
+	d.flush()
+	d.cur = s
+}
 
 // step says what the doctor is checking now.
 func (d *doctor) step(s string) {
@@ -1054,18 +1069,45 @@ func (d *doctor) add(f docFinding) {
 	if f.Level != "info" {
 		d.live.Advance()
 	}
-	if f.Section != d.shown {
-		d.live.Println("\n" + ui.Bold(f.Section))
-		d.shown = f.Section
+	if strings.HasPrefix(f.Section, "Host ") {
+		d.held = append(d.held, f)
+		return
 	}
+	d.print(f, "")
+}
+
+// print shows one finding, prefixed with the host it concerns, if any.
+func (d *doctor) print(f docFinding, prefix string) {
 	text := f.Text
 	if f.Level == "info" {
 		text = ui.Dim(text)
 	}
-	d.live.Println("  " + ui.Mark(f.Level) + " " + text)
+	d.live.Println(ui.Mark(f.Level) + " " + prefix + text)
 	if f.Hint != "" {
-		d.live.Println("    " + ui.Dim("→ "+f.Hint))
+		d.live.Println("  " + ui.Dim("→ "+f.Hint))
 	}
+}
+
+// flush prints the held host findings: one line when every one is fine.
+func (d *doctor) flush() {
+	if d.live == nil || len(d.held) == 0 {
+		return
+	}
+	host := strings.TrimPrefix(d.cur, "Host ")
+	fine := true
+	parts := make([]string, 0, len(d.held))
+	for _, f := range d.held {
+		fine = fine && (f.Level == "ok" || f.Level == "info")
+		parts = append(parts, ansi.Strip(f.Text))
+	}
+	if fine {
+		d.live.Println(ui.Mark("ok") + " " + host + ui.Dim(" · "+strings.Join(parts, " · ")))
+	} else {
+		for _, f := range d.held {
+			d.print(f, host+ui.Dim(" · "))
+		}
+	}
+	d.held = nil
 }
 
 func (d *doctor) ok(text string)         { d.add(docFinding{d.cur, "ok", text, "", false}) }
@@ -1088,8 +1130,8 @@ func (d *doctor) repair(text, hint string, fn func() error, done string) {
 	d.add(f)
 }
 
-// cmdDoctor inspects everything Aft depends on, grouped by where a problem would
-// be, and prints the exact command to fix each one. --fix applies the safe
+// cmdDoctor inspects everything Aft depends on, one line per check and one
+// per healthy host, and prints the exact command to fix each problem. --fix applies the safe
 // repairs (reinstall a stale or missing server, re-add the PATH line); --json
 // prints machine-readable findings; --host limits host checks to one host.
 func cmdDoctor(args []string) int {
@@ -1163,9 +1205,9 @@ func cmdDoctor(args []string) int {
 	d.section("Here")
 	cwd, _ := os.Getwd()
 	if root, p, ok := st.FindProject(cwd); ok {
-		d.info("on · " + ui.Path(root) + " → " + ansi.Strip(where(p)))
+		d.ok(ui.Path(root) + " → " + ansi.Strip(where(p)))
 	} else {
-		d.info("off · aft on makes agents here run on a host")
+		d.info(ui.Path(cwd) + " is off · aft on makes agents here run on " + orAHost(cfg.UsedHost()))
 	}
 
 	// A machine whose projects all run on itself needs no host.
@@ -1200,7 +1242,7 @@ func cmdDoctor(args []string) int {
 			}
 			continue
 		}
-		d.ok("connected " + ui.Dim("· "+h.SSH))
+		d.ok("connected")
 		d.step("Checking the server on " + n)
 		info, err := install.Info(h)
 		switch {
@@ -1215,16 +1257,17 @@ func cmdDoctor(args []string) int {
 			case e == nil && cmp > 0:
 				d.warn("server is newer than this aft ("+info.Version+")", "update aft on this machine")
 			default:
-				d.ok("server ready " + ui.Dim("· "+info.OS+"/"+info.Arch+" · "+info.Version))
+				d.ok("server " + info.Version + " " + ui.Dim(info.OS+"/"+info.Arch))
 			}
 		}
 		if found := agentsIn(info.Agents); len(found) > 0 {
-			d.ok("agents " + ui.Dim("· "+strings.Join(found, ", ")))
+			d.ok(strings.Join(found, ", "))
 		} else {
 			d.warn("no agents on the host", "install one there (claude, codex, ...)")
 		}
 	}
 
+	d.flush()
 	if d.live != nil {
 		d.live.Stop()
 	}
@@ -1256,7 +1299,6 @@ func (d *doctor) summary(took time.Duration) {
 			warns++
 		}
 	}
-	fmt.Println()
 	t := ui.Dim(fmt.Sprintf(" · %.1fs", took.Seconds()))
 	switch {
 	case fixes > 0 && d.fix:
