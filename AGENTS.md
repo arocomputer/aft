@@ -28,8 +28,9 @@ Aft has three parts. Keep new code inside one of them.
   server, read on paste, pasted files), opening URLs, and the server-side
   shims. `bridge/transport` reaches a host through the user's OpenSSH with a
   shared master connection, or runs the server locally for the reserved host
-  `local`; `bridge/proto` frames bytes between terminal and session;
-  `bridge/ports` mirrors listening ports.
+  `local`; `bridge/udp` carries a session's frames over QUIC on UDP once SSH
+  has introduced the two ends; `bridge/proto` frames bytes between terminal
+  and session; `bridge/ports` mirrors listening ports.
 
 Supporting packages, not parts of their own:
 

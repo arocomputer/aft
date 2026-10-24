@@ -27,6 +27,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/bridge/udp"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/vt"
 )
@@ -160,6 +161,9 @@ type Session struct {
 
 	exited chan struct{}
 	exit   proto.ExitInfo
+
+	udpMu sync.Mutex
+	udp   *udp.Listener // opened on the first ReqUDP, closed when the session ends
 }
 
 // Serve runs the session until the application exits. It is the body of the
@@ -214,6 +218,11 @@ func Serve(o Options) error {
 	err = cmd.Wait()
 	s.exit = exitInfo(err)
 	close(s.exited)
+	s.udpMu.Lock()
+	if s.udp != nil {
+		s.udp.Close()
+	}
+	s.udpMu.Unlock()
 	s.mu.Lock()
 	if s.cur != nil {
 		s.cur.sendJSON(proto.Exit, s.exit)
@@ -437,6 +446,31 @@ done:
 	log.Printf("session %s: client detached", s.opts.ID)
 }
 
+// openUDP starts the session's UDP listener, once, and returns how to reach
+// it. Clients it admits are served exactly like those on the unix socket.
+func (s *Session) openUDP() (udp.Offer, error) {
+	s.udpMu.Lock()
+	defer s.udpMu.Unlock()
+	if s.udp == nil {
+		l, err := udp.Listen()
+		if err != nil {
+			return udp.Offer{}, err
+		}
+		s.udp = l
+		go func() {
+			for {
+				conn, err := l.Accept()
+				if err != nil {
+					return
+				}
+				go s.serveClient(conn)
+			}
+		}()
+		log.Printf("session %s: listening on UDP %d", s.opts.ID, l.Offer.Port)
+	}
+	return s.udp.Offer, nil
+}
+
 // control serves a connection that only sends control frames.
 func (s *Session) control(c *client, r *bufio.Reader) {
 	defer c.close()
@@ -449,6 +483,12 @@ func (s *Session) control(c *client, r *bufio.Reader) {
 		case proto.End:
 			s.end()
 			c.send(proto.Pong, nil)
+		case proto.ReqUDP:
+			if o, err := s.openUDP(); err != nil {
+				c.send(proto.Error, []byte(err.Error()))
+			} else {
+				c.sendJSON(proto.UDPOffer, o)
+			}
 		case proto.Ping:
 			c.send(proto.Pong, nil)
 		}
@@ -633,18 +673,40 @@ func Attach(id string, rw io.ReadWriter) error {
 
 // Control opens a control connection to a session and sends one frame.
 func Control(id string, t proto.Type) error {
+	_, err := request(id, t)
+	return err
+}
+
+// OfferUDP asks a session to listen on UDP and returns how to reach it.
+func OfferUDP(id string) (udp.Offer, error) {
+	f, err := request(id, proto.ReqUDP)
+	var o udp.Offer
+	if err == nil && f.Type == proto.Error {
+		err = errors.New(string(f.Payload))
+	}
+	if err == nil {
+		err = json.Unmarshal(f.Payload, &o)
+	}
+	return o, err
+}
+
+// request sends one control frame to a session and returns its answer.
+func request(id string, t proto.Type) (proto.Frame, error) {
 	conn, err := net.Dial("unix", SocketPath(id))
 	if err != nil {
-		return fmt.Errorf("session %s is not running", id)
+		return proto.Frame{}, fmt.Errorf("session %s is not running", id)
 	}
 	defer conn.Close()
 	if err := proto.Write(conn, proto.Resize, proto.EncodeResize(0, 0)); err != nil {
-		return err
+		return proto.Frame{}, err
 	}
 	if err := proto.Write(conn, t, nil); err != nil {
-		return err
+		return proto.Frame{}, err
 	}
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, err = proto.Read(bufio.NewReader(conn))
-	return err
+	wait := 5 * time.Second
+	if t == proto.ReqUDP {
+		wait = time.Second // a session from an older server never answers
+	}
+	conn.SetReadDeadline(time.Now().Add(wait))
+	return proto.Read(bufio.NewReader(conn))
 }

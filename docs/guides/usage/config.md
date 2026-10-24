@@ -48,6 +48,7 @@ A `[host.<name>]` table can override the global defaults for that host:
 ssh     = "-p 2222 fschr@box"      # destination, with ssh options if needed
 wrapper = ["nix", "develop", "-c"] # command wrapper
 predict = true                     # typing prediction for this host
+udp     = true                     # reach sessions over UDP 60000-61000 when allowed
 ports   = "3000-3999"              # mirror range
 env     = ["DATABASE_URL"]         # extra variables to pass
 alive   = 5                        # ServerAliveInterval seconds
@@ -77,6 +78,7 @@ use          = "mini"          # host used when --host is omitted (optional with
 agents       = ["claude", "codex", "opencode", "pi"]
 tools        = ["git", "gh"]   # run once on the host where aft is on; none by default
 predict      = true
+udp          = true            # sessions over UDP when the host allows it, as mosh does
 prefix       = "ctrl-]"        # opens copy mode (prefix then [) and detach (then d); "" disables
 detach       = ""              # a second, direct detach key; off by default
 wrapper      = []              # default wrapper for every host

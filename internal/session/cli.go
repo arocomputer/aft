@@ -20,6 +20,7 @@ import (
 
 	"github.com/arocomputer/aft/internal/bridge"
 	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/bridge/udp"
 	"github.com/arocomputer/aft/internal/home"
 )
 
@@ -45,7 +46,7 @@ var Version = "dev"
 // binary by itself, or the aft binary followed by "server".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|setup|info|listeners|clipboard-put")
+		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|udp|setup|info|listeners|clipboard-put")
 		return 2
 	}
 	self, err := os.Executable()
@@ -75,6 +76,35 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			return 1
 		}
 		return relay(o.ID, stdin, stdout, stderr)
+	case "udp":
+		// udp ID opens a running session's UDP listener; udp with new's
+		// arguments starts the session first. Either prints how to reach it,
+		// so a client needs one round trip.
+		var id string
+		if len(args) == 2 && ValidID(args[1]) {
+			id = args[1]
+		} else {
+			o, err := parseSessionArgs("udp", args[1:])
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 2
+			}
+			if err := Start(prefix, o); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			id = o.ID
+		}
+		offer, err := OfferUDP(id)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		json.NewEncoder(stdout).Encode(struct {
+			ID string `json:"id"`
+			udp.Offer
+		}{id, offer})
+		return 0
 	case "attach":
 		if len(args) != 2 || !ValidID(args[1]) {
 			fmt.Fprintln(stderr, "usage: server attach ID")

@@ -71,6 +71,12 @@ stays on your machine, and typing feels local.
 - `aft ssh`, `aft ls`, `aft attach`, `aft kill`, `aft status`,
   `aft doctor`, `aft host` (with `add`, `rm` and `use`), `aft agents add` and
   `aft tools add`.
+- Sessions over UDP, as mosh does: SSH introduces the two ends, then the
+  client connects with QUIC to a port in 60000-61000, pinning the session's
+  certificate and presenting a one-time token. A lost packet no longer stalls
+  the stream, and after a network change or sleep the client redials the
+  session directly. Falls back to SSH when UDP is blocked; `udp = false` turns
+  it off.
 - Tools: `aft tools add git gh` makes those commands run once on the server,
   in the project's directory, wherever aft is on, with the terminal or pipes
   passed through and the exit code returned. Agents still run in sessions.

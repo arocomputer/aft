@@ -55,6 +55,22 @@ sleeps or drops off the network: the client sends a heartbeat every ten
 seconds, and after thirty silent seconds the session lets it go. `aft ls` says
 which sessions are attached.
 
+## Over UDP
+
+Like mosh, Aft reaches a session over UDP when it can, and uses SSH only to
+get in. The session opens a UDP port in mosh's range, 60000 to 61000, and
+tells your machine over SSH which port, its certificate's fingerprint and a
+one-time token. Your machine then connects directly with QUIC, pinning that
+certificate and presenting the token; nothing else is admitted. UDP brings two
+things TCP cannot. A lost packet no longer stalls everything behind it, so a
+lossy Wi-Fi link stays responsive. And when your laptop changes networks or
+wakes from sleep, the client reconnects straight to the session over UDP, with
+no SSH handshake first.
+
+If the port range is blocked, or the host is reached through a jump host, Aft
+quietly uses SSH as before. A firewall that already allows mosh allows Aft.
+Turn UDP off with `udp = false` in the config, for every host or one.
+
 `aft ssh` opens your login shell on the server in a session: like `ssh`, but
 it survives disconnects and sleep, and typing is predicted locally, as `mosh`
 does. It starts in the project's directory when the project is on. Name a host

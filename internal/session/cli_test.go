@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/arocomputer/aft/internal/bridge/udp"
 	"github.com/arocomputer/aft/internal/home"
 )
 
@@ -243,5 +244,35 @@ func TestCleanTitle(t *testing.T) {
 		if got := cleanTitle(in); got != want {
 			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestUDPReattach reaches a session over UDP, drops the connection without a
+// goodbye, as a laptop changing networks does, and redials with the same
+// offer: the session takes the new connection and repaints.
+func TestUDPReattach(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := Options{ID: "t-udp", Command: []string{"sh", "-c", `printf 'mark-udp\n'; sleep 30`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-udp", proto.End)
+	offer, err := OfferUDP("t-udp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		nc, err := udp.Dial("127.0.0.1", offer)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		proto.Write(nc, proto.Resize, proto.EncodeResize(40, 10))
+		c := &conn{c: nc, r: bufio.NewReader(nc)}
+		if f := c.read(t); f.Type != proto.Hello {
+			t.Fatalf("dial %d: got frame %x, want hello", i, f.Type)
+		}
+		c.collect(t, "mark-udp")
+		// No Detach frame: the next dial must take over regardless.
 	}
 }

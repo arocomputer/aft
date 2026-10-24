@@ -30,6 +30,7 @@ type Config struct {
 	Agents       []string              `toml:"agents"`
 	Tools        []string              `toml:"tools,omitempty"` // commands like git and gh that run once on the host, not in a session
 	Predict      *bool                 `toml:"predict,omitempty"`
+	UDP          *bool                 `toml:"udp,omitempty"`           // reach sessions over UDP when the host allows it; nil means yes
 	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
 	DetachKey    string                `toml:"detach,omitempty"`        // key after the prefix that detaches
 	EditDotfiles *bool                 `toml:"edit_dotfiles,omitempty"` // let setup edit the shell config; nil means yes
@@ -45,6 +46,7 @@ type HostConfig struct {
 	SSH     string   `toml:"ssh"`               // destination, may carry ssh options
 	Wrapper []string `toml:"wrapper,omitempty"` // command wrapper on the host
 	Predict *bool    `toml:"predict,omitempty"` // prediction for sessions on this host
+	UDP     *bool    `toml:"udp,omitempty"`     // UDP for sessions on this host
 	Ports   string   `toml:"ports,omitempty"`   // mirror range for this host
 	Env     []string `toml:"env,omitempty"`     // extra variables to pass to this host
 	Alive   int      `toml:"alive,omitempty"`   // ServerAlive interval seconds, 0 = default
@@ -96,6 +98,7 @@ type RepoConfig struct {
 type Settings struct {
 	Wrapper []string
 	Predict bool
+	UDP     bool
 	Ports   string
 	Env     []string
 	Alive   int
@@ -108,6 +111,7 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 	s := Settings{
 		Wrapper: c.Wrapper,
 		Predict: c.PredictOn(),
+		UDP:     c.UDP == nil || *c.UDP,
 		Ports:   c.Ports,
 		Env:     append([]string(nil), c.Env...),
 		Alive:   h.Alive,
@@ -118,6 +122,9 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 	}
 	if h.Predict != nil {
 		s.Predict = *h.Predict
+	}
+	if h.UDP != nil {
+		s.UDP = *h.UDP
 	}
 	if h.Ports != "" {
 		s.Ports = h.Ports

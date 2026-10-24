@@ -152,6 +152,7 @@ func SessionOptions(cfg config.Config, host, root string, p config.Project) (ter
 		Env:       Environment(s.Env),
 		Wrapper:   s.Wrapper,
 		Predict:   s.Predict,
+		UDP:       s.UDP,
 		Ports:     rng,
 		DetachKey: detach,
 		Prefix:    prefix,

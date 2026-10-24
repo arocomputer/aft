@@ -12,10 +12,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/arocomputer/aft/internal/bridge/ports"
 	"github.com/arocomputer/aft/internal/bridge/proto"
 	"github.com/arocomputer/aft/internal/bridge/transport"
+	"github.com/arocomputer/aft/internal/bridge/udp"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/session/install"
 	"github.com/arocomputer/aft/internal/ui"
@@ -41,6 +44,7 @@ type Options struct {
 	Env       []string // KEY=VALUE pairs to pass through
 	Wrapper   []string // optional command to run the agent inside
 	Predict   bool
+	UDP       bool // reach the session over UDP when the host allows it
 	Ports     ports.Range
 	DetachKey byte // 0 disables
 	Prefix    byte // 0 disables; opens copy mode and detach
@@ -139,6 +143,10 @@ type session struct {
 	mirror     *ports.Mirror
 	message    func() // prints why the client left, after the terminal is restored
 
+	offer      *udp.Offer // how to reach the session over UDP, once it offered
+	udpAddr    string     // the host's address for UDP
+	udpBlocked bool       // UDP failed after an offer: stay on SSH
+
 	wmu sync.Mutex
 	wr  io.Writer
 	rd  io.Reader
@@ -159,39 +167,102 @@ type session struct {
 	pastedAt time.Time         // last paste or paste key; opens clipboard reads
 }
 
+// link is one connection to the session: a relay over SSH, or a QUIC stream
+// over UDP. Wait ends it and returns what the far side said about why.
+type link interface {
+	io.Reader
+	io.Writer
+	Close()
+	Wait() string
+}
+
+type sshLink struct{ p *transport.Proc }
+
+func (l sshLink) Read(b []byte) (int, error)  { return l.p.Stdout.Read(b) }
+func (l sshLink) Write(b []byte) (int, error) { return l.p.Stdin.Write(b) }
+func (l sshLink) Close()                      { l.p.Kill() }
+func (l sshLink) Wait() string                { msg, _ := l.p.Wait(); return msg }
+
+type udpLink struct{ net.Conn }
+
+func (l udpLink) Close()       { l.Conn.Close() }
+func (l udpLink) Wait() string { l.Conn.Close(); return "" }
+
 // open starts or attaches to the session and performs the handshake.
-func (c *session) open(first bool) (*transport.Proc, error) {
-	var args []string
+func (c *session) open(first bool) (link, error) {
+	l, err := c.dial()
+	if err != nil {
+		return nil, err
+	}
+	return l, c.use(l)
+}
+
+// use makes l the connection the writer and reader use, and sends the
+// handshake.
+func (c *session) use(l link) error {
+	c.wmu.Lock()
+	c.wr, c.rd = l, l
+	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
+		c.wr = laggyWriter{l, d}
+		c.rd = laggyReader(l, d)
+	}
+	c.wmu.Unlock()
+	if err := c.send(proto.Resize, proto.EncodeResize(c.cols, c.rows)); err != nil {
+		l.Close()
+		return err
+	}
+	return nil
+}
+
+// dial connects to the session over UDP when it can, else over SSH. It asks
+// the server over SSH to open the session's UDP listener, starting the session
+// if needed, then dials it. When UDP is blocked the client stops trying and
+// stays on SSH. reconnect redials an offered listener without SSH.
+func (c *session) dial() (link, error) {
+	if c.o.UDP && !c.o.Host.IsLocal() && !c.udpBlocked {
+		if addr, err := c.o.Host.Address(); err == nil {
+			out, err := transport.Output(c.o.Host, nil, append([]string{"udp"}, c.sessionArgs()...)...)
+			var got struct {
+				ID string `json:"id"`
+				udp.Offer
+			}
+			if err != nil && c.id == "" && !strings.Contains(err.Error(), "unknown server command") {
+				return nil, fmt.Errorf("could not start the session: %w", err)
+			}
+			if err == nil && json.Unmarshal(out, &got) == nil {
+				c.id, c.offer, c.udpAddr = got.ID, &got.Offer, addr
+				if conn, err := udp.Dial(addr, got.Offer); err == nil {
+					return udpLink{conn}, nil
+				}
+			}
+			// UDP is blocked, or the server or session predates it.
+			c.udpBlocked = true
+		}
+	}
+	args := []string{"attach", c.id}
 	if c.id == "" {
-		args = []string{"new", "--dir", c.o.Dir, "--cols", strconv.Itoa(c.cols), "--rows", strconv.Itoa(c.rows)}
-		for _, kv := range c.o.Env {
-			args = append(args, "--env", kv)
-		}
-		for _, w := range c.o.Wrapper {
-			args = append(args, "--wrap", w)
-		}
-		args = append(args, "--")
-		args = append(args, c.o.Command...)
-	} else {
-		args = []string{"attach", c.id}
+		args = append([]string{"new"}, c.sessionArgs()...)
 	}
 	proc, err := transport.Server(c.o.Host, args...)
 	if err != nil {
 		return nil, err
 	}
-	c.wmu.Lock()
-	c.wr = proc.Stdin
-	c.rd = proc.Stdout
-	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
-		c.wr = laggyWriter{proc.Stdin, d}
-		c.rd = laggyReader(proc.Stdout, d)
+	return sshLink{proc}, nil
+}
+
+// sessionArgs names the session to attach to, or describes the one to start.
+func (c *session) sessionArgs() []string {
+	if c.id != "" {
+		return []string{c.id}
 	}
-	c.wmu.Unlock()
-	if err := c.send(proto.Resize, proto.EncodeResize(c.cols, c.rows)); err != nil {
-		proc.Kill()
-		return nil, err
+	args := []string{"--dir", c.o.Dir, "--cols", strconv.Itoa(c.cols), "--rows", strconv.Itoa(c.rows)}
+	for _, kv := range c.o.Env {
+		args = append(args, "--env", kv)
 	}
-	return proc, nil
+	for _, w := range c.o.Wrapper {
+		args = append(args, "--wrap", w)
+	}
+	return append(append(args, "--"), c.o.Command...)
 }
 
 // send queues a frame for the writer goroutine. It never writes to the network
@@ -239,7 +310,7 @@ type frameOrErr struct {
 
 // loop runs until the application exits, the client detaches, or the user
 // gives up on a reconnect.
-func (c *session) loop(proc *transport.Proc) int {
+func (c *session) loop(proc link) int {
 	keys := make(chan []byte, 64)
 	go func() {
 		buf := make([]byte, 32<<10)
@@ -320,7 +391,7 @@ func (c *session) loop(proc *transport.Proc) int {
 				// Leave copy mode: its snapshot is stale and the reattach repaints.
 				c.copy = nil
 				c.awaitSnap = false
-				msg, _ := proc.Wait()
+				msg := proc.Wait()
 				if c.id == "" {
 					c.message = func() { ui.Error("could not start the session: %s", msg) }
 					return 1
@@ -350,7 +421,7 @@ func (c *session) loop(proc *transport.Proc) int {
 	}
 }
 
-func (c *session) readFrames(proc *transport.Proc) <-chan frameOrErr {
+func (c *session) readFrames(proc link) <-chan frameOrErr {
 	ch := make(chan frameOrErr, 256)
 	rd := c.rd
 	go func() {
@@ -547,7 +618,7 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 // reconnect reattaches with backoff. Keys typed meanwhile are kept and
 // returned for delivery, except Ctrl-C, which leaves the session running and
 // quits the client.
-func (c *session) reconnect(keys <-chan []byte) (*transport.Proc, []byte, error) {
+func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 	delay := 500 * time.Millisecond
 	var typed []byte
 	for attempt := 1; ; attempt++ {
@@ -562,6 +633,17 @@ func (c *session) reconnect(keys <-chan []byte) (*transport.Proc, []byte, error)
 				typed = append(typed, b...)
 			case <-wait:
 				break collect
+			}
+		}
+		// A session reached over UDP is redialed directly first: no SSH round
+		// trip, and it works the moment the new network does.
+		if c.offer != nil && !c.udpBlocked {
+			if conn, err := udp.Dial(c.udpAddr, *c.offer); err == nil {
+				if l := (udpLink{conn}); c.use(l) == nil {
+					c.pred.Reset()
+					c.title("")
+					return l, typed, nil
+				}
 			}
 		}
 		if err := transport.EnsureMasterBatch(c.o.Host); err == nil {

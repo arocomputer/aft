@@ -30,6 +30,7 @@ const (
 	End         Type = 0x06 // stop the application and the session
 	// 0x07 was Kick, sent by the retired aft detach; do not reuse it.
 	ReqSnapshot Type = 0x08 // ask the session for its scrollback and screen (copy mode)
+	ReqUDP      Type = 0x09 // control only: open the session's UDP listener; answered with UDPOffer
 )
 
 // Frames from the session to the client.
@@ -40,9 +41,10 @@ const (
 	Listeners Type = 0x15 // listening TCP ports on the server, uint16 each
 	Hello     Type = 0x16 // sent on attach; JSON HelloInfo
 	Pong      Type = 0x17
-	Detached  Type = 0x18 // another client took over, or aft detach was run
+	Detached  Type = 0x18 // the client asked to detach, or another client took over
 	Error     Type = 0x19 // human-readable error text; the connection then closes
 	Snapshot  Type = 0x1a // gob-encoded vt.SnapshotData, answering ReqSnapshot
+	UDPOffer  Type = 0x1b // JSON udp.Offer, answering ReqUDP
 	// 0x13 was a reserved title frame and is retired; do not reuse it.
 )
 

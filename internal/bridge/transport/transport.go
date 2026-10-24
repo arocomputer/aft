@@ -46,6 +46,33 @@ func (h Host) Dest() string {
 	return d
 }
 
+// Address is the network address SSH reaches h at, after ~/.ssh/config: what
+// a direct UDP connection should dial. It fails when SSH reaches the host
+// through a jump host or proxy, which UDP cannot follow.
+func (h Host) Address() (string, error) {
+	hostOpts, dest := h.sshDest()
+	out, err := exec.Command("ssh", append(append(append([]string{}, hostOpts...), "-G", "--"), dest)...).Output()
+	if err != nil {
+		return "", err
+	}
+	addr := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		k, v, _ := strings.Cut(line, " ")
+		switch k {
+		case "hostname":
+			addr = v
+		case "proxyjump", "proxycommand":
+			if v != "none" && v != "" {
+				return "", fmt.Errorf("%s is reached through %s, which UDP cannot follow", h.Name, k)
+			}
+		}
+	}
+	if addr == "" {
+		return "", fmt.Errorf("no address for %s", h.Name)
+	}
+	return addr, nil
+}
+
 // Local is the host that runs sessions on this machine.
 var Local = Host{Name: "local"}
 
