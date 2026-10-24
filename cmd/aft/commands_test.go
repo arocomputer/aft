@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/arocomputer/aft/internal/config"
+)
 
 // TestExpandHome maps a home-relative server path to an absolute one. The Mac
 // and the server have different home directories, so a stored ~ would break.
@@ -26,5 +30,16 @@ func TestSuggest(t *testing.T) {
 		if got := suggest(in); got != want {
 			t.Errorf("suggest(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestKeepDefault writes down a lone host as the default before a second is
+// added, so adding one never leaves aft without a default.
+func TestKeepDefault(t *testing.T) {
+	cfg := config.Config{Hosts: map[string]config.HostConfig{"server": {SSH: "server"}}}
+	keepDefault(&cfg)
+	cfg.Hosts["mac"] = config.HostConfig{SSH: "mac"}
+	if cfg.UsedHost() != "server" {
+		t.Fatalf("default is %q, want server", cfg.UsedHost())
 	}
 }

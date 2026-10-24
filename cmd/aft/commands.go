@@ -218,6 +218,7 @@ func cmdHost(args []string) int {
 		if _, ok := cfg.Hosts[name]; ok {
 			return fail(fmt.Errorf("host %q already exists; remove it first or edit config.toml", name))
 		}
+		keepDefault(&cfg)
 		cfg.Hosts[name] = config.HostConfig{SSH: dest}
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
@@ -273,6 +274,15 @@ func cmdHost(args []string) int {
 	ui.Error("aft host: unknown verb %q", verb)
 	ui.Hint("aft host lists; add NAME DEST, rm NAME and use NAME change them")
 	return 2
+}
+
+// keepDefault, called before a host is added, writes down the host that is
+// the default only because it is the only one, so adding a second does not
+// leave aft without a default.
+func keepDefault(cfg *config.Config) {
+	if cfg.Use == "" && len(cfg.Hosts) == 1 {
+		cfg.Use = cfg.HostNames()[0]
+	}
 }
 
 // hostUse sets the host used when none is given (config key `use`). With no
@@ -530,6 +540,7 @@ func adoptHost(cfg *config.Config, dest string, probe bool) (transport.Host, boo
 		ui.Hint("aft host add NAME %s", dest)
 		return transport.Host{}, false
 	}
+	keepDefault(cfg)
 	cfg.Hosts[name] = config.HostConfig{SSH: dest}
 	if err := config.Save(*cfg); err != nil {
 		fail(err)
