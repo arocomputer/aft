@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -90,7 +91,7 @@ func Run(o Options) int {
 	}
 	cols, rows := saneSize(term.GetSize(int(out.Fd())))
 
-	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID}
+	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID, command: o.Command}
 	c.outbound = make(chan []byte, 4096)
 	c.uploads = make(chan uploadResult, 1)
 	c.sendDone = make(chan struct{})
@@ -142,6 +143,8 @@ type session struct {
 	pred       *Predictor
 	mirror     *ports.Mirror
 	message    func() // prints why the client left, after the terminal is restored
+
+	command []string // what the session runs, for the leaving message
 
 	offer      *udp.Offer // how to reach the session over UDP, once it offered
 	udpAddr    string     // the host's address for UDP
@@ -400,6 +403,11 @@ func (c *session) loop(proc link) int {
 				var typed []byte
 				var err error
 				proc, typed, err = c.reconnect(keys)
+				if errors.Is(err, errLeft) {
+					c.pred.Repaint() // clear the reconnecting notice
+					c.message = c.detachMessage("left %s while disconnected; it keeps running")
+					return 1
+				}
 				if err != nil {
 					c.message = func() { ui.Error("%v", err) }
 					return 1
@@ -530,6 +538,32 @@ func (c *session) prefixCommand(t Token) bool {
 	return true
 }
 
+// exitMessage says the session is over, the way ssh says a connection
+// closed: what ended, where, and how, if it failed.
+func (c *session) exitMessage(e proto.ExitInfo) func() {
+	what := "the program"
+	if len(c.command) > 0 {
+		what = filepath.Base(c.command[0])
+		if len(c.command) == 3 && c.command[0] == "sh" && strings.Contains(c.command[2], "SHELL") {
+			what = "the shell" // aft HOST's login shell
+		}
+	}
+	where := c.o.Host.Name
+	if c.o.Host.IsLocal() {
+		where = "this machine"
+	}
+	return func() {
+		switch {
+		case e.Signal != "":
+			ui.Warn("%s on %s ended by signal %s", what, where, e.Signal)
+		case e.Code != 0:
+			ui.Warn("%s on %s exited with code %d", what, where, e.Code)
+		default:
+			ui.Note("%s on %s exited; session %s is closed", what, where, c.id)
+		}
+	}
+}
+
 // detachMessage says the session runs on without this terminal, and how to
 // come back to it. format names the session with %s.
 func (c *session) detachMessage(format string) func() {
@@ -581,12 +615,15 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		var h proto.HelloInfo
 		if json.Unmarshal(f.Payload, &h) == nil {
 			c.id = h.ID
+			if len(h.Command) > 0 {
+				c.command = h.Command
+			}
 		}
 	case proto.Exit:
 		var e proto.ExitInfo
 		json.Unmarshal(f.Payload, &e)
-		if e.Signal != "" && !c.o.Quiet {
-			c.message = func() { ui.Warn("the session ended by signal %s", e.Signal) }
+		if !c.o.Quiet {
+			c.message = c.exitMessage(e)
 		}
 		return e.Code, true
 	case proto.Detached:
@@ -621,14 +658,18 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 	delay := 500 * time.Millisecond
 	var typed []byte
+	lost := time.Now()
 	for attempt := 1; ; attempt++ {
+		if attempt > 1 {
+			c.notice(fmt.Sprintf("aft · no contact with %s for %ds · reconnecting · Ctrl-C leaves, the session keeps running", c.o.Host.Name, int(time.Since(lost).Seconds())))
+		}
 		wait := time.After(delay)
 	collect:
 		for {
 			select {
 			case b, ok := <-keys:
 				if !ok || (len(b) == 1 && b[0] == 0x03) {
-					return nil, nil, fmt.Errorf("left session %s while disconnected; it keeps running. Reattach with: aft attach %s", c.id, c.id)
+					return nil, nil, errLeft
 				}
 				typed = append(typed, b...)
 			case <-wait:
@@ -660,6 +701,20 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			c.title(fmt.Sprintf("aft · reconnecting (%d)", attempt))
 		}
 	}
+}
+
+// errLeft is reconnect giving up because the user left; the session runs on.
+var errLeft = errors.New("left while disconnected")
+
+// notice draws a one-line message over the top row while the connection is
+// down, as mosh does, since a title is easy to miss. The repaint that follows
+// a reconnect draws over it.
+func (c *session) notice(text string) {
+	if r := []rune(text); len(r) > c.cols {
+		text = string(r[:c.cols])
+	}
+	pad := c.cols - len([]rune(text))
+	c.out.Write([]byte("\x1b7\x1b[1;1H\x1b[0;7m" + text + strings.Repeat(" ", max(pad, 0)) + "\x1b[0m\x1b8"))
 }
 
 // writeMirrors records the currently mirrored ports so `aft status` can report

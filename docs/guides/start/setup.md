@@ -38,9 +38,9 @@ aft on
 ```
 
 The project is exactly the folder you are in. It maps to the same path
-relative to home, on the host, here `~/code/app`, and `aft on` creates that
-directory there if it is missing. Pass `--dir` for a different server path, or
-`--host` for a different server.
+relative to home, on the host, here `~/code/app`. If that folder does not exist
+there, `aft on` says so and stops. Pass `--dir` to name the server folder
+yourself; Aft creates a folder you name. Pass `--host` for a different server.
 
 From then on, starting `claude`, `codex`, `opencode`, `pi` or any program with a
 launcher from inside that directory runs it, on the host. `aft off` turns it

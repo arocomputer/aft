@@ -18,7 +18,8 @@ aft ls                 # sessions on every host
 aft attach fox         # reattach to the session called fox
 aft attach             # reattach; picks from a list when several are running
 aft kill fox           # stop the application and the session
-aft ssh                # a terminal on the server that survives disconnects
+aft server             # a terminal on the host called server
+aft server uptime      # run one command there, as ssh does
 aft status             # here on/off, hosts, sessions
 ```
 
@@ -71,11 +72,40 @@ If the port range is blocked, or the host is reached through a jump host, Aft
 quietly uses SSH as before. A firewall that already allows mosh allows Aft.
 Turn UDP off with `udp = false` in the config, for every host or one.
 
-`aft ssh` opens your login shell on the server in a session: like `ssh`, but
-it survives disconnects and sleep, and typing is predicted locally, as `mosh`
-does. It starts in the project's directory when the project is on. Name a host
-to pick one, as in `aft ssh studio`. Run it again in the same place and it
-comes back to that shell.
+## A terminal on a host
+
+`aft HOST` opens your login shell on that host in a session, where HOST is the
+name of one of your hosts: `aft server`, `aft mini`, `aft studio`. It is like
+`ssh HOST`, but it survives disconnects and sleep, reaches the host over UDP
+when it can, and predicts your typing locally, as mosh does. It starts in the
+project's directory when this project is on for that host. Run it again in the
+same place and it comes back to that shell. `aft HOST CMD...` runs one command
+there instead and returns its exit code, as `ssh HOST CMD` does.
+
+A host you have not added yet works too. `aft user@box` or `aft box`, when SSH
+can reach it, adds it as a host named `box`, installs Aft's server there, and
+opens the terminal; from then on `aft box` opens it. A host's name cannot be an
+Aft command, so `aft HOST` always means the host: `aft host add` refuses a name
+like `ls`.
+
+When the shell or program ends, Aft says so, as ssh says a connection closed:
+`• the shell on server exited; session owl is closed`, or the exit code or
+signal if it failed. If the connection drops, a line across the top of the
+screen says how long it has been and that Ctrl-C leaves; the session keeps
+running either way.
+
+## Sessions that end unseen
+
+A session that ends while no terminal is attached does not just disappear.
+It keeps its last screen as plain text in `~/.aft/logs/NAME.screen` on its
+host, and `aft ls` lists it as `exited 0`, `exited 1` or `lost`, for one whose
+server stopped. `aft attach NAME` prints that last screen, says how and when it
+ended, and clears it; `aft kill NAME` clears it without showing it. They are
+cleared after a week. The program's own state is untouched, so an agent that
+keeps its conversations can usually pick up where it left off.
+
+If a project's folder on the host is deleted, starting an agent there says so
+and how to fix it, rather than failing on the directory.
 
 Aft never stops a session on its own. `aft kill` does, and so does the
 application exiting.

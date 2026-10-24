@@ -68,7 +68,7 @@ stays on your machine, and typing feels local.
   machine that is also its own host never nests.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
-- `aft ssh`, `aft ls`, `aft attach`, `aft kill`, `aft status`,
+- `aft HOST`, `aft ls`, `aft attach`, `aft kill`, `aft status`,
   `aft doctor`, `aft host` (with `add`, `rm` and `use`), `aft agents add` and
   `aft tools add`.
 - Sessions over UDP, as mosh does: SSH introduces the two ends, then the
@@ -80,11 +80,21 @@ stays on your machine, and typing feels local.
 - Tools: `aft tools add git gh` makes those commands run once on the server,
   in the project's directory, wherever aft is on, with the terminal or pipes
   passed through and the exit code returned. Agents still run in sessions.
-- `aft ssh [HOST]`, a terminal on the server that survives disconnects with
-  predicted typing, comes back to the shell already open in the same
-  directory.
+- `aft HOST` (`aft server`, `aft mini`) is a terminal on that host that
+  survives disconnects, roams over UDP and predicts typing, and comes back to
+  the shell already open in the same directory; `aft HOST CMD` runs one
+  command there, as ssh does. A host not added yet is adopted the first time
+  SSH can reach it. Host names cannot be commands, so they never conflict.
+- Leaving says what happened, as ssh does: the program exited (with its code
+  or signal), the session was detached, or you left while disconnected. A
+  dropped connection shows a line across the top of the screen until it is
+  back.
+- A session that ends with no terminal attached keeps its last screen and how
+  it ended; `aft ls` lists it as exited or lost, and `aft attach` shows it.
+  Starting an agent in a project whose server folder is gone says so.
 - `aft on` is exactly the folder you are in, with no search for a project
-  root, and creates the server directory when it is missing.
+  root. A missing server folder is reported, not created, unless you name it
+  with `--dir`.
 - An unknown command, including a flag such as `--help`, names the command
   meant: commands are words, and flags, near spellings and retired names get
   a "did you mean aft help?" hint.
@@ -124,8 +134,9 @@ stays on your machine, and typing feels local.
 
 - `aft detach` (detaching follows the terminal), `aft clone` (`aft on` creates
   the directory; clone with git as a tool), `aft exec` (tools), `aft shell`
-  (now `aft ssh`), and `aft ports` and `aft use`, now part of `aft status` and
-  `aft host`.
+  (now `aft HOST`), and `aft ports` and `aft use`, now part of `aft status` and
+  `aft host`. The hidden local server command is now `aft __server`, so a host
+  can be called `server`.
 
 - Workspaces, project records, `connect`, `open`, `run`, port watch, systemd and
   launchd services, migration, the picker and the dry-run uninstall.

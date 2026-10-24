@@ -12,7 +12,11 @@ several â€” a `mini` under your desk, a `studio` on your network, a cloud box â€
 point each project at whichever you want.
 
 Hosts live in `~/.aft/config.toml`, each as a `[host.<name>]` table. The name is
-whatever you choose to type; the one required setting is `ssh`, the destination.
+whatever you choose to type, and `aft <name>` opens a terminal there (see
+[Sessions](sessions.md#a-terminal-on-a-host)). Any name works, `server` and
+`mini` included, except Aft's own command names. The one required setting is
+`ssh`, the destination. Typing `aft user@box` for a host you have not added
+adds it for you.
 
 ```toml
 [host.mini]

@@ -21,13 +21,16 @@ func ValidID(id string) bool { return idOK.MatchString(id) }
 
 // Start launches a detached session process for o and waits until its socket
 // accepts connections. server is the argv prefix that runs server
-// subcommands: the server binary alone, or the aft binary plus "server".
+// subcommands: the server binary alone, or the aft binary plus "__server".
 func Start(server []string, o Options) error {
 	if len(server) == 0 {
 		return fmt.Errorf("no server command")
 	}
 	if !ValidID(o.ID) {
 		return fmt.Errorf("invalid session id %q", o.ID)
+	}
+	if fi, err := os.Stat(o.Dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("the folder %s is gone on this host; recreate it there, or run aft on --dir PATH in the project to point it at another", o.Dir)
 	}
 	if err := home.Ensure(); err != nil {
 		return err

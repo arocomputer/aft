@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
@@ -26,7 +27,7 @@ var commands = []struct {
 		{"off", "", "run them locally again"},
 	}},
 	{"Sessions", [][3]string{
-		{"ssh", "[HOST]", "a terminal on the server that survives disconnects"},
+		{"HOST", "[CMD...]", "a terminal on that host that survives disconnects; CMD runs once"},
 		{"ls", "", "sessions on every host"},
 		{"attach", "[NAME]", "reattach to a session"},
 		{"kill", "NAME", "stop a session"},
@@ -55,10 +56,26 @@ var commands = []struct {
 var meant = map[string]string{
 	"list": "ls", "sessions": "ls", "ps": "ls",
 	"end": "kill", "stop": "kill", "rm": "kill",
-	"shell": "ssh", "connect": "ssh",
+	"ssh": "HOST", "shell": "HOST", "connect": "HOST", "server": "HOST",
 	"use": "host use", "hosts": "host",
 	"clone": "on", "ports": "status", "exec": "tools add", "run": "tools add",
 	"check": "doctor", "init": "setup", "install": "setup", "remove": "uninstall",
+}
+
+// isCommand reports whether name is one of aft's commands.
+func isCommand(name string) bool {
+	switch name {
+	case serverCommand, "selftest":
+		return true
+	}
+	for _, g := range commands {
+		for _, c := range g.cmds {
+			if strings.Fields(c[0])[0] == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // suggest returns the command someone probably meant by an unknown word, or
@@ -78,6 +95,9 @@ func suggest(word string) string {
 	for _, g := range commands {
 		for _, c := range g.cmds {
 			name := strings.Fields(c[0])[0]
+			if name == "HOST" {
+				continue // a placeholder, not a command
+			}
 			if name == w && w != word {
 				return name // --help, -version
 			}
@@ -121,6 +141,10 @@ func printUsage() {
 	}
 	fmt.Println("\n" + ui.Dim("In a project that is on, run claude, codex, opencode or pi exactly as before."))
 }
+
+// serverCommand runs the session server inside the aft binary, for sessions on
+// this machine (the host "local"). It cannot be a host's name.
+const serverCommand = transport.LocalServerCommand
 
 // version is set by the build.
 var version = "dev"
@@ -178,12 +202,12 @@ func run(cmd string, args []string) int {
 	case "version":
 		fmt.Println("aft", version)
 		return 0
-	case "server":
+	case serverCommand:
 		self, err := os.Executable()
 		if err != nil {
 			return fail(err)
 		}
-		return session.Main([]string{self, "server"}, args, os.Stdin, os.Stdout, os.Stderr)
+		return session.Main([]string{self, serverCommand}, args, os.Stdin, os.Stdout, os.Stderr)
 	case "setup":
 		return cmdSetup(args)
 	case "host":
@@ -192,8 +216,6 @@ func run(cmd string, args []string) int {
 		return cmdOn(args)
 	case "off":
 		return cmdOff(args)
-	case "ssh":
-		return cmdSSH(args)
 	case "ls":
 		return cmdLs(args)
 	case "attach":
@@ -215,8 +237,27 @@ func run(cmd string, args []string) int {
 	case "completion":
 		return cmdCompletion(args)
 	}
+	// aft HOST: a host you have, or one SSH can reach, which becomes one.
+	if cfg, err := config.Load(); err == nil {
+		if _, ok := cfg.Hosts[cmd]; ok || cmd == "local" {
+			h, _ := cfg.Host(cmd)
+			return cmdHostShell(cfg, h, args)
+		}
+		plainly := strings.Contains(cmd, "@")
+		if !strings.HasPrefix(cmd, "-") && (plainly || suggest(cmd) == "") {
+			if h, ok := adoptHost(&cfg, cmd, !plainly); ok {
+				return cmdHostShell(cfg, h, args)
+			}
+			if plainly {
+				return 1
+			}
+		}
+	}
 	ui.Error("unknown command %q", cmd)
 	if m := suggest(cmd); m != "" {
+		if cfg, err := config.Load(); m == "HOST" && err == nil && len(cfg.Hosts) == 1 {
+			m = cfg.HostNames()[0]
+		}
 		ui.Suggest("aft " + m)
 	} else {
 		ui.Hint("aft help lists the commands")

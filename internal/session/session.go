@@ -57,6 +57,8 @@ type Record struct {
 	// Attached is whether a terminal is showing the session. A detached session
 	// keeps running on the server with no terminal.
 	Attached bool `json:"attached,omitempty"`
+	// Ended is set on the remains of a session that ended unseen.
+	Ended *Ending `json:"ended,omitempty"`
 }
 
 // clientGone is how long an attached client that sends heartbeats may stay
@@ -164,6 +166,34 @@ type Session struct {
 
 	udpMu sync.Mutex
 	udp   *udp.Listener // opened on the first ReqUDP, closed when the session ends
+
+	dirty  bool // output arrived since the screen was last saved
+	killed bool // aft kill ended it, so it leaves no remains
+}
+
+// saveScreen keeps the screen as plain text, so it outlives the session.
+// The caller holds mu.
+func (s *Session) saveScreen() {
+	os.WriteFile(ScreenPath(s.opts.ID), []byte(screenText(s.term.Snapshot())), 0o600)
+	s.dirty = false
+}
+
+// keepScreen saves the screen every half minute while output changes it.
+func (s *Session) keepScreen() {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.exited:
+			return
+		case <-t.C:
+			s.mu.Lock()
+			if s.dirty {
+				s.saveScreen()
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 // Serve runs the session until the application exits. It is the body of the
@@ -214,6 +244,7 @@ func Serve(o Options) error {
 	go s.acceptClients(ln)
 	go s.acceptBridge(bln)
 	go s.pollListeners()
+	go s.keepScreen()
 
 	err = cmd.Wait()
 	s.exit = exitInfo(err)
@@ -224,10 +255,18 @@ func Serve(o Options) error {
 	}
 	s.udpMu.Unlock()
 	s.mu.Lock()
-	if s.cur != nil {
+	switch {
+	case s.cur != nil:
 		s.cur.sendJSON(proto.Exit, s.exit)
 		s.cur.close()
 		<-s.cur.done
+		ClearRemains(o.ID) // whoever was attached saw it end
+	case s.killed:
+		ClearRemains(o.ID)
+	default:
+		// It ended unseen: keep how, and its last screen, for aft ls and attach.
+		s.saveScreen()
+		leaveRemains(s.record, Ending{At: time.Now().UTC().Format(time.RFC3339), Code: s.exit.Code, Signal: s.exit.Signal})
 	}
 	s.mu.Unlock()
 	log.Printf("session %s: %s exited: %+v", o.ID, o.Command[0], s.exit)
@@ -308,6 +347,7 @@ func (s *Session) readPTY() {
 		if n > 0 {
 			s.mu.Lock()
 			s.term.Write(buf[:n])
+			s.dirty = true
 			if t := cleanTitle(s.term.Title()); t != s.record.Title {
 				s.record.Title = t
 				writeJSON(RecordPath(s.opts.ID), s.record)
@@ -439,6 +479,7 @@ done:
 		case <-s.exited: // the record is being removed; do not write it back
 		default:
 			writeJSON(RecordPath(s.opts.ID), s.record)
+			s.saveScreen()
 		}
 	}
 	s.mu.Unlock()
@@ -504,6 +545,9 @@ func (s *Session) resize(cols, rows int) {
 
 // end stops the application: hang up, then kill if it lingers.
 func (s *Session) end() {
+	s.mu.Lock()
+	s.killed = true
+	s.mu.Unlock()
 	pid := s.record.PID
 	syscall.Kill(-pid, syscall.SIGHUP)
 	go func() {
@@ -635,6 +679,10 @@ func List() ([]Record, error) {
 			continue
 		}
 		if syscall.Kill(r.Server, 0) != nil {
+			// Its server died without cleaning up, so how it ended is unknown.
+			if _, err := os.Stat(remainsPath(r.ID)); err != nil {
+				leaveRemains(r, Ending{At: time.Now().UTC().Format(time.RFC3339), Lost: true})
+			}
 			os.Remove(filepath.Join(home.Sessions(), e.Name()))
 			os.Remove(SocketPath(r.ID))
 			os.Remove(BridgePath(r.ID))

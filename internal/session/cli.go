@@ -43,10 +43,10 @@ var Version = "dev"
 
 // Main runs a server subcommand with stdio attached to the caller. prefix is
 // how to invoke server subcommands again from a child process: the server
-// binary by itself, or the aft binary followed by "server".
+// binary by itself, or the aft binary followed by "__server".
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|udp|setup|info|listeners|clipboard-put")
+		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|udp|remains|setup|info|listeners|clipboard-put")
 		return 2
 	}
 	self, err := os.Executable()
@@ -105,6 +105,25 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			udp.Offer
 		}{id, offer})
 		return 0
+	case "remains":
+		// Hand over what a session that ended unseen left, then forget it.
+		if len(args) != 2 || !ValidID(args[1]) {
+			fmt.Fprintln(stderr, "usage: server remains ID")
+			return 2
+		}
+		var r Record
+		b, err := os.ReadFile(remainsPath(args[1]))
+		if err != nil || json.Unmarshal(b, &r) != nil {
+			fmt.Fprintf(stderr, "no ended session %q\n", args[1])
+			return 1
+		}
+		screen, _ := os.ReadFile(ScreenPath(args[1]))
+		json.NewEncoder(stdout).Encode(struct {
+			Record
+			Screen string `json:"screen"`
+		}{r, string(screen)})
+		ClearRemains(args[1])
+		return 0
 	case "attach":
 		if len(args) != 2 || !ValidID(args[1]) {
 			fmt.Fprintln(stderr, "usage: server attach ID")
@@ -116,6 +135,9 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
+		}
+		if len(args) > 1 && args[1] == "--all" {
+			list = append(list, Remains()...) // and sessions that ended unseen
 		}
 		if list == nil {
 			list = []Record{}
@@ -141,6 +163,10 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			if !ValidID(id) {
 				fmt.Fprintf(stderr, "invalid session id %q\n", id)
 				code = 2
+				continue
+			}
+			if _, err := os.Stat(remainsPath(id)); err == nil {
+				ClearRemains(id) // it already ended; kill just forgets it
 				continue
 			}
 			if err := Control(id, proto.End); err != nil {

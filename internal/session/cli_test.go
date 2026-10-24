@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -274,5 +275,31 @@ func TestUDPReattach(t *testing.T) {
 		}
 		c.collect(t, "mark-udp")
 		// No Detach frame: the next dial must take over regardless.
+	}
+}
+
+// TestEndingUnseenLeavesRemains lets a session exit with no one attached: it
+// leaves its exit code and last screen, and remains hands them over once.
+func TestEndingUnseenLeavesRemains(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := Options{ID: "t-gone", Command: []string{"sh", "-c", `printf 'last words\n'; sleep 0.3; exit 3`}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	var r []Record
+	for deadline := time.Now().Add(5 * time.Second); len(r) == 0 && time.Now().Before(deadline); {
+		time.Sleep(50 * time.Millisecond)
+		r = Remains()
+	}
+	if len(r) != 1 || r[0].Ended == nil || r[0].Ended.Code != 3 {
+		t.Fatalf("remains: %+v", r)
+	}
+	var out strings.Builder
+	if code := Main([]string{self}, []string{"remains", "t-gone"}, nil, &out, io.Discard); code != 0 || !strings.Contains(out.String(), "last words") {
+		t.Fatalf("remains printed %q (exit %d)", out.String(), code)
+	}
+	if len(Remains()) != 0 {
+		t.Fatal("remains were not cleared after being shown")
 	}
 }

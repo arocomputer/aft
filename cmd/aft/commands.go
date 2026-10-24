@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -211,6 +212,9 @@ func cmdHost(args []string) int {
 			return 2
 		}
 		name, dest := args[0], args[1]
+		if err := checkHostName(name); err != nil {
+			return fail(err)
+		}
 		if _, ok := cfg.Hosts[name]; ok {
 			return fail(fmt.Errorf("host %q already exists; remove it first or edit config.toml", name))
 		}
@@ -313,10 +317,11 @@ func agentsIn(m map[string]string) []string {
 func cmdOn(args []string) int {
 	fs := flags("on")
 	hostName := fs.String("host", "", "host name from aft setup")
-	dir := fs.String("dir", "", "directory on the server (default: same path relative to home)")
+	dir := fs.String("dir", "", "directory on the server, created if missing (default: same path relative to home)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	named := *dir != "" // a folder the user named is one they want
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fail(err)
@@ -383,6 +388,11 @@ func cmdOn(args []string) int {
 		if mounted {
 			return fail(fmt.Errorf("the mount maps to %s on %s, but that path is missing; check aft mount list", *dir, h.Name))
 		}
+		if !named {
+			ui.Error("%s does not exist on %s", *dir, h.Name)
+			ui.Hint("aft on --dir %s creates it, or name the folder this project lives in there", *dir)
+			return 1
+		}
 		if _, err := transport.RunRaw(h, nil, "mkdir -p "+transport.Quote(*dir)); err != nil {
 			return fail(fmt.Errorf("could not create %s on %s: %w", *dir, h.Name, err))
 		}
@@ -429,46 +439,42 @@ func cmdOff(args []string) int {
 	return 0
 }
 
-// shellCommand is the session command behind aft ssh: the user's login shell.
+// shellCommand is the session command behind aft HOST: the user's login shell.
 var shellCommand = []string{"sh", "-c", `exec "${SHELL:-/bin/sh}" -l`}
 
-// cmdSSH opens a login shell on a host in a session, or reattaches to the one
-// already open in this directory: like ssh, but it survives disconnects and
-// typing is predicted. With no host it uses the project's, or the default.
-func cmdSSH(args []string) int {
-	if len(args) > 1 {
-		fmt.Fprintln(os.Stderr, "usage: aft ssh [HOST]")
-		return 2
-	}
-	hostName := new(string)
-	if len(args) == 1 {
-		*hostName = args[0]
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return fail(err)
-	}
+// cmdHostShell is aft HOST: a login shell on h in a session, or, given a
+// command, that command run there once, as ssh HOST CMD does. The shell is
+// like ssh but survives disconnects, roams over UDP and predicts typing. It
+// starts in the project's directory when this project is on for h, and comes
+// back to the shell already open there.
+func cmdHostShell(cfg config.Config, h transport.Host, args []string) int {
 	st, _ := config.LoadState()
 	cwd, _ := os.Getwd()
 	root, p, on := st.FindProject(cwd)
-	if *hostName == "" && on {
-		*hostName = p.Host
+	on = on && p.Host == h.Name
+	dir := ""
+	if on {
+		dir = config.RemoteDir(root, p, cwd)
 	}
-	h, err := cfg.Host(*hostName)
-	if err != nil {
-		return fail(err)
+	if len(args) > 0 {
+		if h.IsLocal() && dir == "" {
+			dir = cwd
+		}
+		return launcher.RunTool(h, dir, nil, args)
 	}
-	opts, err := launcher.SessionOptions(cfg, *hostName, root, p)
+	if !on {
+		root, p = "", config.Project{}
+	}
+	opts, err := launcher.SessionOptions(cfg, h.Name, root, p)
 	if err != nil {
 		return fail(err)
 	}
 	opts.Host = h
 	opts.Command = shellCommand
-	if on {
-		opts.Dir = config.RemoteDir(root, p, cwd)
-	} else if h.IsLocal() {
+	opts.Dir = dir
+	if dir == "" && h.IsLocal() {
 		opts.Dir, _ = os.UserHomeDir()
-	} else {
+	} else if dir == "" {
 		if err := connect(h); err != nil {
 			return fail(err)
 		}
@@ -485,6 +491,63 @@ func cmdSSH(args []string) int {
 	return terminal.Run(opts)
 }
 
+// hostName is what a host may be called: a word aft HOST can open, so never a
+// command, a name aft points to a command, or the hidden server command.
+var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
+
+// checkHostName says why name cannot name a host, or nil.
+func checkHostName(name string) error {
+	if !hostName.MatchString(name) {
+		return fmt.Errorf("a host name is letters, digits, dots and dashes: %q", name)
+	}
+	if isCommand(name) || meant[name] != "" {
+		return fmt.Errorf("%q is an aft command, so aft %s could not open it; pick another name", name, name)
+	}
+	return nil
+}
+
+// adoptHost makes dest a host the first time someone types aft DEST: it checks
+// SSH can reach it, saves it under a short name, and installs the server.
+// probe skips the check when dest plainly is a destination (user@host).
+func adoptHost(cfg *config.Config, dest string, probe bool) (transport.Host, bool) {
+	if probe {
+		reached := ui.Spin("Looking for a host called "+dest, func() error {
+			return exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", dest, "true").Run()
+		}) == nil
+		if !reached {
+			return transport.Host{}, false
+		}
+	}
+	name := dest
+	if _, after, ok := strings.Cut(name, "@"); ok {
+		name = after
+	}
+	if name, _, _ = strings.Cut(name, "."); checkHostName(name) != nil {
+		name = strings.NewReplacer("@", "-", ".", "-").Replace(dest)
+	}
+	if _, taken := cfg.Hosts[name]; taken || checkHostName(name) != nil {
+		ui.Error("could not pick a name for %s", dest)
+		ui.Hint("aft host add NAME %s", dest)
+		return transport.Host{}, false
+	}
+	cfg.Hosts[name] = config.HostConfig{SSH: dest}
+	if err := config.Save(*cfg); err != nil {
+		fail(err)
+		return transport.Host{}, false
+	}
+	ui.Note("added %s as host %s; aft %s opens it from now on", dest, ui.Bold(name), name)
+	h, _ := cfg.Host(name)
+	if err := connect(h); err != nil {
+		fail(err)
+		return transport.Host{}, false
+	}
+	if _, err := ensureServer(h); err != nil {
+		fail(err)
+		return transport.Host{}, false
+	}
+	return h, true
+}
+
 type hostSessions struct {
 	host transport.Host
 	list []session.Record
@@ -495,7 +558,8 @@ type hostSessions struct {
 // terminal where no connection is open, behind a spinner.
 func allSessions(cfg config.Config) []hostSessions {
 	var out []hostSessions
-	if list, _ := session.List(); len(list) > 0 {
+	list, _ := session.List()
+	if list = append(list, session.Remains()...); len(list) > 0 {
 		out = append(out, hostSessions{host: transport.Local, list: list})
 	}
 	names := cfg.HostNames()
@@ -516,7 +580,7 @@ func allSessions(cfg config.Config) []hostSessions {
 					hs.err = transport.EnsureMasterBatch(h)
 				}
 				if hs.err == nil {
-					raw, err := transport.Output(h, nil, "ls")
+					raw, err := transport.Output(h, nil, "ls", "--all")
 					if hs.err = err; err == nil {
 						json.Unmarshal(raw, &hs.list)
 					}
@@ -546,7 +610,7 @@ func describe(r session.Record) string {
 		name = filepath.Base(r.Command[0])
 	}
 	if strings.Join(r.Command, " ") == strings.Join(shellCommand, " ") {
-		name = "shell" // aft ssh's login-shell wrapper
+		name = "shell" // aft HOST's login-shell wrapper
 	}
 	for _, a := range config.DefaultAgents {
 		if name == a {
@@ -562,6 +626,14 @@ func describe(r session.Record) string {
 
 // state says whether a terminal is showing the session, or it runs on with none.
 func state(r session.Record) string {
+	switch e := r.Ended; {
+	case e != nil && e.Lost:
+		return ui.Mark("fix") + " lost"
+	case e != nil && (e.Code != 0 || e.Signal != ""):
+		return ui.Mark("warn") + fmt.Sprintf(" exited %d", e.Code)
+	case e != nil:
+		return ui.Dim("exited")
+	}
 	if r.Attached {
 		return ui.Accent("attached")
 	}
@@ -586,7 +658,8 @@ func cmdLs(args []string) int {
 	var rows [][]string
 	var failed []hostSessions
 	last := ""
-	for _, hs := range allSessions(cfg) {
+	allSeen := allSessions(cfg)
+	for _, hs := range allSeen {
 		if hs.err != nil {
 			failed = append(failed, hs)
 			continue
@@ -600,9 +673,18 @@ func cmdLs(args []string) int {
 		fmt.Println(ui.Dim("No sessions."))
 	} else {
 		ui.Table([]string{"SESSION", "STATE", "HOST", "DIRECTORY", "STARTED"}, rows)
-		if len(rows) == 1 {
+		ended := false
+		for _, hs := range allSeen {
+			for _, r := range hs.list {
+				ended = ended || r.Ended != nil
+			}
+		}
+		switch {
+		case ended:
+			ui.Hint("aft attach NAME reattaches, or shows how an ended session finished")
+		case len(rows) == 1:
 			ui.Hint("aft attach %s", last)
-		} else {
+		default:
 			ui.Hint("aft attach NAME")
 		}
 	}
@@ -614,15 +696,58 @@ func cmdLs(args []string) int {
 }
 
 // findSession locates a session id across hosts.
-func findSession(cfg config.Config, id string) (transport.Host, error) {
+func findSession(cfg config.Config, id string) (transport.Host, session.Record, error) {
 	for _, hs := range allSessions(cfg) {
 		for _, r := range hs.list {
 			if r.ID == id {
-				return hs.host, nil
+				return hs.host, r, nil
 			}
 		}
 	}
-	return transport.Host{}, fmt.Errorf("no session %q on any connected host", id)
+	return transport.Host{}, session.Record{}, fmt.Errorf("no session called %q on your hosts", id)
+}
+
+// showRemains prints what a session that ended unseen left, its last screen
+// and how it ended, then forgets it: attaching to it is how you find out.
+func showRemains(h transport.Host, r session.Record) int {
+	raw, err := transport.Output(h, nil, "remains", r.ID)
+	if err != nil {
+		return fail(err)
+	}
+	var got struct {
+		session.Record
+		Screen string `json:"screen"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return fail(err)
+	}
+	if got.Screen != "" {
+		fmt.Println(ui.Dim("── the last screen of " + r.ID + " ──"))
+		fmt.Print(got.Screen)
+		fmt.Println(ui.Dim("──"))
+	}
+	e := got.Ended
+	how := "exited"
+	switch {
+	case e == nil:
+	case e.Lost:
+		how = "was lost when its server stopped"
+	case e.Signal != "":
+		how = "was ended by signal " + e.Signal
+	case e.Code != 0:
+		how = fmt.Sprintf("exited with code %d", e.Code)
+	}
+	when := ""
+	if e != nil {
+		if t, err := time.Parse(time.RFC3339, e.At); err == nil {
+			when = " " + ui.Ago(t)
+		}
+	}
+	ui.Warn("%s (%s) on %s %s%s, with no terminal attached", r.ID, ansi.Strip(describe(r)), h.Name, how, when)
+	if len(r.Command) > 0 {
+		ui.Hint("run %s again in %s to start over; many agents can resume their last conversation", filepath.Base(r.Command[0]), ui.Path(r.Dir))
+	}
+	return 0
 }
 
 // cmdAttach reattaches to a session.
@@ -638,6 +763,7 @@ func cmdAttach(args []string) int {
 	}
 	id := fs.Arg(0)
 	var h transport.Host
+	var rec session.Record
 	if id == "" {
 		all := allSessions(cfg)
 		var found []struct {
@@ -670,17 +796,22 @@ func cmdAttach(args []string) int {
 			i := ui.Choose("Attach to which session?", opts, 0)
 			found = found[i : i+1]
 		}
-		h, id = found[0].h, found[0].r.ID
+		h, id, rec = found[0].h, found[0].r.ID, found[0].r
 	} else if *hostName != "" {
 		h, err = cfg.Host(*hostName)
 		if err != nil {
 			return fail(err)
 		}
 	} else {
-		h, err = findSession(cfg, id)
+		h, rec, err = findSession(cfg, id)
 		if err != nil {
-			return fail(err)
+			ui.Error("%v", err)
+			ui.Hint("aft ls lists them")
+			return 1
 		}
+	}
+	if rec.Ended != nil {
+		return showRemains(h, rec)
 	}
 	opts, err := launcher.SessionOptions(cfg, h.Name, "", config.Project{})
 	if err != nil {
@@ -708,7 +839,7 @@ func cmdKill(args []string) int {
 	if *hostName != "" {
 		h, err = cfg.Host(*hostName)
 	} else {
-		h, err = findSession(cfg, id)
+		h, _, err = findSession(cfg, id)
 	}
 	if err != nil {
 		return fail(err)
@@ -1198,7 +1329,7 @@ func cmdCompletion(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: aft completion bash|zsh|fish")
 		return 2
 	}
-	words := "setup on off ssh ls attach kill host mount status doctor agents tools uninstall completion version help"
+	words := "setup on off ls attach kill host mount status doctor agents tools uninstall completion version help"
 	switch args[0] {
 	case "bash":
 		fmt.Printf("_aft() { COMPREPLY=( $(compgen -W '%s' -- \"${COMP_WORDS[COMP_CWORD]}\") ); }\ncomplete -F _aft aft\n", words)

@@ -268,6 +268,10 @@ func Output(h Host, stdin io.Reader, args ...string) ([]byte, error) {
 	return out, nil
 }
 
+// LocalServerCommand is the hidden aft subcommand that runs the session server
+// on this machine. Its underscores keep it apart from every host name.
+const LocalServerCommand = "__server"
+
 // serverCommand builds the command that runs a server subcommand on the host.
 func serverCommand(h Host, args []string) (*exec.Cmd, error) {
 	if h.IsLocal() {
@@ -275,7 +279,7 @@ func serverCommand(h Host, args []string) (*exec.Cmd, error) {
 		if err != nil {
 			return nil, err
 		}
-		return exec.Command(self, append([]string{"server"}, args...)...), nil
+		return exec.Command(self, append([]string{LocalServerCommand}, args...)...), nil
 	}
 	remote := RemotePrefix() + RemoteServer() + " " + shellJoin(args)
 	return exec.Command("ssh", append(sshArgs(h, true, "-T"), remote)...), nil
