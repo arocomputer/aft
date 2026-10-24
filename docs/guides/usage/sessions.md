@@ -44,7 +44,8 @@ terminal, so colors, mouse, hyperlinks, images and the keyboard protocol behind
 keys such as Shift+Enter work exactly as they would locally. It keeps a shadow
 of the screen, and when you type a printable character or Backspace it draws
 the expected result at the caret immediately, then confirms it against the
-server's echo. Wrong guesses are repainted and prediction pauses until echoes
+server's echo. Backspace is predicted only over characters you typed, so a
+prompt or anything else the application drew is never erased ahead of it. Wrong guesses are repainted and prediction pauses until echoes
 match again. Enter, arrow keys, control keys and pastes are never predicted, so
 menus and the agent's reply arrive at network speed, which is dominated by
 model time anyway. `predict = false` in the config turns prediction off.

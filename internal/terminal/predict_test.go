@@ -289,12 +289,14 @@ func TestExpiryLeavesCursorInPlace(t *testing.T) {
 }
 
 // TestBackspaceLeavesCursorOnErasedCell keeps the cursor where the next
-// character goes after a predicted Backspace, both when it erases a server
-// character and when it takes back a prediction.
+// character goes after a predicted Backspace, both when it erases a typed
+// character the server has echoed and when it takes back a prediction.
 func TestBackspaceLeavesCursorOnErasedCell(t *testing.T) {
 	var out bytes.Buffer
 	p := NewPredictor(40, 5, &out, true)
-	p.Output([]byte("\x1b[1;1H> abc"))
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "abc")
+	p.Output([]byte("abc"))
 	p.Key(Token{Kind: TokBackspace})
 	if s := screenOf(&out, 40, 5); s.Line(0) != "> ab" || s.Cursor().Col != 4 {
 		t.Fatalf("erasing: %q cursor col %d, want 4", s.Line(0), s.Cursor().Col)
@@ -334,13 +336,15 @@ func TestNonEchoingKeyIsAMisprediction(t *testing.T) {
 	}
 }
 
-// TestErasedSpaceWaitsForTheServer presses Backspace over a space, then the
-// app redraws something else before handling the key: the erase stays in
-// flight, so the next key goes where the space was.
+// TestErasedSpaceWaitsForTheServer presses Backspace over a typed space,
+// then the app redraws something else before handling the key: the erase
+// stays in flight, so the next key goes where the space was.
 func TestErasedSpaceWaitsForTheServer(t *testing.T) {
 	var out bytes.Buffer
 	p := NewPredictor(40, 5, &out, true)
-	p.Output([]byte("\x1b[1;1H> hi "))
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "hi ")
+	p.Output([]byte("hi "))
 	p.Key(Token{Kind: TokBackspace})
 	p.Output([]byte("\x1b[3;1Hstatus\x1b[1;6H"))
 	typeKeys(p, "x")
@@ -414,5 +418,27 @@ func TestNoticeOnTheWrappingRow(t *testing.T) {
 	p.Output([]byte("X"))
 	if s := screenOf(&out, 10, 5); s.Line(1) != "X" {
 		t.Fatalf("second row %q, want X", s.Line(1))
+	}
+}
+
+// TestBackspaceEraseOnlyWhatWasTyped presses Backspace at an empty prompt:
+// the prompt is the application's, so nothing is predicted and it stays.
+// Once characters have been typed, Backspace is predicted over them, and
+// only as many of them as were typed.
+func TestBackspaceErasesOnlyWhatWasTyped(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	p.Key(Token{Kind: TokBackspace})
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" {
+		t.Fatalf("the prompt was erased: %q", s.Line(0))
+	}
+	typeKeys(p, "ab")
+	p.Output([]byte("ab")) // echoed
+	for i := 0; i < 3; i++ {
+		p.Key(Token{Kind: TokBackspace})
+	}
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" || s.Cursor().Col != 2 {
+		t.Fatalf("after three Backspaces over two typed characters: %q cursor col %d", s.Line(0), s.Cursor().Col)
 	}
 }

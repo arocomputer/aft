@@ -151,6 +151,8 @@ stays on your machine, and typing feels local.
 - A client never replaces a newer server with its own older build; builds are
   ordered by commit time, and `aft doctor` says when the server is the newer
   one. The install check is one round trip.
+- Backspace is predicted only over characters you typed: at an empty prompt
+  it no longer erases the prompt before the application answers.
 - `aft completion` completes hosts and session names, not just commands.
   `aft ls` with nothing running says how to start one, `aft` alone on a fresh
   install says to run `aft setup`, and `aft doctor` sees launchers put on PATH

@@ -47,6 +47,11 @@ type Predictor struct {
 	caretValid bool
 	caretRow   int
 	caretCol   int
+	// typed counts the characters typed since the last key whose effect was
+	// unforeseeable. A Backspace is predicted only over one of them: what is
+	// left of the caret otherwise, such as a prompt, may be nothing the
+	// application would erase.
+	typed int
 
 	onClip func([]byte)
 }
@@ -146,6 +151,7 @@ func (p *Predictor) Key(t Token) {
 	default:
 		// Anything else may move the caret in ways we cannot foresee.
 		p.caretValid = false
+		p.typed = 0
 	}
 }
 
@@ -202,6 +208,7 @@ func (p *Predictor) predictText(r rune, now time.Time) {
 	if cell.Width == 0 {
 		return
 	}
+	p.typed++
 	pred := prediction{row: row, col: col, r: r, gen: p.shadow.Gen(), at: now, drawn: p.confident}
 	if p.confident {
 		attr := cell.Attr
@@ -242,10 +249,12 @@ func (p *Predictor) predictText(r rune, now time.Time) {
 }
 
 func (p *Predictor) predictBackspace(now time.Time) {
-	if !p.confident || !p.shadow.InGround() {
+	if !p.confident || !p.shadow.InGround() || p.typed == 0 {
 		p.caretValid = false
+		p.typed = 0
 		return
 	}
+	p.typed--
 	// Undo the most recent unconfirmed prediction if there is one on this row.
 	if n := len(p.pending); n > 0 && p.pending[n-1].drawn && p.caretValid && p.pending[n-1].row == p.caretRow && p.pending[n-1].col == p.caretCol-1 {
 		last := p.pending[n-1]
