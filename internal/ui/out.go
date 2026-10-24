@@ -111,12 +111,12 @@ func Path(p string) string {
 	return p
 }
 
-// Ago renders how long ago t was, coarsely: "now", "5m", "3h", "2d".
+// Ago renders how long ago t was, coarsely: "just now", "5m ago", "3h ago".
 func Ago(t time.Time) string {
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:
-		return "now"
+		return "just now"
 	case d < time.Hour:
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))
 	case d < 48*time.Hour:
