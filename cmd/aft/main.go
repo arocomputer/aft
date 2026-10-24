@@ -154,9 +154,6 @@ func main() {
 	if base == home.ServerName {
 		os.Exit(serverMain(os.Args[1:]))
 	}
-	if home.Migrate() {
-		moveShellBlocks()
-	}
 	// Invoked under an agent's name (via a launcher symlink), run that agent
 	// on the server; invoked as aft (or a dev build whose name starts with
 	// "aft"), act as the CLI.
@@ -168,30 +165,6 @@ func main() {
 		os.Exit(0)
 	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
-}
-
-// moveShellBlocks points the PATH line at the launchers' new home and tells
-// you about any line it could not change. Remove it with home.Migrate.
-func moveShellBlocks() {
-	st, err := config.LoadState()
-	if err != nil {
-		return
-	}
-	kept := launcher.MoveShellBlocks(&st)
-	config.SaveState(st)
-	ui.Note("launchers moved to %s; open a new shell to use them", ui.Path(home.Launchers()))
-	if len(st.ShellBlocks) == 0 || len(kept) > 0 {
-		ui.Warn("put this first on your PATH instead of $HOME/.aft/launchers%s:", inFiles(kept))
-		fmt.Fprintf(os.Stderr, "    export PATH=\"%s:$PATH\"\n", launcher.PathDir)
-	}
-}
-
-// inFiles names the files a shell block was found edited in, for a message.
-func inFiles(files []string) string {
-	if len(files) == 0 {
-		return ""
-	}
-	return " in " + strings.Join(files, ", ")
 }
 
 func run(cmd string, args []string) int {

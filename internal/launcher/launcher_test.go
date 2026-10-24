@@ -101,22 +101,6 @@ func TestEnvironmentAllowlist(t *testing.T) {
 	}
 }
 
-// TestMoveShellBlocks rewrites a recorded block that names the old launchers
-// directory, keeping the rest of the file.
-func TestMoveShellBlocks(t *testing.T) {
-	rc := filepath.Join(t.TempDir(), ".zshrc")
-	old := blockStart + "\nexport PATH=\"$HOME/.aft/launchers:$PATH\"\n" + blockEnd + "\n"
-	os.WriteFile(rc, []byte("alias ll='ls -l'\n\n"+old), 0o644)
-	st := config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: old}}}
-	if kept := MoveShellBlocks(&st); len(kept) != 0 {
-		t.Fatalf("kept %v", kept)
-	}
-	got, _ := os.ReadFile(rc)
-	if string(got) != "alias ll='ls -l'\n\n"+Block() || st.ShellBlocks[0].Block != Block() {
-		t.Fatalf("not moved:\n%s", got)
-	}
-}
-
 // TestServerPathFollowsMounts names a pasted file on this host's mount, also
 // through a symlink to the mount, and not one under a more specific mount of
 // another host, since that file lives there.

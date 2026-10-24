@@ -262,30 +262,6 @@ func FishBlock() string {
 	return blockStart + "\nfish_add_path --prepend --move " + PathDir + "\n" + blockEnd + "\n"
 }
 
-// MoveShellBlocks rewrites each recorded block to the current PATH line, after
-// home.Migrate moved the launchers. It returns the files whose block was
-// edited by hand and still needs the new line. Remove it with home.Migrate.
-func MoveShellBlocks(st *config.State) (kept []string) {
-	for i, b := range st.ShellBlocks {
-		want := Block()
-		if filepath.Base(b.File) == "aft.fish" {
-			want = FishBlock()
-		}
-		existing, err := os.ReadFile(b.File)
-		if b.Block == want || err != nil {
-			continue
-		}
-		if !strings.Contains(string(existing), b.Block) {
-			kept = append(kept, b.File)
-			continue
-		}
-		if os.WriteFile(b.File, []byte(strings.Replace(string(existing), b.Block, want, 1)), 0o644) == nil {
-			st.ShellBlocks[i].Block = want
-		}
-	}
-	return kept
-}
-
 // ShellFiles returns the config files Aft should put the block in, based on
 // the shells present for this user.
 func ShellFiles() (posix []string, fish string) {

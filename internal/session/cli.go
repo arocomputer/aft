@@ -318,7 +318,6 @@ func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 // Setup prepares a host for sessions: the directory layout and the bridge
 // shims. self is the installed server binary, which the shims point at.
 func Setup(self string) error {
-	home.Migrate()
 	if err := home.Ensure(); err != nil {
 		return err
 	}

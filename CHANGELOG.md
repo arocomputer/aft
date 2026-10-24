@@ -59,9 +59,7 @@ stays on your machine, and typing feels local.
   system paths stay text, and Ctrl-C cancels an upload.
 - Aft keeps what you read or edit (config, state, logs) in `~/.aft` and its
   plumbing (server, shims, launchers, sessions, sockets) in
-  `~/.local/share/aft`, on macOS and Linux alike. An older install moves
-  itself on first run, sessions keep running across the move, and the PATH
-  block Aft added is rewritten.
+  `~/.local/share/aft`, on macOS and Linux alike.
 - One look across every command: colored marks (✓ ! ✗) that never rely on
   color alone, aligned tables, short `~` paths and relative times. Slow steps
   show a spinner on stderr, and `aft doctor` shows each check as it finishes
