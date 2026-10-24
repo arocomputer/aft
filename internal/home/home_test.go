@@ -8,8 +8,9 @@ import (
 )
 
 // TestMigrateKeepsLiveSessions moves an older layout out of ~/.aft while a
-// session is listening: the socket still answers at both paths, config stays,
-// and the links in ~/.aft go once no session is left.
+// session is listening: the socket still answers at both paths, the server and
+// its shims move, config stays, and the links in ~/.aft go once no session is
+// left.
 func TestMigrateKeepsLiveSessions(t *testing.T) {
 	h, _ := os.MkdirTemp("", "aft") // short: unix socket paths are limited
 	t.Cleanup(func() { os.RemoveAll(h) })
@@ -38,8 +39,11 @@ func TestMigrateKeepsLiveSessions(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(old, "config.toml")); err != nil {
 		t.Fatal("config moved:", err)
 	}
-	if _, err := os.Lstat(filepath.Join(old, "server")); err == nil {
-		t.Fatal("old server left behind")
+	if dst, _ := os.Readlink(filepath.Join(Shims(), "pbpaste")); dst != Server() {
+		t.Fatalf("shim points at %q, want the moved server", dst)
+	}
+	if _, err := os.Stat(filepath.Join(old, "server")); err != nil {
+		t.Fatal("old server path no longer reaches the server:", err)
 	}
 	for _, p := range []string{filepath.Join(Sockets(), "s1.sock"), filepath.Join(old, "sockets", "s1.sock")} {
 		c, err := net.Dial("unix", p)
@@ -53,7 +57,7 @@ func TestMigrateKeepsLiveSessions(t *testing.T) {
 	if Migrate() {
 		t.Fatal("moved launchers twice")
 	}
-	for _, n := range []string{"shims", "sessions", "sockets"} {
+	for _, n := range []string{"server", "shims", "sessions", "sockets"} {
 		if _, err := os.Lstat(filepath.Join(old, n)); err == nil {
 			t.Fatalf("%s link left after the last session ended", n)
 		}

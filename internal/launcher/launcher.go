@@ -25,8 +25,12 @@ import (
 // PassEnv are variables that always cross to the server.
 var PassEnv = []string{"TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "LANG", "LC_ALL", "LC_CTYPE"}
 
-// Launch runs when aft is invoked through a shim named after an agent.
+// Launch runs when aft is invoked through a shim named after an agent. Inside
+// a session it always runs the real program, so a session never nests.
 func Launch(name string, args []string) int {
+	if os.Getenv("AFT_SESSION") != "" {
+		return execReal(name, args)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return execReal(name, args)

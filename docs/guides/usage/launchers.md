@@ -11,7 +11,8 @@ order: 2
 a project that is on. If so, it starts `claude` on that project's server, in
 the matching directory, passing your arguments through literally. If not, it
 runs the real local `claude`, found on `PATH` after the shim directory, and
-adds a few milliseconds.
+adds a few milliseconds. Inside an Aft session it always runs the real program,
+so a session never starts another one.
 
 So `aft on` and `aft off` take effect on the next launch, without restarting
 anything, and the launchers are safe to leave installed everywhere. Agents are

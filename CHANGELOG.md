@@ -53,6 +53,8 @@ stays on your machine, and typing feels local.
   `~/.local/share/aft`, on macOS and Linux alike. An older install moves
   itself on first run, sessions keep running across the move, and the PATH
   block Aft added is rewritten.
+- Launchers run the real program inside an Aft session, so a session on a
+  machine that is also its own host never nests.
 - Listening ports on the server are mirrored to the local loopback while
   attached.
 - `aft shell`, `aft ls`, `aft attach`, `aft detach`, `aft end`, `aft clone`,

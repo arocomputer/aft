@@ -177,8 +177,9 @@ func Ensure() error {
 // Migrate moves the plumbing an older Aft kept in Dir into Data, and reports
 // whether it moved launchers, whose PATH line in the shell config must follow.
 // A listening socket survives a rename, so live sessions keep working; their
-// processes still use the old shims, sockets and sessions paths, so links are
-// left there until no session is running, and a later Migrate removes them.
+// processes and older clients still use the old server, shims, sockets and
+// sessions paths, so links are left there until no session is running, and a
+// later Migrate removes them. The shims are rebuilt for the moved server.
 // It is safe to call on every start. Remove it once no installation predates
 // Data.
 func Migrate() (launchers bool) {
@@ -194,7 +195,11 @@ func Migrate() (launchers bool) {
 			continue
 		}
 		if !fi.IsDir() {
-			os.Remove(src) // the old server binary; the new one is installed in Data
+			// The server binary: keep it running sessions until a newer one is
+			// installed over it.
+			if _, err := os.Lstat(dst); err == nil || os.MkdirAll(Data(), 0o700) != nil || os.Rename(src, dst) != nil {
+				os.Remove(src)
+			}
 			continue
 		}
 		entries, _ := os.ReadDir(src)
@@ -210,7 +215,10 @@ func Migrate() (launchers bool) {
 		}
 		os.RemoveAll(src)
 	}
-	links := []string{"shims", "sessions", "sockets"}
+	if _, err := os.Stat(Server()); err == nil {
+		InstallShims(Server())
+	}
+	links := []string{"server", "shims", "sessions", "sockets"}
 	if busy {
 		for _, n := range links {
 			os.Symlink(filepath.Join(Data(), n), filepath.Join(old, n))
