@@ -56,8 +56,9 @@ func connect(h transport.Host) error {
 	}
 	l := ui.Start("Connecting to "+h.Name, 0)
 	defer l.Stop()
-	if transport.EnsureMasterBatch(h) == nil {
-		return nil
+	err := transport.EnsureMasterBatch(h)
+	if err == nil || !transport.NeedsTerminal(err) {
+		return err
 	}
 	l.Pause()
 	defer l.Resume()
@@ -1110,14 +1111,14 @@ func cmdDoctor(args []string) int {
 		h, _ := cfg.Host(n)
 		d.step("Connecting to " + n)
 		err := transport.EnsureMasterBatch(h)
-		if err != nil && d.live != nil {
+		if transport.NeedsTerminal(err) && d.live != nil {
 			// SSH may need the terminal for a passphrase or a new host key.
 			d.live.Pause()
 			err = transport.EnsureMaster(h)
 			d.live.Resume()
 		}
 		if err != nil {
-			d.bad("cannot connect ("+h.SSH+")", err.Error())
+			d.bad("cannot connect ("+h.SSH+")", ansi.Strip(err.Error())+"; is it on and online?")
 			if d.live != nil {
 				d.live.Advance()
 				d.live.Advance()
