@@ -103,12 +103,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		var gone notRunning
 		if errors.As(err, &gone) && !started {
 			// Say so plainly, so the client stops instead of trying SSH.
-			_, statErr := os.Stat(remainsPath(id))
 			json.NewEncoder(stdout).Encode(struct {
 				ID      string `json:"id"`
 				Gone    bool   `json:"gone"`
 				Remains bool   `json:"remains"`
-			}{id, true, statErr == nil})
+			}{id, true, hasRemains(id)})
 			return 0
 		}
 		if err != nil && !started {
@@ -183,7 +182,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				continue
 			}
 			if _, err := Load(id); err != nil {
-				if _, err := os.Stat(remainsPath(id)); err == nil {
+				if hasRemains(id) {
 					ClearRemains(id) // it already ended; kill just forgets it
 					continue
 				}

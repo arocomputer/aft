@@ -819,6 +819,16 @@ func cmdAttach(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		// Look the session up there too, so an ended one shows what it left.
+		if raw, err := transport.Output(h, nil, "ls", "--all"); err == nil {
+			var list []session.Record
+			json.Unmarshal(raw, &list)
+			for _, r := range list {
+				if r.ID == id {
+					rec = r
+				}
+			}
+		}
 	} else {
 		h, rec, err = findSession(cfg, id)
 		if err != nil {
