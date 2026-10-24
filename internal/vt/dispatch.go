@@ -404,15 +404,16 @@ func (t *Terminal) csiKitty(private byte, params [][]int, inter []byte, final by
 // sgr applies character attributes.
 func (t *Terminal) sgr(params [][]int) {
 	a := &t.cur.Attr
+	// A hyperlink is not a character attribute: SGR 0 leaves it in place.
 	if len(params) == 0 {
-		*a = Attr{}
+		*a = Attr{Link: a.Link}
 		return
 	}
 	for i := 0; i < len(params); i++ {
 		p := params[i]
 		switch p[0] {
 		case 0:
-			*a = Attr{}
+			*a = Attr{Link: a.Link}
 		case 1:
 			a.Bold = true
 		case 2:
@@ -543,6 +544,10 @@ func (t *Terminal) oscDispatch(s []byte) {
 		}
 	case "52":
 		t.clipboard(rest)
+	case "8":
+		// Hyperlink: OSC 8 ; params ; url opens one, an empty url ends it.
+		_, url, _ := strings.Cut(rest, ";")
+		t.cur.Attr.Link = t.linkID(url)
 	}
 }
 

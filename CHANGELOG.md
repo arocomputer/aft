@@ -164,6 +164,8 @@ stays on your machine, and typing feels local.
   xterm terminfos advertise, and cursor movement that treats a cursor outside
   the scroll region the way a VT does. A repaint restores the character sets
   too, so an application drawing a box keeps drawing lines after a reattach.
+- Hyperlinks (OSC 8) are kept per cell and restored by a repaint, so a link
+  on screen stays clickable after a reattach.
 - Copy mode's status bar names no keys; the guide lists them.
 - `aft completion` completes hosts and session names, not just commands.
   `aft ls` with nothing running says how to start one, `aft` alone on a fresh

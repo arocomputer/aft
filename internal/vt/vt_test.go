@@ -350,3 +350,25 @@ func TestLineDrawingCharset(t *testing.T) {
 		t.Fatalf("after a repaint the shifted-in set was lost: %q", got)
 	}
 }
+
+// TestHyperlinksSurviveARepaint keeps OSC 8 links on their cells, unaffected
+// by SGR resets, and a repaint restores them, so a link stays clickable after
+// a reattach.
+func TestHyperlinksSurviveARepaint(t *testing.T) {
+	v := New(20, 2)
+	v.Write([]byte("\x1b]8;;https://a.test/x\x1b\\\x1b[1mlink\x1b[0m\x1b]8;;\x1b\\ plain"))
+	if u := v.LinkURL(v.Cell(0, 3).Attr.Link); u != "https://a.test/x" {
+		t.Fatalf("link cell has %q", u)
+	}
+	if v.Cell(0, 5).Attr.Link != 0 {
+		t.Fatal("the link ran past its end")
+	}
+	again := New(20, 2)
+	again.Write(v.Render(RenderOptions{}))
+	if u := again.LinkURL(again.Cell(0, 0).Attr.Link); u != "https://a.test/x" {
+		t.Fatalf("after a repaint the link is %q", u)
+	}
+	if again.Cell(0, 6).Attr.Link != 0 || again.Line(0) != "link plain" {
+		t.Fatalf("after a repaint: %q, link on plain text %v", again.Line(0), again.Cell(0, 6).Attr.Link != 0)
+	}
+}

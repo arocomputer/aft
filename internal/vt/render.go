@@ -200,10 +200,15 @@ func (t *Terminal) paintLine(b *bytes.Buffer, cells []Cell) {
 	}
 	var cur Attr
 	first := true
+	var link uint32
 	for i := 0; i < end; i++ {
 		c := cells[i]
 		if c.Width == 0 {
 			continue
+		}
+		if c.Attr.Link != link {
+			link = c.Attr.Link
+			b.WriteString("\x1b]8;;" + t.LinkURL(link) + "\x1b\\")
 		}
 		if first || c.Attr != cur {
 			b.WriteString(SGR(c.Attr))
@@ -215,6 +220,9 @@ func (t *Terminal) paintLine(b *bytes.Buffer, cells []Cell) {
 		} else {
 			b.WriteRune(c.Rune)
 		}
+	}
+	if link != 0 {
+		b.WriteString("\x1b]8;;\x1b\\")
 	}
 	if end < len(cells) {
 		// Erase the rest in default colors: the pen may still carry the last

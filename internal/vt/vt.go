@@ -40,6 +40,7 @@ type Attr struct {
 	Reverse   bool
 	Strike    bool
 	Hidden    bool
+	Link      uint32 // an OSC 8 hyperlink, by Terminal.LinkURL; 0 is none
 }
 
 // Cell is one character position. Width 0 marks the continuation half of a
@@ -141,6 +142,11 @@ type Terminal struct {
 	gen        uint64
 	repeat     rune // the last printed character, which CSI b repeats; 0 after anything else
 
+	// Hyperlinks (OSC 8) by number, so a cell carries a small id and a repaint
+	// restores the link; links[0] is unused.
+	links   []string
+	linkIDs map[string]uint32
+
 	// Character sets: G0 and G1 may each be designated as the DEC special
 	// graphics set, which ncurses uses for box drawing (smacs is ESC ( 0),
 	// and SO/SI shift between them. Saved and restored with the cursor.
@@ -195,6 +201,32 @@ func (t *Terminal) Modes() Modes { return t.modes }
 
 // Title returns the window title set with OSC 0 or 2.
 func (t *Terminal) Title() string { return t.title }
+
+// LinkURL returns the hyperlink a cell's Attr.Link refers to, or empty.
+func (t *Terminal) LinkURL(id uint32) string {
+	if id == 0 || int(id) >= len(t.links) {
+		return ""
+	}
+	return t.links[id]
+}
+
+// linkID returns the id for url, adding it; an empty url is 0.
+func (t *Terminal) linkID(url string) uint32 {
+	if url == "" {
+		return 0
+	}
+	if id, ok := t.linkIDs[url]; ok {
+		return id
+	}
+	if t.linkIDs == nil {
+		t.linkIDs = map[string]uint32{}
+		t.links = []string{""}
+	}
+	id := uint32(len(t.links))
+	t.links = append(t.links, url)
+	t.linkIDs[url] = id
+	return id
+}
 
 // Gen returns the write generation, which increases whenever cells change.
 func (t *Terminal) Gen() uint64 { return t.gen }
@@ -671,6 +703,7 @@ func (t *Terminal) reset() {
 	t.savedMain, t.savedAlt = Cursor{}, Cursor{}
 	t.charset, t.savedCharset = charsets{}, [2]charsets{}
 	t.repeat = 0
+	t.links, t.linkIDs = nil, nil
 	t.title = ""
 	t.resizeTo(cols, rows, true)
 }
