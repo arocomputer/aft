@@ -232,3 +232,76 @@ func TestLineRedrawKeepsInflightPredictions(t *testing.T) {
 		t.Fatalf("after echo: %q pending %d", s.Line(0), len(p.pending))
 	}
 }
+
+// TestRedrawKeepsCursorAtPredictions covers an app that shows the terminal
+// cursor and redraws other parts of the screen on its own clock, as Claude
+// Code's classic renderer does: each redraw ends by putting the cursor where
+// the server's input ends, which trails what was typed. The cursor must stay
+// after the predictions, not jump back to the server's position.
+func TestRedrawKeepsCursorAtPredictions(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[2;1H> "))
+	typeKeys(p, "abc")
+	// A status line redraw two rows down, then back to the server's caret.
+	p.Output([]byte("\x1b[4;1H\x1b[2K-- status --\x1b[2;3H"))
+	s := screenOf(&out, 40, 5)
+	if s.Line(1) != "> abc" || s.Cursor().Row != 1 || s.Cursor().Col != 5 {
+		t.Fatalf("after redraw: %q cursor %+v, want the cursor at 1,5", s.Line(1), s.Cursor())
+	}
+	// The echoes arrive; nothing is left over.
+	p.Output([]byte("abc"))
+	s = screenOf(&out, 40, 5)
+	if s.Line(1) != "> abc" || s.Cursor().Col != 5 || len(p.pending) != 0 {
+		t.Fatalf("after echo: %q cursor %+v pending %d", s.Line(1), s.Cursor(), len(p.pending))
+	}
+}
+
+// TestSkippedSpaceIsConfirmed covers renderers that echo a typed space by
+// moving the cursor over the blank cell instead of printing it, as Claude
+// Code's does. Once the server's cursor has passed the cell, the space is
+// confirmed; left pending, it would expire and pull the cursor back to it.
+func TestSkippedSpaceIsConfirmed(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> hi"))
+	typeKeys(p, " x")
+	p.Output([]byte("\x1b[1C" + "x")) // over the space, then the x
+	if len(p.pending) != 0 || !p.confident {
+		t.Fatalf("pending %d confident %v", len(p.pending), p.confident)
+	}
+}
+
+// TestExpiryLeavesCursorInPlace lets a prediction the server never answers
+// expire: its cell is repainted from the server's screen, and the cursor goes
+// back where the server has it rather than staying on the repainted cell.
+func TestExpiryLeavesCursorInPlace(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "a")
+	p.pending[0].at = time.Now().Add(-time.Hour)
+	p.Tick()
+	s := screenOf(&out, 40, 5)
+	if s.Line(0) != ">" || s.Cursor().Col != 2 {
+		t.Fatalf("after expiry: %q cursor col %d, want 2", s.Line(0), s.Cursor().Col)
+	}
+}
+
+// TestBackspaceLeavesCursorOnErasedCell keeps the cursor where the next
+// character goes after a predicted Backspace, both when it erases a server
+// character and when it takes back a prediction.
+func TestBackspaceLeavesCursorOnErasedCell(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> abc"))
+	p.Key(Token{Kind: TokBackspace})
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> ab" || s.Cursor().Col != 4 {
+		t.Fatalf("erasing: %q cursor col %d, want 4", s.Line(0), s.Cursor().Col)
+	}
+	typeKeys(p, "x")
+	p.Key(Token{Kind: TokBackspace})
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> ab" || s.Cursor().Col != 4 {
+		t.Fatalf("taking back x: %q cursor col %d, want 4", s.Line(0), s.Cursor().Col)
+	}
+}

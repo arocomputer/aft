@@ -256,6 +256,14 @@ func (p *Predictor) predictBackspace(now time.Time) {
 		last := p.pending[n-1]
 		p.pending = p.pending[:n-1]
 		cell := p.shadow.Cell(last.row, last.col)
+		// The cell shows what an earlier prediction put there, if one did,
+		// such as a predicted erase; otherwise what the server has.
+		for i := len(p.pending) - 1; i >= 0; i-- {
+			if pr := p.pending[i]; pr.row == last.row && pr.col == last.col {
+				cell.Rune = pr.r
+				break
+			}
+		}
 		out := vt.CUP(last.row, last.col) + vt.SGR(cell.Attr) + cellRune(cell)
 		if !p.shadow.Modes().CursorVisible {
 			// Restore the drawn caret to this cell and clear the moved one.
@@ -265,6 +273,8 @@ func (p *Predictor) predictBackspace(now time.Time) {
 			next := p.shadow.Cell(last.row, last.col+1)
 			out += vt.SGR(next.Attr) + cellRune(next)
 		}
+		// Leave the cursor on the cell the next character goes into.
+		out += vt.CUP(last.row, last.col)
 		p.w.Write([]byte(out))
 		p.displaced = true
 		p.posKnown, p.penKnown = false, false
@@ -293,6 +303,7 @@ func (p *Predictor) predictBackspace(now time.Time) {
 		ca.Reverse = false
 		out += vt.SGR(ca) + cellRune(cur)
 	}
+	out += vt.CUP(row, col-1) // where the next character goes
 	p.w.Write([]byte(out))
 	p.displaced = true
 	p.posKnown, p.penKnown = false, false
@@ -326,6 +337,10 @@ func (p *Predictor) reconcile() {
 	for _, pr := range p.pending {
 		cell := p.shadow.Cell(pr.row, pr.col)
 		switch {
+		case cell.Gen <= pr.gen && caretOK && pr.row == cr && cc > pr.col && holds(cell, pr.r):
+			// The server moved its caret past the cell without rewriting it,
+			// which is how some renderers echo a space: it handled the key.
+			p.confident = true
 		case cell.Gen <= pr.gen:
 			keep = append(keep, pr)
 		case cell.Rune == pr.r:
@@ -350,9 +365,13 @@ func (p *Predictor) reconcile() {
 		p.caretValid = false
 		return
 	}
-	if len(erased) == 0 || !p.confident || !p.shadow.InGround() {
+	if !p.confident || !p.shadow.InGround() {
 		// Without a redraw the screen shows the server's cells, which is
 		// always correct; the next output or Tick settles the rest.
+		return
+	}
+	if len(erased) == 0 {
+		p.placeCursor(cr, drawnCaret, caretOK)
 		return
 	}
 	var out []byte
@@ -375,6 +394,30 @@ func (p *Predictor) reconcile() {
 	p.w.Write(out)
 	p.displaced = true
 	p.posKnown, p.penKnown = false, false
+	p.placeCursor(cr, drawnCaret, caretOK)
+}
+
+// placeCursor puts the terminal's cursor after the predictions still in
+// flight. Server output leaves it where the server's input ends, which trails
+// what was typed, so an application that redraws on its own clock (Claude
+// Code's classic renderer does, about twice a second) would otherwise make
+// the cursor jump back and forth. It applies only to a visible cursor on the
+// server caret's row; a drawn caret is moved by reconcile itself.
+func (p *Predictor) placeCursor(serverRow int, drawnCaret, caretOK bool) {
+	if !caretOK || drawnCaret || !p.caretValid || p.caretRow != serverRow {
+		return
+	}
+	if p.posKnown && p.realRow == p.caretRow && p.realCol == p.caretCol {
+		return
+	}
+	p.w.Write([]byte(vt.CUP(p.caretRow, p.caretCol)))
+	p.realRow, p.realCol, p.posKnown = p.caretRow, p.caretCol, true
+	p.displaced = true
+}
+
+// holds reports whether cell already shows r, a blank counting as a space.
+func holds(cell vt.Cell, r rune) bool {
+	return cell.Rune == r || (r == ' ' && cell.Rune == 0)
 }
 
 // Tick expires predictions the server never answered and repaints them from
@@ -410,13 +453,23 @@ func (p *Predictor) Tick() {
 		p.confident = false
 	}
 	p.pending = keep
+	if len(p.pending) == 0 {
+		p.caretValid = false
+	}
 	if len(out) > 0 {
+		// Repainting left the cursor on the last repainted cell; put it back
+		// after the predictions still in flight, or where the server has it.
+		cur := p.shadow.Cursor()
+		row, col := cur.Row, cur.Col
+		if p.caretValid && p.caretRow == cur.Row {
+			col = p.caretCol
+		}
+		if p.shadow.Modes().CursorVisible && !cur.Wrap {
+			out = append(out, vt.CUP(row, col)...)
+		}
 		p.w.Write(out)
 		p.displaced = true
 		p.posKnown, p.penKnown = false, false
-	}
-	if len(p.pending) == 0 {
-		p.caretValid = false
 	}
 }
 
@@ -440,6 +493,28 @@ func (p *Predictor) Repaint() {
 	p.pending = nil
 	p.caretValid = false
 	p.displaced = false
+}
+
+// RestoreRow redraws one row from the shadow, taking back a notice drawn
+// over it.
+func (p *Predictor) RestoreRow(r int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cols, rows := p.shadow.Size()
+	if r < 0 || r >= rows || !p.shadow.InGround() {
+		return
+	}
+	out := vt.CUP(r, 0)
+	for c := 0; c < cols; c++ {
+		cell := p.shadow.Cell(r, c)
+		if cell.Width == 0 && c > 0 {
+			continue // the right half of a wide character drawn just before
+		}
+		out += vt.SGR(cell.Attr) + cellRune(cell)
+	}
+	p.w.Write([]byte(out))
+	p.displaced = true
+	p.posKnown, p.penKnown = false, false
 }
 
 // Shadow exposes the emulator for tests.

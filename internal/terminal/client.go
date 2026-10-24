@@ -94,6 +94,7 @@ func Run(o Options) int {
 	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID, command: o.Command}
 	c.outbound = make(chan []byte, 4096)
 	c.uploads = make(chan uploadResult, 1)
+	c.unflash = make(chan struct{}, 1)
 	c.sendDone = make(chan struct{})
 	defer close(c.sendDone)
 	go c.writer()
@@ -144,7 +145,8 @@ type session struct {
 	mirror     *ports.Mirror
 	message    func() // prints why the client left, after the terminal is restored
 
-	command []string // what the session runs, for the leaving message
+	command []string      // what the session runs, for the leaving message
+	unflash chan struct{} // a flashed notice is due to be taken down
 
 	offer      *udp.Offer // how to reach the session over UDP, once it offered
 	udpAddr    string     // the host's address for UDP
@@ -379,6 +381,10 @@ func (c *session) loop(proc link) int {
 			}
 		case <-tick.C:
 			c.pred.Tick()
+		case <-c.unflash:
+			if c.copy == nil {
+				c.pred.RestoreRow(0)
+			}
 		case <-beat.C:
 			if connected {
 				c.send(proto.Ping, nil)
@@ -701,6 +707,18 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			c.title(fmt.Sprintf("aft · reconnecting (%d)", attempt))
 		}
 	}
+}
+
+// flash shows a notice across the top row for a few seconds, then restores
+// the row; the input loop does the restoring when unflash fires.
+func (c *session) flash(text string) {
+	c.notice(text)
+	time.AfterFunc(5*time.Second, func() {
+		select {
+		case c.unflash <- struct{}{}:
+		default:
+		}
+	})
 }
 
 // errLeft is reconnect giving up because the user left; the session runs on.

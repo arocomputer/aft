@@ -45,9 +45,17 @@ stays on your machine, and typing feels local.
   copy mode, the clipboard and a real agent, with no SSH or setup.
 - A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
   even when the terminal blocks OSC 52.
+- The cursor no longer jumps back while typing into Claude Code. Its
+  renderer echoes a typed space by moving over the blank cell, so the space
+  was never confirmed, expired after a moment and pulled the cursor back to
+  it. Expiry, Backspace and redraws now leave the cursor where the next
+  character goes.
 - Pasting or dragging a local file into the terminal uploads it to the
   server's temporary directory and pastes the server path, so agents can open
-  pasted screenshots, recordings and documents.
+  pasted screenshots, recordings and documents. macOS names that hold a
+  narrow no-break space (screen recordings, before AM or PM) are read as
+  one file, and a file that cannot be sent says why across the top of the
+  screen.
 - Aft keeps what you read or edit (config, state, logs) in `~/.aft` and its
   plumbing (server, shims, launchers, sessions, sockets) in
   `~/.local/share/aft`, on macOS and Linux alike. An older install moves

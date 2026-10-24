@@ -2,7 +2,9 @@ package terminal
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -96,10 +98,14 @@ func (c *session) startUpload(t Token) bool {
 // while it ran. It returns false when a held key asks the client to leave.
 func (c *session) finishUpload(u uploadResult) bool {
 	c.holding = false
+	c.title(c.pred.Title())
 	if u.err != nil {
-		c.title("aft · paste upload failed: " + u.err.Error())
-	} else {
-		c.title(c.pred.Title())
+		// The original paste goes through; say why it is a local path.
+		msg := "aft · could not send the pasted file to " + c.o.Host.Name + ": " + u.err.Error()
+		if errors.Is(u.err, fs.ErrPermission) {
+			msg = "aft · macOS would not let this terminal read the pasted file · give the terminal app Full Disk Access, or paste the saved file"
+		}
+		c.flash(msg)
 	}
 	c.pastedAt = time.Now() // the agent may read the pasted file's clipboard now
 	c.send(proto.Input, u.paste)
