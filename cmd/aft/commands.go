@@ -17,6 +17,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/arocomputer/aft/internal/bridge/proto"
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
@@ -105,8 +106,12 @@ func cmdSetup(args []string) int {
 	if dest != "" {
 		n := *name
 		if n == "" {
-			n = dest
+			n = nameFor(dest)
 		}
+		if err := checkHostName(n); err != nil {
+			return fail(err)
+		}
+		keepDefault(&cfg)
 		cfg.Hosts[n] = config.HostConfig{SSH: dest}
 		h, _ := cfg.Host(n)
 		if err := connect(h); err != nil {
@@ -517,6 +522,29 @@ func checkHostName(name string) error {
 	return nil
 }
 
+// nameFor picks a host's name from its SSH destination, which may start with
+// ssh options: the first label of the machine name (box for
+// "-p 2222 fschr@box.example.com"), an IP address with its dots dashed, or the
+// machine name with its punctuation dashed when that is not a usable name.
+func nameFor(dest string) string {
+	f := strings.Fields(dest)
+	if len(f) == 0 {
+		return ""
+	}
+	machine := f[len(f)-1]
+	if _, after, ok := strings.Cut(machine, "@"); ok {
+		machine = after
+	}
+	dashed := strings.NewReplacer(".", "-", ":", "-").Replace(machine)
+	if strings.Trim(machine, "0123456789.:") == "" {
+		return dashed // an address: every part of it matters
+	}
+	if first, _, _ := strings.Cut(machine, "."); checkHostName(first) == nil {
+		return first
+	}
+	return dashed
+}
+
 // adoptHost makes dest a host the first time someone types aft DEST: it checks
 // SSH can reach it, saves it under a short name, and installs the server.
 // probe skips the check when dest plainly is a destination (user@host).
@@ -529,13 +557,7 @@ func adoptHost(cfg *config.Config, dest string, probe bool) (transport.Host, boo
 			return transport.Host{}, false
 		}
 	}
-	name := dest
-	if _, after, ok := strings.Cut(name, "@"); ok {
-		name = after
-	}
-	if name, _, _ = strings.Cut(name, "."); checkHostName(name) != nil {
-		name = strings.NewReplacer("@", "-", ".", "-").Replace(dest)
-	}
+	name := nameFor(dest)
 	if _, taken := cfg.Hosts[name]; taken || checkHostName(name) != nil {
 		ui.Error("could not pick a name for %s", dest)
 		ui.Hint("aft host add NAME %s", dest)
@@ -641,7 +663,9 @@ func state(r session.Record) string {
 	switch e := r.Ended; {
 	case e != nil && e.Lost:
 		return ui.Mark("fix") + " lost"
-	case e != nil && (e.Code != 0 || e.Signal != ""):
+	case e != nil && e.Signal != "":
+		return ui.Mark("warn") + " killed by " + e.Signal
+	case e != nil && e.Code != 0:
 		return ui.Mark("warn") + fmt.Sprintf(" exited %d", e.Code)
 	case e != nil:
 		return ui.Dim("exited")
@@ -801,7 +825,7 @@ func cmdAttach(args []string) int {
 		if len(found) > 1 {
 			opts := make([]ui.Option, len(found))
 			for i, f := range found {
-				opts[i] = ui.Option{Label: f.r.ID + " (" + ansi.Strip(describe(f.r)) + ")", Hint: f.h.Name + " · " + started(f.r)}
+				opts[i] = ui.Option{Label: f.r.ID + " (" + ansi.Strip(describe(f.r)) + ")", Hint: ansi.Strip(state(f.r)) + " · " + f.h.Name + " · " + started(f.r)}
 			}
 			if !ui.Interactive() {
 				ui.Error("several sessions; pass an id")
@@ -1314,8 +1338,8 @@ func cmdUninstall(args []string) int {
 	for _, n := range cfg.HostNames() {
 		h, _ := cfg.Host(n)
 		if err := connect(h); err != nil {
-			ui.Error("could not reach %s: %v", n, err)
-			ui.Hint("remove ~/.aft and ~/.local/share/aft there by hand")
+			ui.Error("%v", err)
+			ui.Hint("remove ~/.aft and ~/.local/share/aft on %s by hand", n)
 			code = 1
 			continue
 		}
@@ -1329,7 +1353,7 @@ func cmdUninstall(args []string) int {
 	}
 	if list, _ := session.List(); len(list) > 0 {
 		for _, r := range list {
-			session.Control(r.ID, 0x06)
+			session.Control(r.ID, proto.End)
 		}
 	}
 	removed, kept := launcher.RemoveShellBlocks(&st)

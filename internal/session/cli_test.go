@@ -243,7 +243,7 @@ func TestNewIDSkipsNamesInUse(t *testing.T) {
 
 // TestCleanTitle drops the status glyph an agent puts before its title.
 func TestCleanTitle(t *testing.T) {
-	for in, want := range map[string]string{"✳ Fix login": "Fix login", "⠐ Fix login": "Fix login", "zsh": "zsh", "": ""} {
+	for in, want := range map[string]string{"✳ Fix login": "Fix login", "⠐ Fix login": "Fix login", "zsh": "zsh", "~/room/code": "~/room/code", "[1] build": "[1] build", "": ""} {
 		if got := cleanTitle(in); got != want {
 			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, want)
 		}
