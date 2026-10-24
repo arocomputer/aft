@@ -398,3 +398,21 @@ func TestNoticeKeepsAPendingWrap(t *testing.T) {
 		t.Fatalf("rows: %q / %q", s.Line(2), s.Line(3))
 	}
 }
+
+// TestNoticeOnTheWrappingRow draws a notice while the cursor waits to wrap at
+// the end of the top row: the notice stays whole, and the next character
+// still starts the second row.
+func TestNoticeOnTheWrappingRow(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(10, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H0123456789"))
+	p.Notice("aft notice")
+	s := screenOf(&out, 10, 5)
+	if s.Line(0) != "aft notice" {
+		t.Fatalf("notice cut: %q", s.Line(0))
+	}
+	p.Output([]byte("X"))
+	if s := screenOf(&out, 10, 5); s.Line(1) != "X" {
+		t.Fatalf("second row %q, want X", s.Line(1))
+	}
+}

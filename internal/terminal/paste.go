@@ -135,7 +135,7 @@ func (c *session) uploading() bool { return c.uploadCtx != nil && c.uploadCtx.Er
 // finishUpload sends the paste an upload produced and then the keys held
 // while it ran. It returns false when a held key asks the client to leave.
 func (c *session) finishUpload(u uploadResult) bool {
-	c.holding = false
+	c.holding, c.cancelled = false, false
 	c.uploadCtx, c.cancelUpload = nil, nil
 	c.title(c.pred.Title())
 	if errors.Is(u.err, context.Canceled) {

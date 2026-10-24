@@ -61,3 +61,17 @@ func TestCtrlCAfterUploadReachesTheApp(t *testing.T) {
 		t.Fatalf("held %d keys, want the Ctrl-C", len(c.held))
 	}
 }
+
+// TestSecondCtrlCDuringCancelIsNotSent presses Ctrl-C twice while an upload
+// runs: the first cancels it, and the second is the same request, never a ^C
+// for the app, where two of them quit an agent.
+func TestSecondCtrlCDuringCancelIsNotSent(t *testing.T) {
+	c := &session{outbound: make(chan []byte, 4), sendDone: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.holding, c.uploadCtx, c.cancelUpload = true, ctx, cancel
+	ctrlC := Token{Kind: TokOther, Bytes: []byte{0x03}}
+	c.handleKeys([]Token{ctrlC, ctrlC})
+	if len(c.held) != 0 || ctx.Err() == nil {
+		t.Fatalf("held %d keys, cancelled %v", len(c.held), ctx.Err() != nil)
+	}
+}

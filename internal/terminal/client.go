@@ -153,6 +153,7 @@ type session struct {
 	unflash chan struct{} // a flashed notice is due to be taken down
 
 	greeted      bool               // the current connection got the session's hello
+	cancelled    bool               // Ctrl-C cancelled the upload in progress
 	cancelUpload context.CancelFunc // stops the paste upload in progress
 	uploadCtx    context.Context    // done once the upload has finished or stopped
 
@@ -242,6 +243,13 @@ func (c *session) dial() (link, error) {
 			}
 			if err != nil && c.id == "" && !strings.Contains(err.Error(), "unknown server command") {
 				return nil, fmt.Errorf("could not start the session: %w", err)
+			}
+			if err != nil && c.id != "" && strings.Contains(err.Error(), "is not running") {
+				// Asked to open UDP, the host says the session is gone; make
+				// sure, then stop rather than attach to nothing.
+				if gone := c.ended(); gone != nil {
+					return nil, gone
+				}
 			}
 			if err == nil && json.Unmarshal(out, &got) == nil {
 				c.id = got.ID
@@ -484,8 +492,12 @@ func (c *session) readFrames(proc link) <-chan frameOrErr {
 func (c *session) handleKeys(toks []Token) bool {
 	for _, t := range toks {
 		switch {
-		case c.holding && len(t.Bytes) == 1 && t.Bytes[0] == 0x03 && c.uploading():
-			c.cancelUpload() // Ctrl-C while a pasted file uploads cancels it
+		case c.holding && len(t.Bytes) == 1 && t.Bytes[0] == 0x03 && (c.uploading() || c.cancelled):
+			// Ctrl-C while a pasted file uploads cancels it; pressing it
+			// again before the cancel lands is the same request, not a key
+			// for the app.
+			c.cancelUpload()
+			c.cancelled = true
 		case c.holding:
 			c.held = append(c.held, t)
 		case c.copy != nil:
@@ -725,12 +737,19 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			// The host is back. If the last connection ended before the
 			// session even greeted it, the session may be gone: ask, rather
 			// than reattach forever. After an ordinary drop, skip the question.
-			if !c.greeted {
+			// Over UDP the request to reattach answers that itself (see dial),
+			// so only SSH-only hosts ask first.
+			if !c.greeted || c.udpBlocked {
 				if ended := c.ended(); ended != nil {
 					return nil, nil, ended
 				}
 			}
-			if proc, err := c.open(false); err == nil {
+			proc, err := c.open(false)
+			var gone sessionEnded
+			if errors.As(err, &gone) {
+				return nil, nil, gone
+			}
+			if err == nil {
 				c.pred.Reset()
 				c.title("")
 				return proc, typed, nil
