@@ -305,3 +305,61 @@ func TestBackspaceLeavesCursorOnErasedCell(t *testing.T) {
 		t.Fatalf("taking back x: %q cursor col %d, want 4", s.Line(0), s.Cursor().Col)
 	}
 }
+
+// TestEnterLetsTheAppClearTheLine types into an Ink-style prompt and presses
+// Enter: the app clears the line, and the typed text must not come back.
+func TestEnterLetsTheAppClearTheLine(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[?25l\x1b[1;1H> \x1b[7m \x1b[0m"))
+	typeKeys(p, "abc")
+	p.Key(Token{Kind: TokOther, Bytes: []byte("\r")}) // Enter
+	p.Output([]byte("\r\x1b[2K> \x1b[7m \x1b[0m"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" || len(p.pending) != 0 || !p.confident {
+		t.Fatalf("after Enter: %q pending %d confident %v", s.Line(0), len(p.pending), p.confident)
+	}
+}
+
+// TestNonEchoingKeyIsAMisprediction presses x in an app that does not echo
+// it (vim's normal mode deletes a character instead): the redraw wins and
+// no ghost x is drawn back.
+func TestNonEchoingKeyIsAMisprediction(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1Hhello\x1b[1;1H"))
+	typeKeys(p, "x")
+	p.Output([]byte("\r\x1b[2Kello\x1b[1;1H"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != "ello" || p.confident {
+		t.Fatalf("after delete: %q confident %v", s.Line(0), p.confident)
+	}
+}
+
+// TestErasedSpaceWaitsForTheServer presses Backspace over a space, then the
+// app redraws something else before handling the key: the erase stays in
+// flight, so the next key goes where the space was.
+func TestErasedSpaceWaitsForTheServer(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> hi "))
+	p.Key(Token{Kind: TokBackspace})
+	p.Output([]byte("\x1b[3;1Hstatus\x1b[1;6H"))
+	typeKeys(p, "x")
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> hix" {
+		t.Fatalf("got %q, want the x where the space was", s.Line(0))
+	}
+}
+
+// TestCursorWaitsForUndrawnPredictions types while predictions are not being
+// drawn: when trust comes back, the cursor stays with the text the screen
+// shows instead of jumping over blank cells.
+func TestCursorWaitsForUndrawnPredictions(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	p.confident = false
+	typeKeys(p, "abc")
+	p.Output([]byte("a"))
+	if s := screenOf(&out, 40, 5); s.Cursor().Col != 3 {
+		t.Fatalf("cursor at col %d over %q, want 3", s.Cursor().Col, s.Line(0))
+	}
+}
