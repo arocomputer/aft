@@ -53,3 +53,26 @@ func TestOnlyTheOfferedClientGetsIn(t *testing.T) {
 		t.Fatal("a certificate that does not match the offer was trusted")
 	}
 }
+
+// TestSilentClientDoesNotBlockOthers opens a connection that never sends its
+// token, then a real client: the real one is admitted at once.
+func TestSilentClientDoesNotBlockOthers(t *testing.T) {
+	l, err := Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	silent := l.Offer
+	silent.Token = "" // completes the handshake, never sends a token
+	go Dial("127.0.0.1", silent)
+	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	go func() {
+		if c, err := Dial("127.0.0.1", l.Offer); err == nil {
+			c.Write([]byte("hi"))
+		}
+	}()
+	if _, err := l.Accept(); err != nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("real client admitted after %v: %v", time.Since(start), err)
+	}
+}

@@ -55,9 +55,11 @@ func config() *quic.Config {
 
 // Listener accepts clients that present the session's token.
 type Listener struct {
-	ln    *quic.Listener
-	token []byte
-	Offer Offer
+	ln       *quic.Listener
+	token    []byte
+	Offer    Offer
+	admitted chan net.Conn
+	done     chan struct{} // closed by Close
 }
 
 // Listen opens a listener on a free port in the mosh range, with a fresh
@@ -76,23 +78,45 @@ func Listen() (*Listener, error) {
 		if err != nil {
 			continue
 		}
-		return &Listener{ln: ln, token: token, Offer: Offer{Port: port, Cert: sum, Token: hex.EncodeToString(token)}}, nil
+		l := &Listener{ln: ln, token: token, Offer: Offer{Port: port, Cert: sum, Token: hex.EncodeToString(token)}, admitted: make(chan net.Conn), done: make(chan struct{})}
+		go l.serve()
+		return l, nil
 	}
 	return nil, errors.New("no free UDP port in 60000-61000")
 }
 
-// Accept returns the next client stream whose token matches. It drops any
-// connection that does not present the token within a few seconds.
-func (l *Listener) Accept() (net.Conn, error) {
+// serve checks each connection's token on its own, so one that never sends
+// it cannot hold up the next. It ends when the listener closes.
+func (l *Listener) serve() {
 	for {
 		c, err := l.ln.Accept(context.Background())
 		if err != nil {
-			return nil, err
+			return
 		}
-		if s, err := l.admit(c); err == nil {
-			return s, nil
-		}
-		c.CloseWithError(1, "not admitted")
+		go func() {
+			s, err := l.admit(c)
+			if err != nil {
+				c.CloseWithError(1, "not admitted")
+				return
+			}
+			select {
+			case l.admitted <- s:
+			case <-c.Context().Done():
+			case <-l.done:
+				s.Close()
+			}
+		}()
+	}
+}
+
+// Accept returns the next client stream whose token matched. Any connection
+// that does not present the token within a few seconds is dropped.
+func (l *Listener) Accept() (net.Conn, error) {
+	select {
+	case s := <-l.admitted:
+		return s, nil
+	case <-l.done:
+		return nil, net.ErrClosed
 	}
 }
 
@@ -113,7 +137,14 @@ func (l *Listener) admit(c *quic.Conn) (net.Conn, error) {
 }
 
 // Close stops accepting; streams already open keep running.
-func (l *Listener) Close() error { return l.ln.Close() }
+func (l *Listener) Close() error {
+	select {
+	case <-l.done:
+	default:
+		close(l.done)
+	}
+	return l.ln.Close()
+}
 
 // Dial connects to a session's listener on host and presents the token.
 func Dial(host string, o Offer) (net.Conn, error) {
