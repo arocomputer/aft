@@ -200,9 +200,9 @@ func (t *Terminal) paintLine(b *bytes.Buffer, cells []Cell) {
 		}
 	}
 	if end < len(cells) {
-		if !first {
-			b.WriteString("\x1b[0m")
-		}
-		b.WriteString("\x1b[K")
+		// Erase the rest in default colors: the pen may still carry the last
+		// painted cell's attributes, from this row or the one above, and an
+		// erase fills with the current background.
+		b.WriteString("\x1b[0m\x1b[K")
 	}
 }

@@ -279,3 +279,20 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("cursor at %d,%d", snap.CursorRow, snap.CursorCol)
 	}
 }
+
+// TestRenderBlankRowAfterColoredRow repaints a row colored to its last
+// column, as a full-width bar is, followed by an empty one: the empty row must
+// come out in default colors, not erased in the color the row above left in
+// the pen.
+func TestRenderBlankRowAfterColoredRow(t *testing.T) {
+	a := New(10, 3)
+	a.Write([]byte("\x1b[44m          \x1b[0m"))
+	b := New(10, 3)
+	b.Write(a.Render(RenderOptions{}))
+	if got := b.Cell(1, 0).Attr; got != (Attr{}) {
+		t.Fatalf("blank row painted with %+v", got)
+	}
+	if got := b.Cell(0, 0).Attr; got.BG.Kind == 0 {
+		t.Fatal("the colored row lost its background")
+	}
+}

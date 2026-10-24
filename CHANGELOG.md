@@ -155,6 +155,10 @@ stays on your machine, and typing feels local.
   it no longer erases the prompt before the application answers.
 - `aft status` and `aft doctor` are flat: one line per fact, no labels or
   sections. A port record a killed client left behind no longer shows.
+- Reattaching no longer leaves stray colored cells: the repaint erased a blank
+  row in the color the row above had left in the pen, which showed as gray
+  squares under Codex's input box when a terminal joined while it was still
+  loading.
 - `aft completion` completes hosts and session names, not just commands.
   `aft ls` with nothing running says how to start one, `aft` alone on a fresh
   install says to run `aft setup`, and `aft doctor` sees launchers put on PATH
