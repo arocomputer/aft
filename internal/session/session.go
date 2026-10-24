@@ -494,7 +494,7 @@ func (s *Session) openUDP() (udp.Offer, error) {
 	defer s.udpMu.Unlock()
 	select {
 	case <-s.exited:
-		return udp.Offer{}, errors.New("the session has ended")
+		return udp.Offer{}, errors.New(endedText)
 	default:
 	}
 	if s.udp == nil {
@@ -722,7 +722,7 @@ func Load(id string) (Record, error) {
 func Attach(id string, rw io.ReadWriter) error {
 	conn, err := net.Dial("unix", SocketPath(id))
 	if err != nil {
-		return fmt.Errorf("session %s is not running", id)
+		return notRunning(id)
 	}
 	defer conn.Close()
 	errc := make(chan error, 2)
@@ -730,6 +730,24 @@ func Attach(id string, rw io.ReadWriter) error {
 	go func() { _, err := io.Copy(rw, conn); errc <- err }()
 	<-errc
 	return nil
+}
+
+// notRunning is the error for a session that is not running: it ended, or
+// never existed. Callers tell it apart with errors.As, not by its words.
+type notRunning string
+
+func (id notRunning) Error() string { return "session " + string(id) + " is not running" }
+
+// endedText is how a session that has just exited answers a request.
+const endedText = "the session has ended"
+
+// GoneText tells someone reaching for session id that it is gone, and how
+// to see what it left if it left anything.
+func GoneText(id string) string {
+	if _, err := os.Stat(remainsPath(id)); err == nil {
+		return id + " ended while no terminal was attached; aft attach " + id + " shows its last screen"
+	}
+	return "session " + id + " is not running"
 }
 
 // Control opens a control connection to a session and sends one frame.
@@ -744,6 +762,9 @@ func OfferUDP(id string) (udp.Offer, error) {
 	var o udp.Offer
 	if err == nil && f.Type == proto.Error {
 		err = errors.New(string(f.Payload))
+		if string(f.Payload) == endedText {
+			err = notRunning(id) // it exited while being asked
+		}
 	}
 	if err == nil {
 		err = json.Unmarshal(f.Payload, &o)
@@ -755,7 +776,7 @@ func OfferUDP(id string) (udp.Offer, error) {
 func request(id string, t proto.Type) (proto.Frame, error) {
 	conn, err := net.Dial("unix", SocketPath(id))
 	if err != nil {
-		return proto.Frame{}, fmt.Errorf("session %s is not running", id)
+		return proto.Frame{}, notRunning(id)
 	}
 	defer conn.Close()
 	if err := proto.Write(conn, proto.Resize, proto.EncodeResize(0, 0)); err != nil {

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -99,6 +100,17 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			id = o.ID
 		}
 		offer, err := OfferUDP(id)
+		var gone notRunning
+		if errors.As(err, &gone) && !started {
+			// Say so plainly, so the client stops instead of trying SSH.
+			_, statErr := os.Stat(remainsPath(id))
+			json.NewEncoder(stdout).Encode(struct {
+				ID      string `json:"id"`
+				Gone    bool   `json:"gone"`
+				Remains bool   `json:"remains"`
+			}{id, true, statErr == nil})
+			return 0
+		}
 		if err != nil && !started {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -291,6 +303,13 @@ func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 		io.Reader
 		io.Writer
 	}{stdin, stdout}); err != nil {
+		var gone notRunning
+		if errors.As(err, &gone) {
+			// Tell the client in its own protocol, so it stops reconnecting
+			// and says why.
+			proto.Write(stdout, proto.Error, []byte(GoneText(id)))
+			return 1
+		}
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
