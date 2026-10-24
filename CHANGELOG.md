@@ -55,7 +55,8 @@ stays on your machine, and typing feels local.
   pasted screenshots, recordings and documents. macOS names that hold a
   narrow no-break space (screen recordings, before AM or PM) are read as
   one file, and a file that cannot be sent says why across the top of the
-  screen.
+  screen. A file in a mounted folder pastes as its server path with no copy,
+  system paths stay text, and Ctrl-C cancels an upload.
 - Aft keeps what you read or edit (config, state, logs) in `~/.aft` and its
   plumbing (server, shims, launchers, sessions, sockets) in
   `~/.local/share/aft`, on macOS and Linux alike. An older install moves

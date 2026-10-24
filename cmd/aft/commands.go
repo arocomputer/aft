@@ -589,7 +589,7 @@ func allSessions(cfg config.Config) []hostSessions {
 				h, err := cfg.Host(n)
 				hs := hostSessions{host: h, err: err}
 				if err == nil {
-					hs.err = transport.EnsureMasterBatch(h)
+					hs.err = transport.EnsureMasterWithin(h, 4) // an offline host must not hold up the list
 				}
 				if hs.err == nil {
 					raw, err := transport.Output(h, nil, "ls", "--all")

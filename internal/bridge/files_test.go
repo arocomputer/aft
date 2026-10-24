@@ -57,7 +57,7 @@ func TestPastedFilesReadsTerminalPaths(t *testing.T) {
 	for _, p := range []string{a, b} {
 		os.WriteFile(p, []byte("x"), 0o600)
 	}
-	got, ok := PastedFiles(shellEscape(a) + " '" + b + "' ")
+	got, ok := PastedFiles(Escape(a) + " '" + b + "' ")
 	if !ok || !reflect.DeepEqual(got, []string{a, b}) {
 		t.Fatalf("got %q ok=%v", got, ok)
 	}
@@ -93,5 +93,21 @@ func TestPastedFilesKeepsMacNarrowSpace(t *testing.T) {
 	got, ok := PastedFiles(paste)
 	if !ok || len(got) != 1 || filepath.Base(got[0]) != name {
 		t.Fatalf("PastedFiles(%q) = %q, %v", paste, got, ok)
+	}
+}
+
+// TestDroppable copies files dropped from home or a temporary directory, and
+// leaves system paths, which likely name files on the server, as text.
+func TestDroppable(t *testing.T) {
+	h, _ := os.UserHomeDir()
+	for p, want := range map[string]bool{
+		filepath.Join(h, "Desktop", "a.png"):   true,
+		filepath.Join(os.TempDir(), "rec.mov"): true,
+		"/etc/nginx/nginx.conf":                false,
+		"/usr/local/bin/tool":                  false,
+	} {
+		if got := Droppable(p); got != want {
+			t.Errorf("Droppable(%q) = %v, want %v", p, got, want)
+		}
 	}
 }

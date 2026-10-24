@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -73,23 +74,54 @@ func (c *session) startUpload(t Token) bool {
 	if !ok {
 		return false
 	}
-	c.holding = true
-	if len(paths) == 1 {
-		c.title("aft · uploading " + filepath.Base(paths[0]))
-	} else {
-		c.title(fmt.Sprintf("aft · uploading %d files", len(paths)))
+	// A file on a mounted folder is already on the server: name it there.
+	// Only files from where people drop them are copied; any other path is
+	// left as typed, since it may name a file on the server.
+	server := make([]string, len(paths))
+	var send []string
+	for i, p := range paths {
+		if c.o.ServerPath != nil {
+			if sp, ok := c.o.ServerPath(p); ok {
+				server[i] = bridge.Escape(sp)
+				continue
+			}
+		}
+		if !bridge.Droppable(p) {
+			return false
+		}
+		send = append(send, p)
 	}
+	join := func(remote []string) []byte {
+		for i, j := 0, 0; i < len(server); i++ {
+			if server[i] == "" {
+				server[i], j = remote[j], j+1
+			}
+		}
+		trimmed := strings.TrimSpace(body)
+		at := strings.Index(body, trimmed)
+		return append([]byte(body[:at]+strings.Join(server, " ")+body[at+len(trimmed):]), pasteEnd...)
+	}
+	if len(send) == 0 {
+		c.send(proto.Input, join(nil))
+		return true
+	}
+	c.holding = true
+	what := filepath.Base(send[0])
+	if len(send) > 1 {
+		what = fmt.Sprintf("%d files", len(send))
+	}
+	c.title("aft · uploading " + what + " · Ctrl-C cancels")
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancelUpload = cancel
 	host := c.o.Host
 	go func() {
-		remote, err := bridge.Upload(host, paths)
+		defer cancel()
+		remote, err := bridge.Upload(ctx, host, send)
 		if err != nil {
 			c.uploads <- uploadResult{paste: t.Bytes, err: err}
 			return
 		}
-		trimmed := strings.TrimSpace(body)
-		i := strings.Index(body, trimmed)
-		paste := body[:i] + strings.Join(remote, " ") + body[i+len(trimmed):]
-		c.uploads <- uploadResult{paste: append([]byte(paste), pasteEnd...)}
+		c.uploads <- uploadResult{paste: join(remote)}
 	}()
 	return true
 }
@@ -98,7 +130,15 @@ func (c *session) startUpload(t Token) bool {
 // while it ran. It returns false when a held key asks the client to leave.
 func (c *session) finishUpload(u uploadResult) bool {
 	c.holding = false
+	c.cancelUpload = nil
 	c.title(c.pred.Title())
+	if errors.Is(u.err, context.Canceled) {
+		// Ctrl-C: the user took the paste back; send nothing for it.
+		c.flash("aft · upload cancelled")
+		held := c.held
+		c.held = nil
+		return c.handleKeys(held)
+	}
 	if u.err != nil {
 		// The original paste goes through; say why it is a local path.
 		msg := "aft · could not send the pasted file to " + c.o.Host.Name + ": " + u.err.Error()
