@@ -263,6 +263,7 @@ func cmdMount(args []string) int {
 			return 2
 		}
 		abs, _ := filepath.Abs(*local)
+		abs = config.RealPath(abs) // mounts are kept by their real path; see MapLocal
 		cfg, err := config.Load()
 		if err != nil {
 			return fail(err)
@@ -286,11 +287,18 @@ func cmdMount(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		// Either spelling names the mount, which is kept by its real path.
+		real := config.RealPath(abs)
 		var kept []config.Mount
 		for _, m := range cfg.Mounts {
-			if filepath.Clean(m.Local) != filepath.Clean(abs) {
+			if l := filepath.Clean(m.Local); l != filepath.Clean(abs) && l != real {
 				kept = append(kept, m)
 			}
+		}
+		if len(kept) == len(cfg.Mounts) {
+			ui.Error("no mount at %s", abs)
+			ui.Hint("aft mount list shows them")
+			return 1
 		}
 		cfg.Mounts = kept
 		if err := config.Save(cfg); err != nil {

@@ -26,7 +26,8 @@ var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp
 // table or a repository's aft.toml can override most of them. Keys are flat and
 // snake_case; a host is addressed by name, so its table is singular: host.mini.
 type Config struct {
-	Use          string                `toml:"use,omitempty"` // the host used when none is given; a lone host needs no line
+	Use          string                `toml:"use,omitempty"`      // the host used when none is given; a lone host needs no line
+	Existing     string                `toml:"existing,omitempty"` // when an agent is launched where one already runs: ask (default), attach or new
 	Agents       []string              `toml:"agents"`
 	Tools        []string              `toml:"tools,omitempty"` // commands like git and gh that run once on the host, not in a session
 	Predict      *bool                 `toml:"predict,omitempty"`
@@ -183,7 +184,21 @@ func Load() (Config, error) {
 	if c.Hosts == nil {
 		c.Hosts = map[string]HostConfig{}
 	}
+	switch c.Existing {
+	case "", "ask", "attach", "new":
+	default:
+		return c, fmt.Errorf("%s: existing must be ask, attach or new, not %q", Path(), c.Existing)
+	}
 	return c, nil
+}
+
+// RealPath spells p without symlinks. If p does not exist, its folder is
+// resolved and its name kept.
+func RealPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Join(resolve(filepath.Dir(p)), filepath.Base(p))
 }
 
 // Save writes the config.
@@ -292,14 +307,20 @@ func writeFile(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// FindProject returns the on project containing dir, if any, with the local
-// root it was turned on at.
+// FindProject returns the project dir belongs to, with its root as stored,
+// choosing the most specific. Roots are kept by their real path (aft on sees
+// to it), and dir is compared as given and by its real spelling, so a folder
+// reached through a symlink (~/room for /Volumes/Room) is found either way.
+// Only dir is ever resolved: it is where the caller stands, so it is alive;
+// a stored root may sit on a share whose server is offline, and resolving it
+// would hang every command.
 func (s State) FindProject(dir string) (root string, p Project, ok bool) {
-	dir = filepath.Clean(dir)
 	best := ""
-	for r := range s.Projects {
-		if within(dir, r) && len(r) > len(best) {
-			best = r
+	for _, d := range spellings(dir) {
+		for r := range s.Projects {
+			if _, inside := relInside(d, r); inside && len(r) > len(best) {
+				best = r
+			}
 		}
 	}
 	if best == "" {
@@ -308,17 +329,16 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 	return best, s.Projects[best], true
 }
 
-// within reports whether dir is root or inside it, spelled either way: a
-// project turned on through a symlink (~/room is /Volumes/Room) matches the
-// real path too.
-func within(dir, root string) bool {
-	if _, ok := relInside(dir, root); ok {
-		return true
+// spellings is a path as given and, when that differs, by its real path.
+func spellings(p string) []string {
+	p = filepath.Clean(p)
+	if real := RealPath(p); real != p {
+		return []string{p, real}
 	}
-	_, ok := relInside(resolve(dir), resolve(root))
-	return ok
+	return []string{p}
 }
 
+// relInside returns dir relative to root when dir is root or inside it.
 func relInside(dir, root string) (string, bool) {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -336,11 +356,14 @@ func resolve(p string) string {
 
 // RemoteDir maps a local directory inside a project to its server directory.
 func RemoteDir(root string, p Project, dir string) string {
-	rel, ok := relInside(dir, root)
-	if !ok {
-		rel, _ = relInside(resolve(dir), resolve(root))
+	rel := "."
+	for _, d := range spellings(dir) {
+		if r, ok := relInside(d, root); ok {
+			rel = r
+			break
+		}
 	}
-	if rel == "" || rel == "." {
+	if rel == "." {
 		return p.Dir
 	}
 	return p.Dir + "/" + filepath.ToSlash(rel)
@@ -409,24 +432,27 @@ func DetachByte(s string) (byte, error) {
 }
 
 // MapLocal returns the host and server directory for a local path that lives
-// under a configured mount, choosing the most specific mount. The local path
-// should be resolved of symlinks by the caller, since a mountpoint is physical.
+// under a configured mount, choosing the most specific mount. Mounts are kept
+// by their real path (aft mount add and detection see to it), so the path is
+// compared as given and, when it is reached through a symlink (~/room may be
+// /Volumes/Room), by its real spelling too. Mounts themselves are never
+// resolved here, which could block on a share whose server is offline;
+// callers pass paths they have just used, which cannot.
 func (c Config) MapLocal(local string) (host, remote string, ok bool) {
-	local = filepath.Clean(local)
+	forms := spellings(local)
 	best := -1
 	var chosen Mount
+	var rest string
 	for _, m := range c.Mounts {
 		ml := filepath.Clean(m.Local)
-		if local == ml || strings.HasPrefix(local, ml+string(filepath.Separator)) {
-			if len(ml) > best {
-				best, chosen = len(ml), m
+		for _, f := range forms {
+			if (f == ml || strings.HasPrefix(f, ml+string(filepath.Separator))) && len(ml) > best {
+				best, chosen, rest = len(ml), m, strings.TrimPrefix(f, ml)
 			}
 		}
 	}
 	if best < 0 {
 		return "", "", false
 	}
-	suffix := filepath.ToSlash(strings.TrimPrefix(local, filepath.Clean(chosen.Local)))
-	remote = strings.TrimRight(chosen.Path, "/") + suffix
-	return chosen.Host, remote, true
+	return chosen.Host, strings.TrimRight(chosen.Path, "/") + filepath.ToSlash(rest), true
 }

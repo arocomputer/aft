@@ -156,6 +156,7 @@ type Session struct {
 	mu       sync.Mutex
 	cur      *client
 	attached bool
+	from     string // the machine the attached client said it is on, for the one it replaced
 
 	bridgeMu sync.Mutex
 	bridgeID uint32
@@ -223,15 +224,21 @@ func Serve(o Options) error {
 	if err := writeJSON(RecordPath(o.ID), s.record); err != nil {
 		return err
 	}
-	defer os.Remove(RecordPath(o.ID))
+	// The session may be renamed while it runs, so what it leaves behind is
+	// named at the end.
+	defer func() { os.Remove(RecordPath(s.id())) }()
 
-	os.Remove(SocketPath(o.ID))
+	if c, err := net.Dial("unix", SocketPath(o.ID)); err == nil {
+		c.Close()
+		return fmt.Errorf("session %s is already running", o.ID)
+	}
+	os.Remove(SocketPath(o.ID)) // a socket a dead session left behind
 	ln, err := net.Listen("unix", SocketPath(o.ID))
 	if err != nil {
 		return err
 	}
 	defer ln.Close()
-	defer os.Remove(SocketPath(o.ID))
+	defer func() { os.Remove(SocketPath(s.id())) }()
 	os.Remove(BridgePath(o.ID))
 	bln, err := net.Listen("unix", BridgePath(o.ID))
 	if err != nil {
@@ -250,26 +257,71 @@ func Serve(o Options) error {
 	s.exit = exitInfo(err)
 	close(s.exited)
 	s.udpMu.Lock()
-	if s.udp != nil {
-		s.udp.Close()
-	}
+	l := s.udp
 	s.udpMu.Unlock()
+	if l != nil {
+		l.Close()
+		defer l.Drain(3 * time.Second) // after the Exit frame below is sent
+	}
 	s.mu.Lock()
 	switch {
 	case s.cur != nil:
 		s.cur.sendJSON(proto.Exit, s.exit)
 		s.cur.close()
 		<-s.cur.done
-		ClearRemains(o.ID) // whoever was attached saw it end
+		ClearRemains(s.opts.ID) // whoever was attached saw it end
 	case s.killed:
-		ClearRemains(o.ID)
+		ClearRemains(s.opts.ID)
 	default:
 		// It ended unseen: keep how, and its last screen, for aft ls and attach.
 		s.saveScreen()
 		leaveRemains(s.record, Ending{At: time.Now().UTC().Format(time.RFC3339), Code: s.exit.Code, Signal: s.exit.Signal})
 	}
 	s.mu.Unlock()
-	log.Printf("session %s: %s exited: %+v", o.ID, o.Command[0], s.exit)
+	log.Printf("session %s: %s exited: %+v", s.opts.ID, o.Command[0], s.exit)
+	return nil
+}
+
+// id is the session's current name, which aft rename can change.
+func (s *Session) id() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.opts.ID
+}
+
+// rename gives the session the name id: it claims the name, moves its record
+// and socket, and tells the attached client. The bridge socket keeps its path,
+// which the application holds in AFT_BRIDGE.
+func (s *Session) rename(id string) error {
+	if !ValidID(id) {
+		return fmt.Errorf("a session name is letters, digits, dots, dashes and underscores: %q", id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.opts.ID
+	if id == old {
+		return nil
+	}
+	if hasRemains(id) {
+		return fmt.Errorf("%s names a session that ended; aft kill %s forgets it", id, id)
+	}
+	f, err := os.OpenFile(RecordPath(id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("a session called %s is already running", id)
+	}
+	f.Close()
+	if err := os.Rename(SocketPath(old), SocketPath(id)); err != nil {
+		os.Remove(RecordPath(id))
+		return err
+	}
+	s.opts.ID, s.record.ID = id, id
+	writeJSON(RecordPath(id), s.record)
+	os.Remove(RecordPath(old))
+	os.Rename(ScreenPath(old), ScreenPath(id))
+	if s.cur != nil {
+		s.cur.send(proto.Renamed, []byte(id))
+	}
+	log.Printf("session %s: renamed to %s", old, id)
 	return nil
 }
 
@@ -350,7 +402,11 @@ func (s *Session) readPTY() {
 			s.dirty = true
 			if t := cleanTitle(s.term.Title()); t != s.record.Title {
 				s.record.Title = t
-				writeJSON(RecordPath(s.opts.ID), s.record)
+				select {
+				case <-s.exited: // the record is being removed; do not write it back
+				default:
+					writeJSON(RecordPath(s.opts.ID), s.record)
+				}
 			}
 			if s.cur != nil {
 				s.cur.send(proto.Output, buf[:n])
@@ -392,17 +448,30 @@ func (s *Session) serveClient(conn net.Conn) {
 		return
 	}
 	if first.Type == proto.Resize && cols == 0 {
-		// A control-only connection (ls, end, kick) never attaches.
+		// A control-only connection (end, udp) never attaches.
 		s.control(c, r)
 		return
 	}
 
+	// The client may say which machine it is on, right after its size, so a
+	// client it replaces can be told who took the session. Only a From frame
+	// is taken here; anything else, or nothing within a moment, is left for
+	// the loop below.
+	from := ""
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if b, err := r.Peek(1); err == nil && proto.Type(b[0]) == proto.From {
+		if f, err := proto.Read(r); err == nil {
+			from = string(f.Payload)
+		}
+	}
+	conn.SetReadDeadline(time.Time{})
 	s.mu.Lock()
 	if old := s.cur; old != nil {
-		old.send(proto.Detached, nil)
+		old.send(proto.Detached, []byte(from))
 		old.close()
 	}
 	s.cur = c
+	s.from = from
 	s.attached = true
 	s.record.Attached = true
 	resized := cols != s.record.Cols || rows != s.record.Rows
@@ -492,6 +561,11 @@ done:
 func (s *Session) openUDP() (udp.Offer, error) {
 	s.udpMu.Lock()
 	defer s.udpMu.Unlock()
+	select {
+	case <-s.exited:
+		return udp.Offer{}, errors.New(endedText)
+	default:
+	}
 	if s.udp == nil {
 		l, err := udp.Listen()
 		if err != nil {
@@ -502,6 +576,14 @@ func (s *Session) openUDP() (udp.Offer, error) {
 			for {
 				conn, err := l.Accept()
 				if err != nil {
+					// The listener died; forget it, so the next ReqUDP opens a
+					// new one instead of offering a dead port.
+					s.udpMu.Lock()
+					if s.udp == l {
+						s.udp = nil
+					}
+					s.udpMu.Unlock()
+					log.Printf("session %s: UDP listener stopped: %v", s.opts.ID, err)
 					return
 				}
 				go s.serveClient(conn)
@@ -529,6 +611,12 @@ func (s *Session) control(c *client, r *bufio.Reader) {
 				c.send(proto.Error, []byte(err.Error()))
 			} else {
 				c.sendJSON(proto.UDPOffer, o)
+			}
+		case proto.Rename:
+			if err := s.rename(string(f.Payload)); err != nil {
+				c.send(proto.Error, []byte(err.Error()))
+			} else {
+				c.send(proto.Pong, nil)
 			}
 		case proto.Ping:
 			c.send(proto.Pong, nil)
@@ -680,7 +768,7 @@ func List() ([]Record, error) {
 		}
 		if syscall.Kill(r.Server, 0) != nil {
 			// Its server died without cleaning up, so how it ended is unknown.
-			if _, err := os.Stat(remainsPath(r.ID)); err != nil {
+			if !hasRemains(r.ID) {
 				leaveRemains(r, Ending{At: time.Now().UTC().Format(time.RFC3339), Lost: true})
 			}
 			os.Remove(filepath.Join(home.Sessions(), e.Name()))
@@ -707,9 +795,9 @@ func Load(id string) (Record, error) {
 // Attach relays frames between rw and the session until either side ends.
 // This is the whole body of the SSH-side relay: a byte pump in each direction.
 func Attach(id string, rw io.ReadWriter) error {
-	conn, err := net.Dial("unix", SocketPath(id))
+	conn, err := dial(id)
 	if err != nil {
-		return fmt.Errorf("session %s is not running", id)
+		return err
 	}
 	defer conn.Close()
 	errc := make(chan error, 2)
@@ -719,18 +807,69 @@ func Attach(id string, rw io.ReadWriter) error {
 	return nil
 }
 
+// notRunning is the error for a session that is not running: it ended, or
+// never existed. Callers tell it apart with errors.As, not by its words.
+type notRunning string
+
+func (id notRunning) Error() string { return "session " + string(id) + " is not running" }
+
+// endedText is how a session that has just exited answers a request.
+const endedText = "the session has ended"
+
+// dial connects to a session's socket. Only a missing socket or a refused
+// connection means the session is not running; any other failure, such as a
+// full backlog or no free file descriptors, is reported as it is, since the
+// session may well be alive.
+func dial(id string) (net.Conn, error) {
+	conn, err := net.Dial("unix", SocketPath(id))
+	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+		return nil, notRunning(id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reach session %s: %w", id, err)
+	}
+	return conn, nil
+}
+
+// hasRemains reports whether session id ended and left its remains.
+func hasRemains(id string) bool {
+	_, err := os.Stat(remainsPath(id))
+	return err == nil
+}
+
+// GoneText tells someone reaching for session id that it is gone, and how
+// to see what it left if it left anything.
+func GoneText(id string) string {
+	if hasRemains(id) {
+		return "session " + id + " has ended; aft attach " + id + " shows its last screen and how it ended"
+	}
+	return "session " + id + " is not running"
+}
+
 // Control opens a control connection to a session and sends one frame.
 func Control(id string, t proto.Type) error {
-	_, err := request(id, t)
+	_, err := request(id, t, nil)
+	return err
+}
+
+// Rename asks the session id to call itself to.
+func Rename(id, to string) error {
+	f, err := request(id, proto.Rename, []byte(to))
+	if err == nil && f.Type == proto.Error {
+		err = errors.New(string(f.Payload))
+	}
 	return err
 }
 
 // OfferUDP asks a session to listen on UDP and returns how to reach it.
 func OfferUDP(id string) (udp.Offer, error) {
-	f, err := request(id, proto.ReqUDP)
+	f, err := request(id, proto.ReqUDP, nil)
 	var o udp.Offer
 	if err == nil && f.Type == proto.Error {
 		err = errors.New(string(f.Payload))
+		if string(f.Payload) == endedText {
+			err = notRunning(id) // it exited while being asked
+		}
 	}
 	if err == nil {
 		err = json.Unmarshal(f.Payload, &o)
@@ -739,22 +878,26 @@ func OfferUDP(id string) (udp.Offer, error) {
 }
 
 // request sends one control frame to a session and returns its answer.
-func request(id string, t proto.Type) (proto.Frame, error) {
-	conn, err := net.Dial("unix", SocketPath(id))
+func request(id string, t proto.Type, payload []byte) (proto.Frame, error) {
+	conn, err := dial(id)
 	if err != nil {
-		return proto.Frame{}, fmt.Errorf("session %s is not running", id)
+		return proto.Frame{}, err
 	}
 	defer conn.Close()
 	if err := proto.Write(conn, proto.Resize, proto.EncodeResize(0, 0)); err != nil {
 		return proto.Frame{}, err
 	}
-	if err := proto.Write(conn, t, nil); err != nil {
+	if err := proto.Write(conn, t, payload); err != nil {
 		return proto.Frame{}, err
 	}
 	wait := 5 * time.Second
-	if t == proto.ReqUDP {
+	if t == proto.ReqUDP || t == proto.Rename {
 		wait = time.Second // a session from an older server never answers
 	}
 	conn.SetReadDeadline(time.Now().Add(wait))
-	return proto.Read(bufio.NewReader(conn))
+	f, err := proto.Read(bufio.NewReader(conn))
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = fmt.Errorf("session %s did not answer; it may have been started by an older server, which a fresh session would not be", id)
+	}
+	return f, err
 }

@@ -9,7 +9,10 @@ usage() {
 }
 
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
-ldflags="-s -w -X main.version=$version -X github.com/arocomputer/aft/internal/session.Version=$version"
+# The commit time orders builds, so a client never replaces a newer server
+# with its own older one; an uncommitted build counts as made now.
+case $version in *-dirty|dev) built=$(date +%s) ;; *) built=$(git log -1 --format=%ct) ;; esac
+ldflags="-s -w -X main.version=$version -X github.com/arocomputer/aft/internal/session.Version=$version -X github.com/arocomputer/aft/internal/session.Built=$built"
 
 task=${1:-check}
 if [ "$#" -gt 0 ]; then shift; fi
@@ -35,7 +38,7 @@ case "$task" in
     [ "$#" -eq 0 ] || usage
     # The install package test embeds the cross-compiled servers; build them if
     # they are not present yet (a fresh checkout or CI).
-    [ -e internal/session/install/embed/server-linux-amd64.gz ] || ./x servers
+    [ -e internal/session/install/embed/aft-server-linux-amd64.gz ] || ./x servers
     go test -race ./...
     python3 -m unittest discover -s scripts -p 'test_*.py'
     ;;
@@ -63,8 +66,8 @@ case "$task" in
     [ "$#" -eq 0 ] || usage
     for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
       os=${target%/*}; arch=${target#*/}
-      out="internal/session/install/embed/server-$os-$arch"
-      CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$out" ./cmd/server
+      out="internal/session/install/embed/aft-server-$os-$arch"
+      CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$out" ./cmd/aft-server
       gzip -9 -n -f "$out"
     done
     ;;

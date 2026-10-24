@@ -137,13 +137,16 @@ everything the agent prints, and a bounded scrollback.
   bracketed paste, keyboard protocol flags and cursor visibility. It paints
   the current screen, then sends the app a resize signal so it redraws
   itself.
-- **Invisible.** There is no status bar, no prefix key and no on-screen
-  chrome. Status shows only in the terminal title, for example "app ·
-  reconnecting".
+- **Invisible.** There is no status bar and no on-screen chrome while
+  things work, and the terminal title is the application's alone. Status
+  shows only while the connection stays down, a file is uploading, or a
+  pasted file could not be sent, as one line across the top of the screen
+  that goes away by itself.
 - **One client at a time.** A new attach takes over from the old one.
-- **Detaching.** Closing the window detaches, or `aft detach` from another
-  terminal. Aft does not steal a key from the agent by default. A detach key
-  can be enabled in config.
+- **Detaching.** A session detaches when its terminal goes away: the window
+  closes, another computer attaches, or the laptop sleeps. Aft does not steal
+  a key from the agent by default; a prefix key (Ctrl-] then d) is on, and a
+  direct detach key can be enabled in config.
 
 ## 5. The terminal client and prediction
 
@@ -166,8 +169,8 @@ channel.
   prompt or in a menu, and resume once echoes match again. Enter, arrow
   keys, control keys and pastes are never predicted.
 - **Reconnect.** A dropped connection is detected through SSH keepalives.
-  The client reconnects and reattaches. The title shows the state. Typed
-  input is never lost silently: it is either delivered or reported.
+  The client reconnects and reattaches, silently when it succeeds at once.
+  Typed input is never lost silently: it is either delivered or reported.
 
 Still bound by network latency: menus, autocomplete popups, and the agent's
 response after Enter. The response is dominated by model time.
@@ -214,7 +217,7 @@ Keys, ProxyJump, agent, config and host trust all come from the user's
 setup. The connection carries four things:
 
 - **A session channel,** opened as
-  `ssh -tt host ~/.local/share/aft/server attach ID`.
+  `ssh -tt host ~/.local/share/aft/aft-server attach ID`.
 - **The bridge socket,** a Unix socket forwarded back to your machine.
 - **Port mirrors,** added on the live connection with `ssh -O forward`.
 - **Short server calls,** such as listing sessions.
@@ -223,7 +226,7 @@ The transport is TCP. Prediction hides network stalls for typing, but not
 for output. UDP can be considered later if lossy networks prove a problem.
 
 **Server install.** Aft copies its own static binary for the server's OS and
-architecture to `~/.local/share/aft/server` on the server. It verifies the hash and pins
+architecture to `~/.local/share/aft/aft-server` on the server. It verifies the hash and pins
 the binary to the client's version. macOS arm64 builds are signed ad hoc by
 the Go linker. A binary copied over SSH carries no quarantine flag.
 
@@ -314,6 +317,7 @@ aft off                      agents started here run locally
 aft HOST [CMD...]            a lag-free terminal on that host, or one command
 aft ls                       sessions on all hosts
 aft attach [NAME]            reattach
+aft rename NAME NEW          call a session what you like
 aft kill NAME                stop a session
 aft status                   connection, sessions, mirrored ports
 aft doctor                   SSH, server, agents on the host, launchers, shell block
@@ -322,9 +326,10 @@ aft uninstall                remove everything Aft added, everywhere
 aft completion bash|zsh|fish
 ```
 
-The server runs on the host as its own binary with the subcommands `attach`,
-`new`, `udp`, `ls`, `end` and `listeners`, plus the bridge shims. For the host
-`local`, the aft binary runs it as the hidden `aft __server`.
+The server runs on the host as `aft-server`, its own binary, as mosh-server
+is mosh's, with the subcommands `attach`, `new`, `udp`, `ls`, `end`,
+`rename`, `remains` and `listeners`, plus the bridge shims. For the host `local`, the
+aft binary is the server when started under the name `aft-server`.
 
 ## 12. Settings
 

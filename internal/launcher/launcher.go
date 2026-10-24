@@ -5,7 +5,6 @@
 package launcher
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,7 +17,6 @@ import (
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/terminal"
 	"github.com/arocomputer/aft/internal/ui"
 )
@@ -71,11 +69,13 @@ func Launch(name string, args []string) int {
 	opts.Host = h
 	opts.Command = append([]string{name}, args...)
 	opts.Dir = config.RemoteDir(root, p, cwd)
-	// Reattach to an existing detached session for this agent in this directory
-	// rather than starting a second one.
-	if id := ExistingSession(h, opts.Dir, func(r session.Record) bool { return r.Command[0] == name }); id != "" {
-		ui.Note("reattaching to %s %s", id, ui.Dim("· aft kill "+id+" starts a fresh one"))
-		opts.SessionID = id
+	// An agent already running here is the one to come back to, not to start
+	// beside. The config says whether to ask.
+	opts.Reuse = cfg.Existing != "new"
+	if cfg.Existing == "" || cfg.Existing == "ask" {
+		opts.Existing = func(id, title string, attached bool) bool {
+			return askExisting(strings.ToUpper(name[:1])+name[1:], id, title, attached)
+		}
 	}
 	return terminal.Run(opts)
 }
@@ -107,23 +107,18 @@ func RunTool(h transport.Host, dir string, wrapper, argv []string) int {
 	return 0
 }
 
-// ExistingSession returns the id of a session in dir on h that match accepts,
-// or empty. Errors mean "start fresh".
-func ExistingSession(h transport.Host, dir string, match func(session.Record) bool) string {
-	out, err := transport.Output(h, nil, "ls")
-	if err != nil {
-		return ""
+// askExisting asks whether to attach to the agent already running here, or
+// start another; without a terminal it attaches.
+func askExisting(agent, id, title string, attached bool) bool {
+	q := agent + " is already running here as " + id
+	if title != "" {
+		q += " · " + title
 	}
-	var recs []session.Record
-	if json.Unmarshal(out, &recs) != nil {
-		return ""
+	hint := "it keeps running on the host"
+	if attached {
+		hint = "another terminal is showing it; this one takes over"
 	}
-	for _, r := range recs {
-		if len(r.Command) > 0 && r.Dir == dir && match(r) {
-			return r.ID
-		}
-	}
-	return ""
+	return ui.Choose(q, []ui.Option{{Label: "Attach to it", Hint: hint}, {Label: "Start a new one"}}, 0) == 0
 }
 
 // SessionOptions builds client options for a project, resolving settings from
@@ -149,10 +144,16 @@ func SessionOptions(cfg config.Config, host, root string, p config.Project) (ter
 		return terminal.Options{}, err
 	}
 	return terminal.Options{
-		Env:       Environment(s.Env),
-		Wrapper:   s.Wrapper,
-		Predict:   s.Predict,
-		UDP:       s.UDP,
+		Env:     Environment(s.Env),
+		Wrapper: s.Wrapper,
+		Predict: s.Predict,
+		UDP:     s.UDP,
+		ServerPath: func(local string) (string, bool) {
+			// The most specific mount says where the file really lives; it is
+			// on this host only if that mount is this host's.
+			mh, remote, ok := cfg.MapLocal(local)
+			return remote, ok && mh == host
+		},
 		Ports:     rng,
 		DetachKey: detach,
 		Prefix:    prefix,
@@ -254,30 +255,6 @@ func Block() string {
 // FishBlock is the content of the fish drop-in file.
 func FishBlock() string {
 	return blockStart + "\nfish_add_path --prepend --move " + PathDir + "\n" + blockEnd + "\n"
-}
-
-// MoveShellBlocks rewrites each recorded block to the current PATH line, after
-// home.Migrate moved the launchers. It returns the files whose block was
-// edited by hand and still needs the new line. Remove it with home.Migrate.
-func MoveShellBlocks(st *config.State) (kept []string) {
-	for i, b := range st.ShellBlocks {
-		want := Block()
-		if filepath.Base(b.File) == "aft.fish" {
-			want = FishBlock()
-		}
-		existing, err := os.ReadFile(b.File)
-		if b.Block == want || err != nil {
-			continue
-		}
-		if !strings.Contains(string(existing), b.Block) {
-			kept = append(kept, b.File)
-			continue
-		}
-		if os.WriteFile(b.File, []byte(strings.Replace(string(existing), b.Block, want, 1)), 0o644) == nil {
-			st.ShellBlocks[i].Block = want
-		}
-	}
-	return kept
 }
 
 // ShellFiles returns the config files Aft should put the block in, based on
@@ -417,6 +394,25 @@ func RemoveShellBlocks(st *config.State) (removed, kept []string) {
 func Installed(name string) bool {
 	_, err := os.Lstat(filepath.Join(home.Launchers(), name))
 	return err == nil
+}
+
+// PathInShellConfig reports whether the shell config puts the launchers on
+// PATH for new shells: the block aft added is still in place, or in manual
+// mode a line naming the launchers directory is in one of the shell's files.
+// Doctor asks it when this shell's PATH says no, as a script's or ssh's does.
+func PathInShellConfig(st config.State) bool {
+	for _, b := range st.ShellBlocks {
+		if raw, err := os.ReadFile(b.File); err == nil && strings.Contains(string(raw), b.Block) {
+			return true
+		}
+	}
+	posix, fish := ShellFiles()
+	for _, f := range append(posix, fish) {
+		if raw, err := os.ReadFile(f); err == nil && (strings.Contains(string(raw), PathDir) || strings.Contains(string(raw), home.Launchers())) {
+			return true
+		}
+	}
+	return false
 }
 
 // OnPath reports whether the shim directory comes first on PATH.

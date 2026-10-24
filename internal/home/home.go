@@ -13,7 +13,7 @@
 //
 //	~/.local/share/aft/
 //	  launchers/    you:   the agent launcher symlinks
-//	  server        host:  the installed server binary
+//	  aft-server    host:  the installed server binary
 //	  shims/        host:  the bridge shims (open, clipboard)
 //	  sessions/     host:  one record per running session
 //	  sockets/      host:  session, bridge and SSH connection sockets
@@ -67,7 +67,11 @@ func Data() string {
 func Launchers() string { return filepath.Join(Data(), "launchers") }
 
 // Server is the path of the installed server binary on a host.
-func Server() string { return filepath.Join(Data(), "server") }
+func Server() string { return filepath.Join(Data(), ServerName) }
+
+// ServerName is the server binary's name, on a host and in a process list, as
+// mosh-server is mosh's. The aft binary started under this name is the server.
+const ServerName = "aft-server"
 
 // Shims holds the bridge shims a session puts on the host's PATH: open and the
 // clipboard readers. It is separate from Launchers so an agent name on the host
@@ -172,63 +176,4 @@ func Ensure() error {
 		}
 	}
 	return nil
-}
-
-// Migrate moves the plumbing an older Aft kept in Dir into Data, and reports
-// whether it moved launchers, whose PATH line in the shell config must follow.
-// A listening socket survives a rename, so live sessions keep working; their
-// processes and older clients still use the old server, shims, sockets and
-// sessions paths, so links are left there until no session is running, and a
-// later Migrate removes them. The shims are rebuilt for the moved server.
-// It is safe to call on every start. Remove it once no installation predates
-// Data.
-func Migrate() (launchers bool) {
-	old := Dir()
-	if old == Data() {
-		return false
-	}
-	busy := false
-	for _, n := range []string{"server", "launchers", "shims", "sessions", "sockets"} {
-		src, dst := filepath.Join(old, n), filepath.Join(Data(), n)
-		fi, err := os.Lstat(src)
-		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-		if !fi.IsDir() {
-			// The server binary: keep it running sessions until a newer one is
-			// installed over it.
-			if _, err := os.Lstat(dst); err == nil || os.MkdirAll(Data(), 0o700) != nil || os.Rename(src, dst) != nil {
-				os.Remove(src)
-			}
-			continue
-		}
-		entries, _ := os.ReadDir(src)
-		if err := os.MkdirAll(dst, 0o700); err != nil {
-			continue
-		}
-		for _, e := range entries {
-			// Shims are recreated pointing at the new server.
-			if n != "shims" && os.Rename(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())) == nil {
-				launchers = launchers || n == "launchers"
-				busy = busy || n == "sessions"
-			}
-		}
-		os.RemoveAll(src)
-	}
-	if _, err := os.Stat(Server()); err == nil {
-		InstallShims(Server())
-	}
-	links := []string{"server", "shims", "sessions", "sockets"}
-	if busy {
-		for _, n := range links {
-			os.Symlink(filepath.Join(Data(), n), filepath.Join(old, n))
-		}
-	} else if entries, _ := os.ReadDir(Sessions()); len(entries) == 0 {
-		for _, n := range links {
-			if fi, err := os.Lstat(filepath.Join(old, n)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-				os.Remove(filepath.Join(old, n))
-			}
-		}
-	}
-	return launchers
 }

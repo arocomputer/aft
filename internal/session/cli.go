@@ -1,7 +1,8 @@
-// The server CLI: the commands the terminal runs over SSH to start, attach to
-// and manage sessions, plus clipboard-put for pasted files. It is built into
-// both the full aft binary (for local sessions) and the small server binary
-// that Aft installs on servers.
+// The aft-server CLI: the commands the terminal runs over SSH to start, attach
+// to and manage sessions, plus clipboard-put for pasted files. It is built
+// into both the small aft-server binary that Aft installs on hosts and the
+// full aft binary, which is aft-server when started under that name (for
+// sessions on this machine).
 
 package session
 
@@ -9,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
@@ -31,6 +34,7 @@ type Info struct {
 	OS      string            `json:"os"`
 	Arch    string            `json:"arch"`
 	Version string            `json:"version"`
+	Built   int64             `json:"built,omitempty"` // when this build's commit was made, Unix seconds; orders builds
 	SHA     string            `json:"sha"`
 	Home    string            `json:"home"`
 	Shell   string            `json:"shell"`
@@ -38,15 +42,19 @@ type Info struct {
 	Shims   bool              `json:"shims"`
 }
 
-// Version is set by the build.
-var Version = "dev"
+// Version and Built are set by the build: the git description, and the
+// commit's time as Unix seconds, which says which of two builds is newer.
+var (
+	Version = "dev"
+	Built   = "0"
+)
 
 // Main runs a server subcommand with stdio attached to the caller. prefix is
 // how to invoke server subcommands again from a child process: the server
-// binary by itself, or the aft binary followed by "__server".
+// binary, or the aft binary, either started as aft-server.
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: server new|attach|serve|ls|end|udp|remains|setup|info|listeners|clipboard-put")
+		fmt.Fprintln(stderr, "usage: aft-server new|attach|serve|ls|end|udp|rename|remains|setup|info|listeners|clipboard-put")
 		return 2
 	}
 	self, err := os.Executable()
@@ -59,7 +67,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	}
 	switch args[0] {
 	case "serve", "new":
-		o, err := parseSessionArgs(args[0], args[1:])
+		o, reuse, err := parseSessionArgs(args[0], args[1:])
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 2
@@ -71,39 +79,88 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			}
 			return 0
 		}
+		if reuse {
+			if id := existing(o.Dir, o.Command); id != "" {
+				return relay(id, stdin, stdout, stderr)
+			}
+			o.ID = NewID()
+		}
 		if err := Start(prefix, o); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return relay(o.ID, stdin, stdout, stderr)
+	case "rename":
+		if len(args) != 3 || !ValidID(args[1]) {
+			fmt.Fprintln(stderr, "usage: server rename ID NAME")
+			return 2
+		}
+		if err := Rename(args[1], args[2]); err != nil {
+			var gone notRunning
+			if errors.As(err, &gone) {
+				err = errors.New(GoneText(args[1]))
+			}
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "udp":
 		// udp ID opens a running session's UDP listener; udp with new's
-		// arguments starts the session first. Either prints how to reach it,
-		// so a client needs one round trip.
+		// arguments starts the session first, or with --reuse comes back to
+		// the one already running the same program in the same directory.
+		// Either prints how to reach it, so a client needs one round trip.
 		var id string
+		started, reused := false, Record{}
 		if len(args) == 2 && ValidID(args[1]) {
 			id = args[1]
 		} else {
-			o, err := parseSessionArgs("udp", args[1:])
+			o, reuse, err := parseSessionArgs("udp", args[1:])
 			if err != nil {
 				fmt.Fprintln(stderr, err)
 				return 2
 			}
-			if err := Start(prefix, o); err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
+			if reuse {
+				id = existing(o.Dir, o.Command)
 			}
-			id = o.ID
+			if id != "" {
+				reused, _ = Load(id)
+			} else {
+				started = true
+				if o.ID == "" {
+					o.ID = NewID()
+				}
+				if err := Start(prefix, o); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+				id = o.ID
+			}
 		}
 		offer, err := OfferUDP(id)
-		if err != nil {
+		var gone notRunning
+		if errors.As(err, &gone) && !started {
+			// Say so plainly, so the client stops instead of trying SSH.
+			json.NewEncoder(stdout).Encode(struct {
+				ID      string `json:"id"`
+				Gone    bool   `json:"gone"`
+				Remains bool   `json:"remains"`
+			}{id, true, hasRemains(id)})
+			return 0
+		}
+		if err != nil && !started {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		// A session that started is reported even without UDP, so the client
+		// attaches to it over SSH instead of thinking it failed to start. One
+		// that was reused is described, so the client can ask before joining.
 		json.NewEncoder(stdout).Encode(struct {
 			ID string `json:"id"`
 			udp.Offer
-		}{id, offer})
+			Reused   bool   `json:"reused,omitempty"`
+			Title    string `json:"title,omitempty"`
+			Attached bool   `json:"attached,omitempty"`
+		}{id, offer, reused.ID != "", reused.Title, reused.Attached})
 		return 0
 	case "remains":
 		// Hand over what a session that ended unseen left, then forget it.
@@ -165,9 +222,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				code = 2
 				continue
 			}
-			if _, err := os.Stat(remainsPath(id)); err == nil {
-				ClearRemains(id) // it already ended; kill just forgets it
-				continue
+			if _, err := Load(id); err != nil {
+				if hasRemains(id) {
+					ClearRemains(id) // it already ended; kill just forgets it
+					continue
+				}
 			}
 			if err := Control(id, proto.End); err != nil {
 				fmt.Fprintln(stderr, err)
@@ -236,10 +295,10 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	return 2
 }
 
-func parseSessionArgs(name string, args []string) (Options, error) {
+func parseSessionArgs(name string, args []string) (o Options, reuse bool, err error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var o Options
+	fs.BoolVar(&reuse, "reuse", false, "come back to a running session of the same program in the same directory, if there is one")
 	fs.StringVar(&o.ID, "id", "", "session id")
 	fs.StringVar(&o.Dir, "dir", "", "working directory")
 	fs.IntVar(&o.Cols, "cols", 80, "columns")
@@ -248,19 +307,13 @@ func parseSessionArgs(name string, args []string) (Options, error) {
 	fs.Var(&env, "env", "KEY=VALUE to pass to the application")
 	fs.Var(&wrap, "wrap", "wrapper word to run the agent inside")
 	if err := fs.Parse(args); err != nil {
-		return o, err
+		return o, false, err
 	}
 	o.Env = env
 	o.Wrapper = wrap
 	o.Command = fs.Args()
 	if len(o.Command) == 0 {
-		return o, fmt.Errorf("%s requires -- COMMAND", name)
-	}
-	if o.ID == "" {
-		o.ID = NewID()
-	}
-	if !ValidID(o.ID) {
-		return o, fmt.Errorf("invalid session id %q", o.ID)
+		return o, false, fmt.Errorf("%s requires -- COMMAND", name)
 	}
 	if o.Dir == "" {
 		o.Dir, _ = os.UserHomeDir()
@@ -268,10 +321,32 @@ func parseSessionArgs(name string, args []string) (Options, error) {
 	for _, kv := range o.Env {
 		k, _, ok := strings.Cut(kv, "=")
 		if !ok || k == "" || strings.ContainsAny(k, " \t\n") {
-			return o, fmt.Errorf("invalid --env %q", kv)
+			return o, false, fmt.Errorf("invalid --env %q", kv)
 		}
 	}
-	return o, nil
+	// With --reuse the name is picked only once no session is reused, so
+	// asking never claims one.
+	if o.ID == "" && !reuse {
+		o.ID = NewID()
+	} else if o.ID != "" && !ValidID(o.ID) {
+		return o, false, fmt.Errorf("invalid session id %q", o.ID)
+	}
+	return o, reuse, nil
+}
+
+// existing is the running session in dir for the same program as command, or
+// empty: the one a launcher comes back to instead of starting a second.
+func existing(dir string, command []string) string {
+	list, _ := List()
+	for _, r := range list {
+		if r.Dir != dir || len(r.Command) == 0 {
+			continue
+		}
+		if IsShell(command) && IsShell(r.Command) || !IsShell(command) && !IsShell(r.Command) && r.Command[0] == command[0] {
+			return r.ID
+		}
+	}
+	return ""
 }
 
 type multi []string
@@ -284,6 +359,13 @@ func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 		io.Reader
 		io.Writer
 	}{stdin, stdout}); err != nil {
+		var gone notRunning
+		if errors.As(err, &gone) {
+			// Tell the client in its own protocol, so it stops reconnecting
+			// and says why.
+			proto.Write(stdout, proto.Error, []byte(GoneText(id)))
+			return 1
+		}
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -293,7 +375,6 @@ func relay(id string, stdin io.Reader, stdout, stderr io.Writer) int {
 // Setup prepares a host for sessions: the directory layout and the bridge
 // shims. self is the installed server binary, which the shims point at.
 func Setup(self string) error {
-	home.Migrate()
 	if err := home.Ensure(); err != nil {
 		return err
 	}
@@ -302,7 +383,7 @@ func Setup(self string) error {
 
 // GatherInfo inspects this machine for doctor and the version check.
 func GatherInfo() Info {
-	info := Info{OS: runtime.GOOS, Arch: runtime.GOARCH, Version: Version, Home: home.Dir(), Shell: os.Getenv("SHELL"), Agents: map[string]string{}}
+	info := Info{OS: runtime.GOOS, Arch: runtime.GOARCH, Version: Version, Built: BuiltAt(), Home: home.Dir(), Shell: os.Getenv("SHELL"), Agents: map[string]string{}}
 	if exe, err := os.Executable(); err == nil {
 		info.SHA, _ = FileSHA256(exe)
 	}
@@ -315,6 +396,13 @@ func GatherInfo() Info {
 		}
 	}
 	return info
+}
+
+// BuiltAt is this build's commit time as Unix seconds, 0 for a build that did
+// not record one.
+func BuiltAt() int64 {
+	n, _ := strconv.ParseInt(Built, 10, 64)
+	return n
 }
 
 // FileSHA256 returns the hex digest of a file.

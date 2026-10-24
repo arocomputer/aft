@@ -1,7 +1,8 @@
 // Package install puts the session server on a host. The aft binary
 // embeds a server build for each supported host platform; Ensure uploads the
-// right one when the host has none or has a different one. A match is decided
-// by hashing the installed binary live, so no version file is kept on the host.
+// right one when the host has none or has an older one. The installed binary
+// is hashed live and reports its build time, so no version file is kept on
+// the host.
 package install
 
 import (
@@ -19,7 +20,7 @@ import (
 	"github.com/arocomputer/aft/internal/session"
 )
 
-// Server binaries are placed here by ./x servers as gzipped server-<os>-<arch>
+// Server binaries are placed here by ./x servers as gzipped aft-server-<os>-<arch>
 // and embedded into aft for installation on hosts.
 //
 //go:embed embed
@@ -27,7 +28,7 @@ var bins embed.FS
 
 // Blob returns the embedded server for a platform, decompressed.
 func Blob(goos, goarch string) ([]byte, error) {
-	gz, err := bins.ReadFile("embed/server-" + goos + "-" + goarch + ".gz")
+	gz, err := bins.ReadFile("embed/aft-server-" + goos + "-" + goarch + ".gz")
 	if err != nil || len(gz) == 0 {
 		return nil, fmt.Errorf("this aft build has no server for %s/%s; run ./x build", goos, goarch)
 	}
@@ -67,16 +68,28 @@ func Platform(uname string) (goos, goarch string, err error) {
 	return goos, goarch, nil
 }
 
-// UpToDate reports whether the server already installed on a host is the same
-// build this aft carries, by comparing the host-reported hash of its running
-// binary to the hash of the embedded blob. It contacts no host of its own.
-func UpToDate(info session.Info) (bool, error) {
+// Compare says how the server installed on a host relates to the one this aft
+// carries: -1 when it is older, 0 when it is this build, 1 when it is newer.
+// Two builds are ordered by their commit time; the same time with a different
+// binary is a rebuild of the same commit, which counts as older. It contacts
+// no host of its own.
+func Compare(info session.Info) (int, error) {
 	blob, err := Blob(info.OS, info.Arch)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	sum := sha256.Sum256(blob)
-	return info.SHA == hex.EncodeToString(sum[:]), nil
+	return compare(info, hex.EncodeToString(sum[:]), session.BuiltAt()), nil
+}
+
+func compare(info session.Info, want string, built int64) int {
+	switch {
+	case info.SHA == want:
+		return 0
+	case info.Built > built:
+		return 1
+	}
+	return -1
 }
 
 // Info runs the server's info command on the host.
@@ -92,28 +105,34 @@ func Info(h transport.Host) (session.Info, error) {
 	return info, json.Unmarshal(out, &info)
 }
 
-// Ensure installs or updates the server on the host and prepares it. It returns
-// the server's info afterwards. Local hosts need nothing.
+// Ensure makes sure the host has a server this aft can work with, and returns
+// its info. One round trip asks the installed server about itself, or, when
+// there is none, the host for its platform; the server is uploaded only when
+// the host has none, or an older one. A newer one is left alone, so a machine
+// that was updated later never pulls a host back. Local hosts need nothing.
 func Ensure(h transport.Host) (session.Info, error) {
 	if h.IsLocal() {
 		return session.GatherInfo(), nil
 	}
-	uname, err := transport.RunRaw(h, nil, "uname -sm")
+	server := transport.RemoteServer()
+	out, err := transport.RunRaw(h, nil, "[ -x "+server+" ] && "+transport.RemotePrefix()+server+" info || uname -sm")
 	if err != nil {
 		return session.Info{}, fmt.Errorf("reach %s: %w", h.Dest(), err)
 	}
-	goos, goarch, err := Platform(string(uname))
-	if err != nil {
-		return session.Info{}, err
+	var info session.Info
+	have := json.Unmarshal(bytes.TrimSpace(out), &info) == nil && info.OS != ""
+	if !have {
+		if info.OS, info.Arch, err = Platform(string(out)); err != nil {
+			return session.Info{}, err
+		}
 	}
-	blob, err := Blob(goos, goarch)
+	blob, err := Blob(info.OS, info.Arch)
 	if err != nil {
 		return session.Info{}, err
 	}
 	sum := sha256.Sum256(blob)
 	want := hex.EncodeToString(sum[:])
-	info, err := Info(h)
-	if err == nil && info.SHA == want && info.Shims {
+	if have && (compare(info, want, session.BuiltAt()) >= 0 && info.Shims) {
 		return info, nil
 	}
 	// Write the binary to a temp name and move it into place, so a server in

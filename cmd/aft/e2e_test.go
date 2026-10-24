@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -11,12 +13,17 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/arocomputer/aft/internal/home"
+	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/vt"
 )
 
 // TestMain lets this test binary act as the aft executable, including as the
 // local server the client spawns, so a whole session runs in-process trees.
 func TestMain(m *testing.M) {
+	if os.Getenv("AFT_TEST_AS_AFT") == "1" && filepath.Base(os.Args[0]) == home.ServerName {
+		os.Exit(serverMain(os.Args[1:]))
+	}
 	if os.Getenv("AFT_TEST_AS_AFT") == "1" && len(os.Args) > 1 {
 		os.Exit(run(os.Args[1], os.Args[2:]))
 	}
@@ -30,7 +37,18 @@ func shortHome(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		// A test that fails midway leaves its session running; its shell
+		// would live on invisibly, so end it by the record it kept.
+		entries, _ := os.ReadDir(filepath.Join(dir, "sessions"))
+		for _, e := range entries {
+			var r session.Record
+			if b, err := os.ReadFile(filepath.Join(dir, "sessions", e.Name())); err == nil && json.Unmarshal(b, &r) == nil && r.Server > 0 {
+				syscall.Kill(r.Server, syscall.SIGTERM)
+			}
+		}
+		os.RemoveAll(dir)
+	})
 	return dir
 }
 
@@ -160,6 +178,7 @@ func itoa(i int) string {
 // TestShellSessionSurvivesConnectionLoss runs a real shell session through the
 // client on the local host, kills the relay as if the network dropped, and
 // expects the client to reconnect with the screen intact and the shell alive.
+// Keys typed while it was away arrive after the reattach, in order.
 func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 	if _, err := exec.LookPath("pgrep"); err != nil {
 		t.Skip("pgrep required")
@@ -172,13 +191,12 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 
 	relay := relayPID(t, s.cmd.Process.Pid)
 	syscall.Kill(relay, syscall.SIGKILL)
-	// The client should announce the reconnect in the title and then repaint.
+	// A reconnect that succeeds at once says nothing: the notice across the
+	// top row appears only when the session stays out of reach. The new relay
+	// shows the client is back.
 	deadline := time.Now().Add(5 * time.Second)
-	for !s.rawContains("reconnecting") && time.Now().Before(deadline) {
+	for relayPID(t, s.cmd.Process.Pid) == relay && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
-	}
-	if !s.rawContains("reconnecting") {
-		t.Fatal("no reconnecting title after the relay died")
 	}
 	s.typeKeys("echo after-$((40+2))\r")
 	s.waitFor("after-42", 10*time.Second)

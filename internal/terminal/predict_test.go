@@ -232,3 +232,213 @@ func TestLineRedrawKeepsInflightPredictions(t *testing.T) {
 		t.Fatalf("after echo: %q pending %d", s.Line(0), len(p.pending))
 	}
 }
+
+// TestRedrawKeepsCursorAtPredictions covers an app that shows the terminal
+// cursor and redraws other parts of the screen on its own clock, as Claude
+// Code's classic renderer does: each redraw ends by putting the cursor where
+// the server's input ends, which trails what was typed. The cursor must stay
+// after the predictions, not jump back to the server's position.
+func TestRedrawKeepsCursorAtPredictions(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[2;1H> "))
+	typeKeys(p, "abc")
+	// A status line redraw two rows down, then back to the server's caret.
+	p.Output([]byte("\x1b[4;1H\x1b[2K-- status --\x1b[2;3H"))
+	s := screenOf(&out, 40, 5)
+	if s.Line(1) != "> abc" || s.Cursor().Row != 1 || s.Cursor().Col != 5 {
+		t.Fatalf("after redraw: %q cursor %+v, want the cursor at 1,5", s.Line(1), s.Cursor())
+	}
+	// The echoes arrive; nothing is left over.
+	p.Output([]byte("abc"))
+	s = screenOf(&out, 40, 5)
+	if s.Line(1) != "> abc" || s.Cursor().Col != 5 || len(p.pending) != 0 {
+		t.Fatalf("after echo: %q cursor %+v pending %d", s.Line(1), s.Cursor(), len(p.pending))
+	}
+}
+
+// TestSkippedSpaceIsConfirmed covers renderers that echo a typed space by
+// moving the cursor over the blank cell instead of printing it, as Claude
+// Code's does. Once the server's cursor has passed the cell, the space is
+// confirmed; left pending, it would expire and pull the cursor back to it.
+func TestSkippedSpaceIsConfirmed(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> hi"))
+	typeKeys(p, " x")
+	p.Output([]byte("\x1b[1C" + "x")) // over the space, then the x
+	if len(p.pending) != 0 || !p.confident {
+		t.Fatalf("pending %d confident %v", len(p.pending), p.confident)
+	}
+}
+
+// TestExpiryLeavesCursorInPlace lets a prediction the server never answers
+// expire: its cell is repainted from the server's screen, and the cursor goes
+// back where the server has it rather than staying on the repainted cell.
+func TestExpiryLeavesCursorInPlace(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "a")
+	p.pending[0].at = time.Now().Add(-time.Hour)
+	p.Tick()
+	s := screenOf(&out, 40, 5)
+	if s.Line(0) != ">" || s.Cursor().Col != 2 {
+		t.Fatalf("after expiry: %q cursor col %d, want 2", s.Line(0), s.Cursor().Col)
+	}
+}
+
+// TestBackspaceLeavesCursorOnErasedCell keeps the cursor where the next
+// character goes after a predicted Backspace, both when it erases a typed
+// character the server has echoed and when it takes back a prediction.
+func TestBackspaceLeavesCursorOnErasedCell(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "abc")
+	p.Output([]byte("abc"))
+	p.Key(Token{Kind: TokBackspace})
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> ab" || s.Cursor().Col != 4 {
+		t.Fatalf("erasing: %q cursor col %d, want 4", s.Line(0), s.Cursor().Col)
+	}
+	typeKeys(p, "x")
+	p.Key(Token{Kind: TokBackspace})
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> ab" || s.Cursor().Col != 4 {
+		t.Fatalf("taking back x: %q cursor col %d, want 4", s.Line(0), s.Cursor().Col)
+	}
+}
+
+// TestEnterLetsTheAppClearTheLine types into an Ink-style prompt and presses
+// Enter: the app clears the line, and the typed text must not come back.
+func TestEnterLetsTheAppClearTheLine(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[?25l\x1b[1;1H> \x1b[7m \x1b[0m"))
+	typeKeys(p, "abc")
+	p.Key(Token{Kind: TokOther, Bytes: []byte("\r")}) // Enter
+	p.Output([]byte("\r\x1b[2K> \x1b[7m \x1b[0m"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" || len(p.pending) != 0 || !p.confident {
+		t.Fatalf("after Enter: %q pending %d confident %v", s.Line(0), len(p.pending), p.confident)
+	}
+}
+
+// TestNonEchoingKeyIsAMisprediction presses x in an app that does not echo
+// it (vim's normal mode deletes a character instead): the redraw wins and
+// no ghost x is drawn back.
+func TestNonEchoingKeyIsAMisprediction(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1Hhello\x1b[1;1H"))
+	typeKeys(p, "x")
+	p.Output([]byte("\r\x1b[2Kello\x1b[1;1H"))
+	if s := screenOf(&out, 40, 5); s.Line(0) != "ello" || p.confident {
+		t.Fatalf("after delete: %q confident %v", s.Line(0), p.confident)
+	}
+}
+
+// TestErasedSpaceWaitsForTheServer presses Backspace over a typed space,
+// then the app redraws something else before handling the key: the erase
+// stays in flight, so the next key goes where the space was.
+func TestErasedSpaceWaitsForTheServer(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	typeKeys(p, "hi ")
+	p.Output([]byte("hi "))
+	p.Key(Token{Kind: TokBackspace})
+	p.Output([]byte("\x1b[3;1Hstatus\x1b[1;6H"))
+	typeKeys(p, "x")
+	if s := screenOf(&out, 40, 5); s.Line(0) != "> hix" {
+		t.Fatalf("got %q, want the x where the space was", s.Line(0))
+	}
+}
+
+// TestCursorWaitsForUndrawnPredictions types while predictions are not being
+// drawn: when trust comes back, the cursor stays with the text the screen
+// shows instead of jumping over blank cells.
+func TestCursorWaitsForUndrawnPredictions(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	p.confident = false
+	typeKeys(p, "abc")
+	p.Output([]byte("a"))
+	if s := screenOf(&out, 40, 5); s.Cursor().Col != 3 {
+		t.Fatalf("cursor at col %d over %q, want 3", s.Cursor().Col, s.Line(0))
+	}
+}
+
+// TestNoticeKeepsTheAppsCursor draws a notice on the top row without the
+// terminal's save and restore, which the application may be using itself,
+// and puts the cursor back; RestoreRow takes the notice down.
+func TestNoticeKeepsTheAppsCursor(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1Htop line\x1b[3;5H"))
+	out.Reset()
+	p.Notice("aft · reconnecting")
+	if bytes.Contains(out.Bytes(), []byte("\x1b7")) || bytes.Contains(out.Bytes(), []byte("\x1b8")) {
+		t.Fatal("notice used save and restore cursor")
+	}
+	p.RestoreRow(0)
+	full := vt.New(40, 5)
+	full.Write([]byte("\x1b[1;1Htop line\x1b[3;5H"))
+	full.Write(out.Bytes())
+	if full.Line(0) != "top line" || full.Cursor().Row != 2 {
+		t.Fatalf("after: %q cursor %+v", full.Line(0), full.Cursor())
+	}
+}
+
+// TestNoticeKeepsAPendingWrap draws a notice while the cursor waits at the
+// last column to wrap: afterwards the next character still starts the next
+// line, as it would have without the notice.
+func TestNoticeKeepsAPendingWrap(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(10, 5, &out, true)
+	p.Output([]byte("\x1b[3;1H0123456789"))
+	p.Notice("note")
+	p.Output([]byte("X"))
+	if s := screenOf(&out, 10, 5); s.Line(2) != "0123456789" || s.Line(3) != "X" {
+		t.Fatalf("rows: %q / %q", s.Line(2), s.Line(3))
+	}
+}
+
+// TestNoticeOnTheWrappingRow draws a notice while the cursor waits to wrap at
+// the end of the top row: the notice fills all but the last column, and the
+// next character still starts the second row.
+func TestNoticeOnTheWrappingRow(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(10, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H0123456789"))
+	p.Notice("aft notice")
+	s := screenOf(&out, 10, 5)
+	if s.Line(0) != "aft notic9" {
+		t.Fatalf("notice row: %q", s.Line(0))
+	}
+	p.Output([]byte("X"))
+	if s := screenOf(&out, 10, 5); s.Line(1) != "X" {
+		t.Fatalf("second row %q, want X", s.Line(1))
+	}
+}
+
+// TestBackspaceEraseOnlyWhatWasTyped presses Backspace at an empty prompt:
+// the prompt is the application's, so nothing is predicted and it stays.
+// Once characters have been typed, Backspace is predicted over them, and
+// only as many of them as were typed.
+func TestBackspaceErasesOnlyWhatWasTyped(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1H> "))
+	p.Key(Token{Kind: TokBackspace})
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" {
+		t.Fatalf("the prompt was erased: %q", s.Line(0))
+	}
+	typeKeys(p, "ab")
+	p.Output([]byte("ab")) // echoed
+	for i := 0; i < 3; i++ {
+		p.Key(Token{Kind: TokBackspace})
+	}
+	if s := screenOf(&out, 40, 5); s.Line(0) != ">" || s.Cursor().Col != 2 {
+		t.Fatalf("after three Backspaces over two typed characters: %q cursor col %d", s.Line(0), s.Cursor().Col)
+	}
+}

@@ -101,18 +101,50 @@ func TestEnvironmentAllowlist(t *testing.T) {
 	}
 }
 
-// TestMoveShellBlocks rewrites a recorded block that names the old launchers
-// directory, keeping the rest of the file.
-func TestMoveShellBlocks(t *testing.T) {
-	rc := filepath.Join(t.TempDir(), ".zshrc")
-	old := blockStart + "\nexport PATH=\"$HOME/.aft/launchers:$PATH\"\n" + blockEnd + "\n"
-	os.WriteFile(rc, []byte("alias ll='ls -l'\n\n"+old), 0o644)
-	st := config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: old}}}
-	if kept := MoveShellBlocks(&st); len(kept) != 0 {
-		t.Fatalf("kept %v", kept)
+// TestServerPathFollowsMounts names a pasted file on this host's mount, also
+// through a symlink to the mount, and not one under a more specific mount of
+// another host, since that file lives there.
+func TestServerPathFollowsMounts(t *testing.T) {
+	mount, _ := filepath.EvalSymlinks(t.TempDir()) // kept by its real path, as aft mount add does
+	os.MkdirAll(filepath.Join(mount, "code"), 0o755)
+	link := filepath.Join(t.TempDir(), "room")
+	if err := os.Symlink(mount, link); err != nil {
+		t.Skip(err)
 	}
-	got, _ := os.ReadFile(rc)
-	if string(got) != "alias ll='ls -l'\n\n"+Block() || st.ShellBlocks[0].Block != Block() {
-		t.Fatalf("not moved:\n%s", got)
+	cfg := config.Config{Hosts: map[string]config.HostConfig{"box": {SSH: "box"}, "other": {SSH: "other"}}, Mounts: []config.Mount{
+		{Local: mount, Host: "box", Path: "/srv/room"},
+		{Local: filepath.Join(mount, "code"), Host: "other", Path: "/elsewhere"},
+	}}
+	opts, err := SessionOptions(cfg, "box", "", config.Project{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := opts.ServerPath(filepath.Join(link, "a.png")); !ok || got != "/srv/room/a.png" {
+		t.Errorf("through the symlink: %q, %v", got, ok)
+	}
+	if got, ok := opts.ServerPath(filepath.Join(mount, "code", "b.txt")); ok {
+		t.Errorf("a file on other's mount was named on box: %q", got)
+	}
+}
+
+// TestPathInShellConfig sees the launchers on PATH for new shells from the
+// shell config alone: aft's block, or a hand-written line, and not an rc file
+// without either.
+func TestPathInShellConfig(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("SHELL", "/bin/zsh")
+	rc := filepath.Join(h, ".zshrc")
+	os.WriteFile(rc, []byte("alias ll='ls -l'\n"), 0o644)
+	if PathInShellConfig(config.State{}) {
+		t.Fatal("an rc file without the line counts")
+	}
+	os.WriteFile(rc, []byte("alias ll='ls -l'\nexport PATH=\""+PathDir+":$PATH\"\n"), 0o644)
+	if !PathInShellConfig(config.State{}) {
+		t.Fatal("a hand-written line is missed")
+	}
+	os.WriteFile(rc, []byte("alias ll='ls -l'\n"+Block()), 0o644)
+	if !PathInShellConfig(config.State{ShellBlocks: []config.ShellBlock{{File: rc, Block: Block()}}}) {
+		t.Fatal("aft's own block is missed")
 	}
 }

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/home"
@@ -61,21 +61,42 @@ func PastedFiles(paste string) ([]string, bool) {
 	return paths, true
 }
 
+// Droppable reports whether a pasted path is a file someone would drop in to
+// share with the server: one under their home, a temporary directory or a
+// removable volume. A path elsewhere, such as /etc/nginx/nginx.conf, is more
+// likely a path on the server they are naming, so it stays text.
+func Droppable(path string) bool {
+	roots := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/Volumes", "/media", "/run/media", "/mnt"}
+	if h, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, h)
+	}
+	for _, r := range roots {
+		if rel, err := filepath.Rel(r, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
+}
+
 // Upload copies each local file to the host and returns the server paths,
-// shell-escaped the way terminals escape a dropped file.
-func Upload(h transport.Host, paths []string) ([]string, error) {
+// shell-escaped the way terminals escape a dropped file. Cancelling ctx stops
+// it.
+func Upload(ctx context.Context, h transport.Host, paths []string) ([]string, error) {
 	var out []string
 	for _, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
 			return nil, err
 		}
-		dest, err := transport.Output(h, f, "clipboard-put", filepath.Base(p))
+		dest, err := transport.OutputContext(ctx, h, f, "clipboard-put", filepath.Base(p))
 		f.Close()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, fmt.Errorf("%s: %w", filepath.Base(p), err)
 		}
-		out = append(out, shellEscape(strings.TrimSpace(string(dest))))
+		out = append(out, Escape(strings.TrimSpace(string(dest))))
 	}
 	return out, nil
 }
@@ -151,7 +172,10 @@ func splitWords(s string) (words []string, ok bool) {
 			esc, in = true, true
 		case r == '\'' || r == '"':
 			quote, in = r, true
-		case unicode.IsSpace(r):
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			// Only the whitespace a terminal escapes in a dropped path; macOS
+			// names hold a narrow no-break space (before AM or PM) that it
+			// does not escape and that belongs to the name.
 			if in {
 				words = append(words, cur.String())
 				cur.Reset()
@@ -171,12 +195,14 @@ func splitWords(s string) (words []string, ok bool) {
 	return words, true
 }
 
-// shellEscape backslash-escapes every character a shell treats specially,
+// Escape backslash-escapes every character a shell treats specially,
 // which is how terminals paste a dropped file's path.
-func shellEscape(p string) string {
+func Escape(p string) string {
 	var b strings.Builder
 	for _, r := range p {
-		if unicode.IsSpace(r) || strings.ContainsRune(`\'"$`+"`"+`!&|;<>()[]{}*?#~`, r) {
+		// The same whitespace splitWords splits on; a narrow no-break space in
+		// a macOS name is left as terminals leave it.
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || strings.ContainsRune(`\'"$`+"`"+`!&|;<>()[]{}*?#~`, r) {
 			b.WriteByte('\\')
 		}
 		b.WriteRune(r)

@@ -21,7 +21,8 @@ func ValidID(id string) bool { return idOK.MatchString(id) }
 
 // Start launches a detached session process for o and waits until its socket
 // accepts connections. server is the argv prefix that runs server
-// subcommands: the server binary alone, or the aft binary plus "__server".
+// subcommands: the server binary, or the aft binary, which is the server when
+// started as aft-server.
 func Start(server []string, o Options) error {
 	if len(server) == 0 {
 		return fmt.Errorf("no server command")
@@ -50,6 +51,7 @@ func Start(server []string, o Options) error {
 	args = append(args, "--")
 	args = append(args, o.Command...)
 	cmd := exec.Command(server[0], args...)
+	cmd.Args[0] = home.ServerName // so ps shows aft-server serve --id NAME
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.Stdin = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -70,6 +72,10 @@ func Start(server []string, o Options) error {
 			deadline = time.Time{}
 		case <-time.After(20 * time.Millisecond):
 		}
+	}
+	// The name was claimed with an empty record (see NewID); give it back.
+	if fi, err := os.Stat(RecordPath(o.ID)); err == nil && fi.Size() == 0 {
+		os.Remove(RecordPath(o.ID))
 	}
 	tail, _ := os.ReadFile(filepath.Join(home.Logs(), o.ID+".log"))
 	msg := strings.TrimSpace(string(tail))

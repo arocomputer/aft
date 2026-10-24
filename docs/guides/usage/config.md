@@ -75,6 +75,7 @@ nothing to undo.
 
 ```toml
 use          = "mini"          # host used when --host is omitted (optional with one host)
+existing     = "ask"           # an agent launched where one runs: ask, attach or new
 agents       = ["claude", "codex", "opencode", "pi"]
 tools        = ["git", "gh"]   # run once on the host where aft is on; none by default
 predict      = true

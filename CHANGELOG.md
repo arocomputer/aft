@@ -45,14 +45,21 @@ stays on your machine, and typing feels local.
   copy mode, the clipboard and a real agent, with no SSH or setup.
 - A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
   even when the terminal blocks OSC 52.
+- The cursor no longer jumps back while typing into Claude Code. Its
+  renderer echoes a typed space by moving over the blank cell, so the space
+  was never confirmed, expired after a moment and pulled the cursor back to
+  it. Expiry, Backspace and redraws now leave the cursor where the next
+  character goes.
 - Pasting or dragging a local file into the terminal uploads it to the
   server's temporary directory and pastes the server path, so agents can open
-  pasted screenshots, recordings and documents.
+  pasted screenshots, recordings and documents. macOS names that hold a
+  narrow no-break space (screen recordings, before AM or PM) are read as
+  one file, and a file that cannot be sent says why across the top of the
+  screen. A file in a mounted folder pastes as its server path with no copy,
+  system paths stay text, and Ctrl-C cancels an upload.
 - Aft keeps what you read or edit (config, state, logs) in `~/.aft` and its
   plumbing (server, shims, launchers, sessions, sockets) in
-  `~/.local/share/aft`, on macOS and Linux alike. An older install moves
-  itself on first run, sessions keep running across the move, and the PATH
-  block Aft added is rewritten.
+  `~/.local/share/aft`, on macOS and Linux alike.
 - One look across every command: colored marks (✓ ! ✗) that never rely on
   color alone, aligned tables, short `~` paths and relative times. Slow steps
   show a spinner on stderr, and `aft doctor` shows each check as it finishes
@@ -101,8 +108,8 @@ stays on your machine, and typing feels local.
 - A session detaches when its terminal goes away: a closed tab, another
   computer attaching, or a laptop that sleeps, which the client's heartbeat
   reveals within thirty seconds. `aft ls` shows which sessions are attached.
-- `aft doctor` groups its checks by machine and ends each problem with the exact
-  command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
+- `aft doctor` prints one line per check, and one per host when all is well
+  there, and ends each problem with the exact command to fix it; `aft doctor --fix` applies the safe repairs (reinstall a
   stale or missing server, re-add the PATH line), `--json` prints findings for
   scripts, and `--host` limits the checks to one host.
 - macOS and Linux hosts are supported; the server is embedded (gzipped) for both
@@ -129,14 +136,43 @@ stays on your machine, and typing feels local.
   real path on the server with no clone and no sync, auto-detecting the mapping
   from the mount and the server's share definition. Manage mappings with
   `aft mount`.
+- `aft rename NAME NEW` gives a session a name of your own; a terminal attached
+  to it is told, and follows.
+- Launching an agent where one already runs in the same folder asks whether to
+  attach to it or start a new one, instead of starting a second; `existing` in
+  the config answers once for good. A terminal that loses a session to another
+  machine is told which one took it.
+- Aft never sets the terminal title: your tab says what the agent wants it to.
+  Reconnecting, uploads and takeovers show as a line across the top of the
+  screen, and only while they last.
+- `aft HOST`, `aft attach` and `aft kill` connect the way ssh does: no spinner,
+  and in two round trips instead of five. A session is looked up on the default
+  host first. Prompts show their choices without a key legend.
+- A client never replaces a newer server with its own older build; builds are
+  ordered by commit time, and `aft doctor` says when the server is the newer
+  one. The install check is one round trip.
+- Backspace is predicted only over characters you typed: at an empty prompt
+  it no longer erases the prompt before the application answers.
+- `aft status` and `aft doctor` are flat: one line per fact, no labels or
+  sections. A port record a killed client left behind no longer shows.
+- Reattaching no longer leaves stray colored cells: the repaint erased a blank
+  row in the color the row above had left in the pen, which showed as gray
+  squares under Codex's input box when a terminal joined while it was still
+  loading.
+- `aft completion` completes hosts and session names, not just commands.
+  `aft ls` with nothing running says how to start one, `aft` alone on a fresh
+  install says to run `aft setup`, and `aft doctor` sees launchers put on PATH
+  by the shell config even when run from a script.
 
 ### Removed
 
 - `aft detach` (detaching follows the terminal), `aft clone` (`aft on` creates
   the directory; clone with git as a tool), `aft exec` (tools), `aft shell`
   (now `aft HOST`), and `aft ports` and `aft use`, now part of `aft status` and
-  `aft host`. The hidden local server command is now `aft __server`, so a host
-  can be called `server`.
+  `aft host`. The server binary is `aft-server`, as mosh's is `mosh-server`, at
+  `~/.local/share/aft/aft-server` on each host and in process lists; the aft
+  binary is the server when started under that name, so no hidden command
+  can clash with a host called `server`.
 
 - Workspaces, project records, `connect`, `open`, `run`, port watch, systemd and
   launchd services, migration, the picker and the dry-run uninstall.
