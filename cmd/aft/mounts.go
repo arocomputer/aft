@@ -233,11 +233,9 @@ func cmdMount(args []string) int {
 			fmt.Println("No mounts configured.")
 			return 0
 		}
-		var rows [][]string
-		for _, m := range cfg.Mounts {
-			rows = append(rows, []string{m.Local, m.Host + ":" + m.Path})
+		for _, mapping := range cfg.Mounts {
+			fmt.Printf("%s -> %s:%s\n", ui.Path(mapping.Local), mapping.Host, mapping.Path)
 		}
-		ui.Table([]string{"LOCAL", "ON THE SERVER"}, rows)
 		return 0
 	}
 	switch args[0] {

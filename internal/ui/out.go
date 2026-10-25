@@ -9,14 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
-
-// Only stderr warnings and errors use color. Renderer creation never probes or
-// writes to the terminal; piped output and NO_COLOR retain readable labels.
-var stderr = lipgloss.NewRenderer(os.Stderr)
 
 // Prefix labels warnings and errors; routine output needs no marker.
 func Prefix(level string) string {
@@ -41,12 +36,12 @@ func Note(format string, a ...any) {
 
 // Warn prints a labeled warning to stderr.
 func Warn(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, stderr.NewStyle().Foreground(lipgloss.Color("3")).Render("warning:")+" "+fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, "warning: "+format+"\n", a...)
 }
 
 // Error prints a labeled error to stderr.
 func Error(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, stderr.NewStyle().Foreground(lipgloss.Color("1")).Render("error:")+" "+fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, "error: "+format+"\n", a...)
 }
 
 // Hint prints recovery instructions indented beneath a warning or error.
@@ -86,38 +81,6 @@ func Ago(t time.Time) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-}
-
-// Table prints aligned columns with an optional header. Widths ignore styles.
-func Table(header []string, rows [][]string) {
-	cols := len(header)
-	for _, r := range rows {
-		cols = max(cols, len(r))
-	}
-	widths := make([]int, cols)
-	for _, r := range append([][]string{header}, rows...) {
-		for i, c := range r {
-			if w := lipgloss.Width(c); i < len(widths) && w > widths[i] {
-				widths[i] = w
-			}
-		}
-	}
-	line := func(r []string) {
-		var b strings.Builder
-		for i, c := range r {
-			b.WriteString(c)
-			if i < len(r)-1 && i < len(widths) {
-				b.WriteString(strings.Repeat(" ", max(widths[i]-lipgloss.Width(c), 0)+2))
-			}
-		}
-		fmt.Println(b.String())
-	}
-	if len(header) > 0 {
-		line(header)
-	}
-	for _, r := range rows {
-		line(r)
-	}
 }
 
 // Live is a spinner on stderr for work that takes a moment. Lines printed
@@ -178,7 +141,7 @@ func (l *Live) draw() {
 	}
 	line := spinFrames[l.frame%len(spinFrames)] + " " + l.label
 	// A line wider than the terminal would wrap and break the redraw.
-	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 0 && lipgloss.Width(line) >= w {
+	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 0 && ansi.StringWidth(line) >= w {
 		line = ansi.Truncate(line, w-1, "")
 	}
 	fmt.Fprint(os.Stderr, "\r\x1b[K"+line)

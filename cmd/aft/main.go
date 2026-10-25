@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
@@ -17,24 +18,24 @@ import (
 
 // commands supplies the flat command list for help, completion and suggestions.
 var commands = [][3]string{
-	{"setup", "[--host DEST]", "Set up a host and launchers"},
-	{"on", "[--host H] [--dir D]", "Enable Aft for this project"},
-	{"off", "", "Run this project's agents locally"},
+	{"setup", "[--host DEST]", "Configure a host, agents and tools"},
+	{"on", "[--host H] [--dir D]", "Run this project remotely"},
+	{"off", "", "Run this project locally"},
 	{"HOST", "[CMD...]", "Open a new shell; CMD runs once"},
 	{"ls", "", "List sessions"},
 	{"attach", "[NAME]", "Attach to a session"},
 	{"rename", "NAME NEW", "Rename a session"},
 	{"kill", "NAME", "Stop a session"},
-	{"host", "[add|rm|use]", "Manage hosts and the default host"},
-	{"mount", "[list|add|remove]", "Map a mounted folder to a host"},
-	{"agents add", "NAME...", "Add programs that run in sessions"},
-	{"tools add", "NAME...", "Add commands that run once on the host"},
-	{"status", "", "Show projects, hosts, sessions and ports"},
-	{"doctor", "[--fix] [--host H]", "Check setup and optionally repair it"},
-	{"uninstall", "", "Remove Aft from this machine and its hosts"},
+	{"host", "[add|rm|use]", "Manage hosts"},
+	{"mount", "[list|add|remove]", "Manage mounted projects"},
+	{"agents add", "NAME...", "Add agent launchers"},
+	{"tools add", "NAME...", "Add one-off command launchers"},
+	{"status", "", "Show project and connection status"},
+	{"doctor", "[--fix] [--host H]", "Diagnose setup problems"},
+	{"uninstall", "", "Remove Aft locally and from its hosts"},
 	{"completion", "bash|zsh|fish", "Print shell completion"},
 	{"version", "", "Print the version"},
-	{"help", "", "Show the full command reference"},
+	{"help", "[COMMAND]", "List commands or show command help"},
 }
 
 // meant maps names people reach for, including commands aft no longer has, to
@@ -112,34 +113,38 @@ func distance(a, b string) int {
 	return prev[len(b)]
 }
 
-// printUsage prints a compact overview, or the full reference when detailed.
+// printUsage shows common commands, or every command, without branding or a footer.
 func printUsage(detailed bool) {
-	fmt.Println("Usage: aft <command>")
-	fmt.Println()
-	var rows [][]string
-	for _, c := range commands {
+	fmt.Print("usage: aft <command> [args]\n       aft <host> [command...]\n\n")
+	for _, command := range commands {
+		if command[0] == "HOST" {
+			continue
+		}
 		if !detailed {
-			switch c[0] {
-			case "setup", "on", "off", "HOST", "ls", "attach", "status", "help":
+			switch command[0] {
+			case "setup", "on", "off", "ls", "attach", "status", "help":
 			default:
 				continue
 			}
 		}
-		invocation := c[0]
-		if (detailed || c[0] == "HOST" || c[0] == "attach") && c[1] != "" {
-			invocation += " " + c[1]
-		}
-		rows = append(rows, []string{"  " + invocation, c[2]})
+		fmt.Printf("  %-12s %s\n", command[0], command[2])
 	}
-	ui.Table(nil, rows)
-	if detailed {
-		fmt.Print("\nRun claude, codex, opencode or pi as usual in an enabled project.\n" +
-			"Host shells appear in aft ls only while inside an enabled project.\n" +
-			"Host commands: aft host add NAME DEST, aft host rm NAME, aft host use NAME.\n" +
-			"Mount a folder: aft mount add --local DIR --host HOST --remote DIR.\n" +
-			"Use aft <command> --help for flags (for example, aft on --help).\n")
-	} else {
-		fmt.Println("\nRun aft setup to get started; aft help lists every command.")
+}
+
+// printCommandHelp describes flagless commands without loading configuration.
+func printCommandHelp(command string) {
+	switch command {
+	case "host":
+		fmt.Print("usage: aft host [command]\n\n  add NAME DEST  Add an SSH host\n  rm NAME        Remove a host\n  use [NAME]     Show or change the default host\n")
+	case "mount":
+		fmt.Print("usage: aft mount [command]\n\n  list         List mount mappings\n  add          Add a mount mapping\n  remove PATH  Remove a mount mapping\n")
+	default:
+		for _, entry := range commands {
+			if strings.Fields(entry[0])[0] == command {
+				fmt.Printf("usage: aft %s\n\n%s\n", strings.TrimSpace(entry[0]+" "+entry[1]), entry[2])
+				return
+			}
+		}
 	}
 }
 
@@ -170,21 +175,42 @@ func main() {
 
 // run dispatches a command; help requests return before any setup or connection.
 func run(cmd string, args []string) int {
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+	if len(args) > 0 && (args[len(args)-1] == "--help" || args[len(args)-1] == "-h") {
 		switch cmd {
-		case "off", "ls", "status", "host", "mount", "agents", "tools", "completion", "version":
-			for _, c := range commands {
-				if strings.Fields(c[0])[0] == cmd {
-					fmt.Printf("Usage: aft %s\n%s\n", strings.TrimSpace(c[0]+" "+c[1]), c[2])
-					return 0
-				}
+		case "host", "agents", "tools":
+			printCommandHelp(cmd)
+			return 0
+		case "mount":
+			if len(args) == 1 || args[0] != "add" {
+				printCommandHelp(cmd)
+				return 0
 			}
+		case "off", "ls", "status", "completion", "version":
+			printCommandHelp(cmd)
+			return 0
 		}
 	}
+
 	switch cmd {
 	case "help", "--help", "-h":
-		printUsage(true)
-		return 0
+		if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || (len(args) == 1 && args[0] == "help") {
+			printUsage(true)
+			return 0
+		}
+		nested := map[string][]string{"host": {"add", "rm", "use"}, "mount": {"list", "add", "remove"}, "agents": {"add"}, "tools": {"add"}}
+		for _, entry := range commands {
+			if strings.Fields(entry[0])[0] != args[0] || args[0] == "HOST" || args[0] == "help" {
+				continue
+			}
+			if len(args) == 1 {
+				return run(args[0], []string{"--help"})
+			}
+			if len(args) == 2 && slices.Contains(nested[args[0]], args[1]) {
+				return run(args[0], []string{args[1], "--help"})
+			}
+		}
+		ui.Error("usage: aft help [command]")
+		return 2
 	case "version", "--version", "-v":
 		fmt.Println("aft", version)
 		return 0

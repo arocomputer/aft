@@ -1,6 +1,6 @@
 // Package ui is how aft's commands talk to people: small interactive prompts
-// for setup and configuration, and the shared output styles, spinner and
-// tables in out.go. The session client, which must pass the terminal through
+// for setup and configuration, and the plain diagnostic output and transient
+// progress in out.go. The session client, which must pass the terminal through
 // untouched, uses only the output, and only once it has restored the terminal.
 // Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
@@ -113,7 +112,7 @@ func (s *screen) render(lines []string) {
 		width = w - 1
 	}
 	for _, l := range lines {
-		if width > 0 && lipgloss.Width(l) > width {
+		if width > 0 && ansi.StringWidth(l) > width {
 			l = ansi.Truncate(l, width, "")
 		}
 		fmt.Fprint(os.Stderr, "\r\x1b[K"+l+"\r\n")
@@ -147,13 +146,12 @@ func Confirm(question string, def bool) bool {
 	defer term.Restore(int(os.Stdin.Fd()), st)
 	value := def
 	var sc screen
-	selected := lipgloss.NewStyle().Bold(true)
 	render := func() {
 		yes, no := "  Yes  ", "  No  "
 		if value {
-			yes = selected.Render("[ Yes ]")
+			yes = "[ Yes ]"
 		} else {
-			no = selected.Render("[ No ]")
+			no = "[ No ]"
 		}
 		sc.render([]string{question, "  " + yes + " " + no})
 	}
@@ -202,14 +200,13 @@ func Choose(title string, options []Option, def int) int {
 	if index < 0 || index >= len(options) {
 		index = 0
 	}
-	selected := lipgloss.NewStyle().Bold(true)
 	var sc screen
 	render := func() {
 		lines := []string{title}
 		for i, o := range options {
 			mark, label := "  ", o.Label
 			if i == index {
-				mark, label = "> ", selected.Render(o.Label)
+				mark, label = "> ", o.Label
 			}
 			line := mark + label
 			if o.Hint != "" {

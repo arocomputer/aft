@@ -56,7 +56,8 @@ run Aft inside WSL.
 ## Docs
 
 Run `aft` for a compact overview, `aft help` (or `aft --help`) for the full
-command reference, and `aft on --help` for a command's flags. The canonical guides live in
+command list. Use `aft help on` or `aft on --help` for a command's flags.
+The canonical guides live in
 [docs/guides](docs/guides/start/README.md).
 
 | | |

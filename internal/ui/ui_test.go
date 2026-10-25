@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 )
 
@@ -64,49 +63,25 @@ func TestNonInteractiveFallback(t *testing.T) {
 	}
 }
 
-// TestTableAlignsStyledCells pads columns by visible width, so styled cells
-// line up with plain ones.
-func TestTableAlignsStyledCells(t *testing.T) {
-	r, w, _ := os.Pipe()
-	saved := os.Stdout
-	os.Stdout = w
-	Table([]string{"ID", "HOST"}, [][]string{{"\x1b[1mab\x1b[0m", "x"}, {"abcd", "y"}})
-	os.Stdout = saved
-	w.Close()
-	out, _ := io.ReadAll(r)
-	lines := strings.Split(ansi.Strip(string(out)), "\n")
-	if lines[1] != "ab    x" || lines[2] != "abcd  y" {
-		t.Fatalf("misaligned:\n%s", ansi.Strip(string(out)))
+// TestMessagesStayPlain preserves severity labels without a theme or ANSI styling.
+func TestMessagesStayPlain(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestTableToleratesExtraCells prints a row with more cells than the header
-// instead of panicking.
-func TestTableToleratesExtraCells(t *testing.T) {
-	r, w, _ := os.Pipe()
-	saved := os.Stdout
-	os.Stdout = w
-	Table([]string{"A"}, [][]string{{"x", "extra"}})
-	os.Stdout = saved
-	w.Close()
-	out, _ := io.ReadAll(r)
-	if !strings.Contains(ansi.Strip(string(out)), "x  extra") {
-		t.Fatalf("got %q", out)
+	saved := os.Stderr
+	os.Stderr = writer
+	defer func() { os.Stderr = saved }()
+	Warn("check the host")
+	Error("cannot connect")
+	writer.Close()
+	output, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestTableWithoutHeader aligns help rows without adding an empty heading line.
-func TestTableWithoutHeader(t *testing.T) {
-	r, w, _ := os.Pipe()
-	saved := os.Stdout
-	os.Stdout = w
-	Table(nil, [][]string{{"on", "Enable"}, {"attach [NAME]", "Attach"}})
-	os.Stdout = saved
-	w.Close()
-	out, _ := io.ReadAll(r)
-	r.Close()
-	if string(out) != "on             Enable\nattach [NAME]  Attach\n" {
-		t.Fatalf("unexpected headerless table: %q", out)
+	if string(output) != "warning: check the host\nerror: cannot connect\n" {
+		t.Fatalf("unexpected message styling: %q", output)
 	}
 }
 

@@ -5,6 +5,11 @@ User-visible changes are recorded here. Publication status and downloads are on
 
 ## Unreleased
 
+- Simplify command output: plain text, compact listings without table headers,
+  shorter help without branding or footers, and `aft help COMMAND` for details.
+  Doctor reports problems and repairs, or `ok` when healthy; JSON retains all
+  findings. Remove the color renderer and unused styling dependencies.
+
 - Interactive setup lets you choose agent and tool launchers. New setups
   preselect programs found on the execution machine, show local/server discovery
   hints, and treat configuration directories as hints rather than installations.
