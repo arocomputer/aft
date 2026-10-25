@@ -13,6 +13,8 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/arocomputer/aft/internal/bridge/transport"
+	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/vt"
@@ -213,31 +215,107 @@ func TestShellSessionSurvivesConnectionLoss(t *testing.T) {
 	}
 }
 
-// TestShellReattachTakesOver runs aft local twice in the same place: the second
-// comes back to the first's shell, which kept running, and the first client is
-// detached because another terminal took the session.
-func TestShellReattachTakesOver(t *testing.T) {
+// TestHostShellsAreIndependent opens two connections in the same directory:
+// each gets its own shell state, and both remain usable. Agent launch wrappers
+// must not wrap either host shell.
+func TestHostShellsAreIndependent(t *testing.T) {
 	t.Setenv("AFT_HOME", shortHome(t))
+	if err := config.Save(config.Config{Wrapper: []string{"false"}}); err != nil {
+		t.Fatal(err)
+	}
 	s := start(t, "local")
 	defer s.cmd.Process.Kill()
-	s.typeKeys("echo first-$((1+1))\r")
+	s.typeKeys("aft_test_value=first; echo first-$((1+1))\r")
 	s.waitFor("first-2", 10*time.Second)
 
 	s2 := start(t, "local")
 	defer s2.cmd.Process.Kill()
-	s2.waitFor("first-2", 10*time.Second)
+	s2.typeKeys("echo second-${aft_test_value:-fresh}\r")
+	s2.waitFor("second-fresh", 10*time.Second)
+	s.typeKeys("echo still-${aft_test_value}\r")
+	s.waitFor("still-first", 5*time.Second)
+	for _, client := range []*screen{s, s2} {
+		client.typeKeys("exit\r")
+		select {
+		case <-client.done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("client did not exit after its shell ended")
+		}
+		if err := client.cmd.Wait(); err != nil {
+			t.Fatalf("client exit: %v", err)
+		}
+	}
+}
+
+// TestShellProjectVisibility follows a shell into and out of an enabled tree,
+// permits an explicit takeover inside, and rejects attach outside, even by host.
+func TestShellProjectVisibility(t *testing.T) {
+	t.Setenv("AFT_HOME", shortHome(t))
+	project := t.TempDir()
+	subdir := filepath.Join(project, "sub")
+	if err := os.Mkdir(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st := config.State{Projects: map[string]config.Project{
+		project: {Host: "local", Dir: project},
+	}}
+	if err := config.SaveState(st); err != nil {
+		t.Fatal(err)
+	}
+	s := start(t, "local")
+	defer s.cmd.Process.Kill()
+	s.typeKeys("echo general-$((1+1))\r")
+	s.waitFor("general-2", 10*time.Second)
+	if all := allSessions(config.Config{}); len(all) != 0 {
+		t.Fatalf("general host shell appeared: %+v", all)
+	}
+	s.typeKeys("cd '" + subdir + "'; echo project-$((2+2))\r")
+	s.waitFor("project-4", 5*time.Second)
+	list, err := projectSessions(transport.Local, st)
+	if err != nil || len(list) != 1 || list[0].Dir != config.RealPath(subdir) {
+		t.Fatalf("shell inside project: %+v, %v", list, err)
+	}
+	id := list[0].ID
+	s2 := start(t, "attach", "--host", "local", id)
+	defer s2.cmd.Process.Kill()
+	s2.waitFor("project-4", 10*time.Second)
 	select {
 	case <-s.done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("first client stayed attached after the second took over")
+		t.Fatal("explicit attach did not take over")
 	}
 	s.cmd.Wait()
+	s2.typeKeys("cd /; echo outside-$((3+3))\r")
+	s2.waitFor("outside-6", 5*time.Second)
+	if all := allSessions(config.Config{}); len(all) != 0 {
+		t.Fatalf("shell outside project appeared: %+v", all)
+	}
+	for _, args := range [][]string{{id}, {"--host", "local", id}} {
+		captureCLI(t, func() {
+			if code := cmdAttach(args); code != 1 {
+				t.Errorf("attach %v returned %d outside project", args, code)
+			}
+		})
+	}
+	// Hiding the shell does not stop it; it can return to the project.
+	s2.typeKeys("cd '" + project + "'; echo returned-$((4+4))\r")
+	s2.waitFor("returned-8", 5*time.Second)
+	if list, err := projectSessions(transport.Local, st); err != nil || len(list) != 1 || list[0].ID != id {
+		t.Fatalf("shell returning to project: %+v, %v", list, err)
+	}
+	if err := config.SaveState(config.State{}); err != nil {
+		t.Fatal(err)
+	}
+	if all := allSessions(config.Config{}); len(all) != 0 {
+		t.Fatalf("disabled project still exposes its shell: %+v", all)
+	}
 	s2.typeKeys("exit\r")
 	select {
 	case <-s2.done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("client did not exit after the shell ended")
+		t.Fatal("client did not exit after its shell ended")
 	}
+	s2.cmd.Wait()
 }
 
 // TestCopyModeScrollback drives a real shell session: it prints a marker that

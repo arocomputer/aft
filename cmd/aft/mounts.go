@@ -230,12 +230,12 @@ func cmdMount(args []string) int {
 			return fail(err)
 		}
 		if len(cfg.Mounts) == 0 {
-			fmt.Println(ui.Dim("No mounts configured."))
+			fmt.Println("No mounts configured.")
 			return 0
 		}
 		var rows [][]string
 		for _, m := range cfg.Mounts {
-			rows = append(rows, []string{m.Local, ui.Bold(m.Host) + ui.Dim(":"+m.Path)})
+			rows = append(rows, []string{m.Local, m.Host + ":" + m.Path})
 		}
 		ui.Table([]string{"LOCAL", "ON THE SERVER"}, rows)
 		return 0
@@ -247,7 +247,7 @@ func cmdMount(args []string) int {
 		host := fs.String("host", "", "aft host the mount comes from")
 		remote := fs.String("remote", "", "server path the mount exposes")
 		if err := fs.Parse(args[1:]); err != nil {
-			return 2
+			return flagExit(err)
 		}
 		if *local == "" || *host == "" || *remote == "" {
 			fmt.Fprintln(os.Stderr, "usage: aft mount add --local DIR --host HOST --remote DIR")
@@ -266,7 +266,7 @@ func cmdMount(args []string) int {
 		if err := config.Save(cfg); err != nil {
 			return fail(err)
 		}
-		ui.OK("Mapped %s %s %s", abs, ui.Dim("→"), ui.Bold(*host)+ui.Dim(":"+strings.TrimRight(*remote, "/")))
+		ui.OK("Mapped %s -> %s:%s", abs, *host, strings.TrimRight(*remote, "/"))
 		return 0
 	case "remove":
 		if len(args) != 2 {

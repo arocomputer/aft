@@ -1,7 +1,8 @@
 // Package ui is how aft's commands talk to people: small interactive prompts
 // for setup and configuration, and the shared output styles, spinner and
 // tables in out.go. The session client, which must pass the terminal through
-// untouched, uses only the output, and only once it has restored the terminal. Each prompt falls back to a default when there is no terminal, so
+// untouched, uses only the output, and only once it has restored the terminal.
+// Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
 //
 // A prompt shows its choices and nothing else: arrows and Enter, y and n need
@@ -21,13 +22,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
-
-func styles() (accent, dim, cursor lipgloss.Style) {
-	accent = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	dim = lipgloss.NewStyle().Faint(true)
-	cursor = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	return
-}
 
 // Interactive reports whether prompts can run.
 func Interactive() bool {
@@ -150,15 +144,15 @@ func Confirm(question string, def bool) bool {
 	defer term.Restore(int(os.Stdin.Fd()), st)
 	value := def
 	var sc screen
-	accent, _, _ := styles()
+	selected := lipgloss.NewStyle().Bold(true)
 	render := func() {
 		yes, no := "  Yes  ", "  No  "
 		if value {
-			yes = accent.Render("[ Yes ]")
+			yes = selected.Render("[ Yes ]")
 		} else {
-			no = accent.Render("[ No ]")
+			no = selected.Render("[ No ]")
 		}
-		sc.render([]string{accent.Render("? ") + question, "  " + yes + " " + no})
+		sc.render([]string{question, "  " + yes + " " + no})
 	}
 	render()
 	for {
@@ -204,18 +198,18 @@ func Choose(title string, options []Option, def int) int {
 	if index < 0 || index >= len(options) {
 		index = 0
 	}
-	accent, dim, cursor := styles()
+	selected := lipgloss.NewStyle().Bold(true)
 	var sc screen
 	render := func() {
-		lines := []string{accent.Render("? ") + title}
+		lines := []string{title}
 		for i, o := range options {
 			mark, label := "  ", o.Label
 			if i == index {
-				mark, label = cursor.Render("> "), accent.Render(o.Label)
+				mark, label = "> ", selected.Render(o.Label)
 			}
 			line := mark + label
 			if o.Hint != "" {
-				line += dim.Render("  " + o.Hint)
+				line += "  " + o.Hint
 			}
 			lines = append(lines, line)
 		}

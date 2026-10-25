@@ -84,3 +84,18 @@ func TestTableToleratesExtraCells(t *testing.T) {
 		t.Fatalf("got %q", out)
 	}
 }
+
+// TestTableWithoutHeader aligns help rows without adding an empty heading line.
+func TestTableWithoutHeader(t *testing.T) {
+	r, w, _ := os.Pipe()
+	saved := os.Stdout
+	os.Stdout = w
+	Table(nil, [][]string{{"on", "Enable"}, {"attach [NAME]", "Attach"}})
+	os.Stdout = saved
+	w.Close()
+	out, _ := io.ReadAll(r)
+	r.Close()
+	if string(out) != "on             Enable\nattach [NAME]  Attach\n" {
+		t.Fatalf("unexpected headerless table: %q", out)
+	}
+}

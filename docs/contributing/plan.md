@@ -247,6 +247,20 @@ others such as Gemini CLI, Amp, Aider and Goose. `aft agents add NAME`
 covers any other program. `aft HOST` starts your login shell on the server
 the same way, as a lag-free replacement for SSH and mosh.
 
+Each `aft HOST` invocation opens a fresh shell. Its client reconnects to that
+same shell after a lost link, but opening another terminal never takes over an
+existing connection. Host connections always open the host's own login shell;
+launch wrappers apply to agents. General host shells use the durable terminal engine
+internally without appearing as public work sessions. They appear in `ls`,
+`status` and `attach` only while their current working directory is inside an
+enabled project for that host; leaving the project hides them without ending
+the shell or its connection. Listings read the shell process's cwd on the host
+(`/proc` on Linux, the built-in `lsof` on macOS), resolve the requesting
+computer's project paths on that host, and match whole directory trees. An
+unknown cwd is never replaced by the shell's startup directory. Agent sessions
+remain public independently. Internal enumeration for reconnect, cleanup and
+uninstall includes general host connections too.
+
 **The shell line.** `aft setup` adds a marked block to each shell config it
 finds:
 
@@ -327,7 +341,7 @@ aft completion bash|zsh|fish
 ```
 
 The server runs on the host as `aft-server`, its own binary, as mosh-server
-is mosh's, with the subcommands `attach`, `new`, `udp`, `ls`, `end`,
+is mosh's, with the subcommands `attach`, `new`, `udp`, `ls`, `ls-projects`, `end`,
 `rename`, `remains` and `listeners`, plus the bridge shims. For the host `local`, the
 aft binary is the server when started under the name `aft-server`.
 
