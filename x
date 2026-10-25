@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")"
 
 usage() {
-  echo 'usage: ./x [fmt [--check]|check|test|try|bench|docs|servers [VERSION]|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
+  echo 'usage: ./x [fmt [--check]|check|audit|test|try|bench|docs|servers [VERSION]|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
   exit 2
 }
 
@@ -35,6 +35,10 @@ case "$task" in
     ./x test
     ./x docs
     ./x build
+    ;;
+  audit)
+    [ "$#" -eq 0 ] || usage
+    exec go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
     ;;
   test)
     [ "$#" -eq 0 ] || usage

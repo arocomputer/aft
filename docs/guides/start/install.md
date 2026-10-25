@@ -85,7 +85,7 @@ Gatekeeper globally.
 
 ## Build from source
 
-From a source checkout, use Go 1.26 or newer:
+From a source checkout, use Go 1.26.10 or newer:
 
 ```sh
 ./x build

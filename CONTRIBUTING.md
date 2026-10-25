@@ -6,7 +6,7 @@ Read [AGENTS.md](AGENTS.md) for the code map and contracts, and
 
 ## Setup and verification
 
-Use Go 1.26 or newer, Python 3.9 or newer (standard library only), and a POSIX
+Use Go 1.26.10 or newer, Python 3.9 or newer (standard library only), and a POSIX
 shell on Linux or macOS.
 
 ```sh
@@ -25,6 +25,7 @@ shell on Linux or macOS.
 | `./x servers [VERSION]` | Cross-compile and gzip the servers; packaging passes its exact release version |
 | `./x build` | Cross-compile the embedded servers, then build `bin/aft` |
 | `./x check` | Formatting, vet, tests, docs and build |
+| `./x audit` | Check reachable vulnerabilities with the active Go toolchain and dependency graph |
 | `./x release-check [vX.Y.Z]` | Build all archives, inspect metadata and exercise the native artifact in a temporary directory |
 | `./x dist vX.Y.Z` | Write archives, checksums and notes to `dist/vX.Y.Z`; never publish |
 
