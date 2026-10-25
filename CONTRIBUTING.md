@@ -49,3 +49,25 @@ summarize user-visible changes in [Unreleased](CHANGELOG.md). Use a clear title
 such as `fix(client): repaint stale predictions after resize`.
 
 Contributions are licensed under the [MIT license](LICENSE).
+
+## Dependency updates
+
+GitHub Actions checks for Go patch updates every Monday at 09:00 UTC. The
+[dependency workflow](.github/workflows/deps.yml) can also be dispatched from
+`main`. It uses `go get -u=patch ./...` and `go mod tidy`, then runs `./x check`
+and `./x audit` in a read-only job. It requests patch updates; Go may raise other module versions to satisfy
+dependency constraints, so the PR lists the actual version changes. The Go
+compiler, major module migrations and pinned Actions are reviewed separately.
+
+A separate job publishes only `go.mod` and `go.sum` to one bot-owned PR on
+`chore/dependency-updates`. It refuses to overwrite an unrelated branch or
+human commits. The PR stays a draft until the full Linux/macOS CI and native
+release checks pass on the exact update commit. Failed runs leave the draft
+available for inspection and the next update. Review and merge the PR normally;
+updates are never merged automatically.
+
+The publisher uses `GITHUB_TOKEN` with job-specific Contents, Pull requests and
+Actions write permissions. Repository settings must allow GitHub Actions to
+create PRs. CI is dispatched explicitly because token-created branch and PR
+events do not trigger another workflow. No release token or Dependabot setup
+is needed, and the default workflow permission stays read-only.
