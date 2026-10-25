@@ -176,7 +176,7 @@ jobs:
           elif [ "$(gh pr view "$pr_number" --json isDraft --jq .isDraft)" = false ]; then
             gh pr ready "$pr_number" --undo
           fi
-          # GITHUB_TOKEN pushes do not trigger CI; dispatch it on the exact branch.
+          # Validate independently of the approval-required bot PR workflow.
           gh workflow run ci.yml --ref "$branch"
           run_id=''
           for _ in $(seq 1 30); do
@@ -203,6 +203,8 @@ jobs:
           ### Validation
           - The repository check suite and vulnerability audit passed in the read-only update job.
           - GitHub Actions CI passed on the exact dependency-update commit $sha before marking the PR ready.
+          - Validation run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$run_id
+          - GitHub may separately require maintainer approval for the bot-created PR workflow before its checks appear on the PR.
           EOF
           } > "$body_file"
           gh pr edit "$pr_number" --body-file "$body_file"

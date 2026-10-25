@@ -68,6 +68,11 @@ updates are never merged automatically.
 
 The publisher uses `GITHUB_TOKEN` with job-specific Contents, Pull requests and
 Actions write permissions. Repository settings must allow GitHub Actions to
-create PRs. CI is dispatched explicitly because token-created branch and PR
-events do not trigger another workflow. No release token or Dependabot setup
-is needed, and the default workflow permission stays read-only.
+create PRs. CI is dispatched explicitly, and the PR links to the successful
+validation run. GitHub separately requires maintainer approval for the
+PR-triggered workflow created by `GITHUB_TOKEN`; approve that run when reviewing
+the PR so its required checks can run on the merge commit. This is distinct from
+the updater's automatic validation of the dependency commit. See
+[GitHub's bot-PR policy](https://github.blog/changelog/2026-06-11-bot-created-pull-requests-can-run-workflows-if-approved/).
+No release token or Dependabot setup is needed, and the default workflow
+permission stays read-only.
