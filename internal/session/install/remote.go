@@ -71,8 +71,9 @@ func Platform(uname string) (goos, goarch string, err error) {
 // Compare says how the server installed on a host relates to the one this aft
 // carries: -1 when it is older, 0 when it is this build, 1 when it is newer.
 // Two builds are ordered by their commit time; the same time with a different
-// binary is a rebuild of the same commit, which counts as older. It contacts
-// no host of its own.
+// binary is a rebuild of the same commit, which counts as older. A side with
+// no build time, such as a plain go build, cannot claim to be newer, so then
+// a different binary simply counts as older. It contacts no host of its own.
 func Compare(info session.Info) (int, error) {
 	blob, err := Blob(info.OS, info.Arch)
 	if err != nil {
@@ -86,7 +87,7 @@ func compare(info session.Info, want string, built int64) int {
 	switch {
 	case info.SHA == want:
 		return 0
-	case info.Built > built:
+	case built > 0 && info.Built > built:
 		return 1
 	}
 	return -1

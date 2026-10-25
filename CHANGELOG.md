@@ -196,6 +196,11 @@ stays on your machine, and typing feels local.
   A launcher name that aft could not tell from its own commands is refused.
   A broken `aft.toml` is reported, not ignored. A host table without `ssh` is
   an error rather than this machine.
+- A project turned on by an older aft through a symlinked folder is still
+  found from its real path. Attaching, killing or renaming by name waits the
+  full connect time for a slow host. A cancelled multi-file paste leaves none
+  of its files on the server. Notices and row restores stay plain text while
+  an application has line drawing shifted in.
 - Hyperlinks (OSC 8) are kept per cell and restored by a repaint, so a link
   on screen stays clickable after a reattach.
 - Copy mode's status bar names no keys; the guide lists them.

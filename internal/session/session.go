@@ -507,6 +507,8 @@ func (s *Session) serveClient(conn net.Conn) {
 	from := ""
 	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	if b, err := r.Peek(1); err == nil && proto.Type(b[0]) == proto.From {
+		// The frame is on its way; the rest must not be cut by the deadline.
+		conn.SetReadDeadline(time.Time{})
 		if f, err := proto.Read(r); err == nil {
 			from = string(f.Payload)
 		}

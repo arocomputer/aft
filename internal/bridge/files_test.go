@@ -140,3 +140,24 @@ func TestSplitWordsKeepsABackslashInQuotes(t *testing.T) {
 		t.Fatalf("got %q ok=%v", words, ok)
 	}
 }
+
+// TestForgetRemovesOnlyPastedFiles removes a stored paste with its directory
+// and refuses any other path.
+func TestForgetRemovesOnlyPastedFiles(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	path, err := Store("a.png", 1, strings.NewReader("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Forget(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); err == nil {
+		t.Fatal("the paste's directory is still there")
+	}
+	other := filepath.Join(t.TempDir(), "keep.txt")
+	os.WriteFile(other, []byte("x"), 0o600)
+	if err := Forget(other); err == nil {
+		t.Fatal("a file outside the clipboard directory was removed")
+	}
+}

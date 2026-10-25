@@ -1,10 +1,12 @@
 package terminal
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 
@@ -539,14 +541,29 @@ func (p *Predictor) Tick() {
 func (p *Predictor) Absorb(b []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for i := range b {
-		p.shadow.Write(b[i : i+1])
-		if p.shadow.InGround() {
-			p.tail = p.tail[:0]
-		} else {
-			p.tail = append(p.tail, b[i])
+	p.shadow.Write(b)
+	if p.shadow.InGround() {
+		p.tail = p.tail[:0]
+		return
+	}
+	// Still inside something: a sequence, which began at the last ESC, or a
+	// multibyte character, which began at its lead byte. Without either in
+	// this chunk the open thing began in an earlier one.
+	p.tail = append(p.tail, b[openAt(b):]...)
+}
+
+// openAt is where the sequence or character left open at the end of b
+// starts, or 0 when it started before b.
+func openAt(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-4; i-- {
+		if b[i]&0xC0 == 0xC0 && !utf8.FullRune(b[i:]) {
+			return i // the lead byte of an unfinished character
 		}
 	}
+	if i := bytes.LastIndexByte(b, 0x1b); i >= 0 {
+		return i
+	}
+	return 0
 }
 
 // Repaint clears the screen and redraws the live screen from the shadow,
@@ -586,7 +603,9 @@ func (p *Predictor) Notice(text string) {
 	cols, _ := p.shadow.Size()
 	width := max(cols-1, 0)
 	text = runewidth.Truncate(text, width, "")
-	out := vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(width-runewidth.StringWidth(text), 0)) + "\x1b[0m"
+	// Plain ASCII whatever character set the application has shifted in.
+	plain, restore := p.shadow.CharsetSequences()
+	out := plain + vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(width-runewidth.StringWidth(text), 0)) + "\x1b[0m" + restore
 	p.w.Write([]byte(out + p.cursorBack()))
 	p.penKnown = false
 	p.displaced = true

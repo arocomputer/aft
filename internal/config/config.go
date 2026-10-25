@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -314,12 +315,14 @@ func writeFile(path string, b []byte) error {
 // choosing the most specific. Roots are kept by their real path (aft on sees
 // to it), and dir is compared as given and by its real spelling, so a folder
 // reached through a symlink (~/room for /Volumes/Room) is found either way.
-// Only dir is ever resolved: it is where the caller stands, so it is alive;
-// a stored root may sit on a share whose server is offline, and resolving it
-// would hang every command.
+// dir is where the caller stands, so resolving it is safe. A root written
+// down by an older aft may be spelled through a symlink; when nothing else
+// matches, such roots are resolved too, each with a short time limit, since
+// one on a share whose server is offline would otherwise hang every command.
 func (s State) FindProject(dir string) (root string, p Project, ok bool) {
+	dirs := spellings(dir)
 	best := ""
-	for _, d := range spellings(dir) {
+	for _, d := range dirs {
 		for r := range s.Projects {
 			if _, inside := relInside(d, r); inside && len(r) > len(best) {
 				best = r
@@ -327,9 +330,35 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 		}
 	}
 	if best == "" {
+		for r := range s.Projects {
+			real, ok := resolveWithin(r, 200*time.Millisecond)
+			if !ok || real == r {
+				continue
+			}
+			for _, d := range dirs {
+				if _, inside := relInside(d, real); inside && len(r) > len(best) {
+					best = r
+				}
+			}
+		}
+	}
+	if best == "" {
 		return "", Project{}, false
 	}
 	return best, s.Projects[best], true
+}
+
+// resolveWithin is p's real path, unless finding it takes longer than d, as
+// it does for a path on a share that is not answering.
+func resolveWithin(p string, d time.Duration) (string, bool) {
+	done := make(chan string, 1)
+	go func() { done <- resolve(p) }()
+	select {
+	case real := <-done:
+		return real, true
+	case <-time.After(d):
+		return "", false
+	}
 }
 
 // spellings is a path as given and, when that differs, by its real path.
@@ -372,8 +401,6 @@ func RemoteDir(root string, p Project, dir string) string {
 	return p.Dir + "/" + filepath.ToSlash(rel)
 }
 
-// LoadRepo reads aft.toml from dir or its parents, returning the root it was
-// found in.
 // LoadRepo finds the nearest aft.toml at or above dir and returns it with
 // the directory it is in. With none the error is fs.ErrNotExist; a file that
 // does not parse is an error naming it, never silently ignored.

@@ -147,8 +147,9 @@ type Terminal struct {
 	// restores the link; links[0] is unused. The table is compacted to the
 	// links still on a screen or in scrollback once it grows large, so a
 	// session that prints many distinct links does not keep them all.
-	links   []string
-	linkIDs map[string]uint32
+	links     []string
+	linkIDs   map[string]uint32
+	compactAt int // table size at which to compact next
 
 	// Character sets: G0 and G1 may each be designated as the DEC special
 	// graphics set, which ncurses uses for box drawing (smacs is ESC ( 0),
@@ -213,10 +214,12 @@ func (t *Terminal) LinkURL(id uint32) string {
 	return t.links[id]
 }
 
-// maxLinks is how many distinct links are kept before the table is compacted.
+// maxLinks is the table size at which links no cell refers to are dropped.
 const maxLinks = 4096
 
-// linkID returns the id for url, adding it; an empty url is 0.
+// linkID returns the id for url, adding it; an empty url is 0. When the
+// table has grown past its mark it is compacted first; a table that is all
+// live links keeps growing, and is compacted again once it has doubled.
 func (t *Terminal) linkID(url string) uint32 {
 	if url == "" {
 		return 0
@@ -224,8 +227,20 @@ func (t *Terminal) linkID(url string) uint32 {
 	if id, ok := t.linkIDs[url]; ok {
 		return id
 	}
-	if len(t.links) >= maxLinks {
+	if len(t.links) >= max(t.compactAt, maxLinks) {
 		t.compactLinks()
+		t.compactAt = 2 * len(t.links)
+	}
+	return t.internLink(url)
+}
+
+// internLink adds url to the table, or finds it, without compacting.
+func (t *Terminal) internLink(url string) uint32 {
+	if url == "" {
+		return 0
+	}
+	if id, ok := t.linkIDs[url]; ok {
+		return id
 	}
 	if t.linkIDs == nil {
 		t.linkIDs = map[string]uint32{}
@@ -245,7 +260,7 @@ func (t *Terminal) compactLinks() {
 	renumber := func(cells []Cell) {
 		for i := range cells {
 			if id := cells[i].Attr.Link; id != 0 && int(id) < len(old) {
-				cells[i].Attr.Link = t.linkID(old[id])
+				cells[i].Attr.Link = t.internLink(old[id])
 			}
 		}
 	}
@@ -254,14 +269,25 @@ func (t *Terminal) compactLinks() {
 	for _, line := range t.scrollback {
 		renumber(line)
 	}
-	if id := t.cur.Attr.Link; id != 0 && int(id) < len(old) {
-		t.cur.Attr.Link = t.linkID(old[id])
-	}
-	for _, c := range []*Cursor{&t.savedMain, &t.savedAlt} {
+	for _, c := range []*Cursor{&t.cur, &t.savedMain, &t.savedAlt} {
 		if id := c.Attr.Link; id != 0 && int(id) < len(old) {
-			c.Attr.Link = t.linkID(old[id])
+			c.Attr.Link = t.internLink(old[id])
 		}
 	}
+}
+
+// CharsetSequences returns what puts the terminal into plain ASCII for text
+// drawn over the application's screen, and what restores the application's
+// character sets afterwards.
+func (t *Terminal) CharsetSequences() (plain, restore string) {
+	plain = "\x0f\x1b(B"
+	restore = "\x1b(" + gset(t.charset.g0Graphics) + "\x1b)" + gset(t.charset.g1Graphics)
+	if t.charset.shiftOut {
+		restore += "\x0e"
+	} else {
+		restore += "\x0f"
+	}
+	return plain, restore
 }
 
 // Gen returns the write generation, which increases whenever cells change.

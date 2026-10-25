@@ -54,7 +54,7 @@ var (
 // binary, or the aft binary, either started as aft-server.
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: aft-server new|attach|serve|ls|end|udp|rename|remains|setup|info|listeners|clipboard-put")
+		fmt.Fprintln(stderr, "usage: aft-server new|attach|serve|ls|end|udp|rename|remains|setup|info|listeners|clipboard-put|clipboard-rm")
 		return 2
 	}
 	self, err := os.Executable()
@@ -87,7 +87,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return relay(id, stdin, stdout, stderr)
 	case "rename":
 		if len(args) != 3 || !ValidID(args[1]) {
-			fmt.Fprintln(stderr, "usage: server rename ID NAME")
+			fmt.Fprintln(stderr, "usage: aft-server rename ID NAME")
 			return 2
 		}
 		if err := Rename(args[1], args[2]); err != nil {
@@ -149,7 +149,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	case "remains":
 		// Hand over what a session that ended unseen left, then forget it.
 		if len(args) != 2 || !ValidID(args[1]) {
-			fmt.Fprintln(stderr, "usage: server remains ID")
+			fmt.Fprintln(stderr, "usage: aft-server remains ID")
 			return 2
 		}
 		var r Record
@@ -167,7 +167,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "attach":
 		if len(args) != 2 || !ValidID(args[1]) {
-			fmt.Fprintln(stderr, "usage: server attach ID")
+			fmt.Fprintln(stderr, "usage: aft-server attach ID")
 			return 2
 		}
 		return relay(args[1], stdin, stdout, stderr)
@@ -187,7 +187,7 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0
 	case "end":
 		if len(args) != 2 {
-			fmt.Fprintf(stderr, "usage: server %s ID|--all\n", args[0])
+			fmt.Fprintf(stderr, "usage: aft-server %s ID|--all\n", args[0])
 			return 2
 		}
 		var ids []string
@@ -231,11 +231,11 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	case "clipboard-put":
 		var size int64
 		if len(args) != 3 {
-			fmt.Fprintln(stderr, "usage: server clipboard-put NAME SIZE < file")
+			fmt.Fprintln(stderr, "usage: aft-server clipboard-put NAME SIZE < file")
 			return 2
 		}
 		if _, err := fmt.Sscan(args[2], &size); err != nil {
-			fmt.Fprintln(stderr, "usage: server clipboard-put NAME SIZE < file")
+			fmt.Fprintln(stderr, "usage: aft-server clipboard-put NAME SIZE < file")
 			return 2
 		}
 		path, err := bridge.Store(args[1], size, stdin)
@@ -245,9 +245,21 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		fmt.Fprintln(stdout, path)
 		return 0
+	case "clipboard-rm":
+		// Removes a pasted file the client no longer wants, such as the
+		// earlier files of a paste it cancelled.
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: aft-server clipboard-rm PATH")
+			return 2
+		}
+		if err := bridge.Forget(args[1]); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "sharepath":
 		if len(args) != 2 {
-			fmt.Fprintln(stderr, "usage: server sharepath SHARE")
+			fmt.Fprintln(stderr, "usage: aft-server sharepath SHARE")
 			return 2
 		}
 		path, err := SharePath(args[1])

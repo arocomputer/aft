@@ -109,17 +109,23 @@ func Run(o Options) int {
 	c.uploads = make(chan uploadResult, 1)
 	c.unflash = make(chan int, 1)
 	c.sendDone = make(chan struct{})
-	defer close(c.sendDone)
 	go c.writer()
 	c.mirror = ports.New(o.Host, o.Ports)
 	c.listeners = make(chan mirrorUpdate, 1)
-	go c.mirrorLoop()
+	mirrorsDone := make(chan struct{})
+	go c.mirrorLoop(mirrorsDone)
 	c.pred = NewPredictor(cols, rows, out, o.Predict)
 	// A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
 	// even when the terminal itself blocks OSC 52.
 	c.pred.OnClipboard(func(data []byte) { go bridge.SetClipboard(data) })
-	defer c.mirror.Close()
-	defer c.clearMirrors()
+	defer func() {
+		// Stop taking updates before the forwards go, or one received at the
+		// last moment would bring them back.
+		close(c.sendDone)
+		<-mirrorsDone
+		c.mirror.Close()
+		c.clearMirrors()
+	}()
 
 	proc, err := c.open()
 	var gone sessionEnded
@@ -151,7 +157,7 @@ func Run(o Options) int {
 		os.Exit(1)
 	}()
 	code := c.loop(proc)
-	c.hangUp(proc)
+	c.hangUp()
 	restore()
 	if c.message != nil {
 		c.message()
@@ -181,9 +187,10 @@ type session struct {
 	udpBlocked bool       // UDP failed after an offer: stay on SSH
 	fresh      bool       // the existing session was declined: start a new one
 
-	wmu sync.Mutex
-	wr  io.Writer
-	rd  io.Reader
+	wmu  sync.Mutex
+	wr   io.Writer
+	rd   io.Reader
+	link link // the connection in use, which hangUp closes
 
 	z     Tokenizer        // input tokenizer, kept across the loop
 	flush <-chan time.Time // fires to release a lone Escape held by the tokenizer
@@ -243,7 +250,7 @@ func (c *session) open() (link, error) {
 // handshake.
 func (c *session) use(l link) error {
 	c.wmu.Lock()
-	c.wr, c.rd = l, l
+	c.link, c.wr, c.rd = l, l, l
 	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
 		c.wr = laggyWriter{l, d}
 		c.rd = laggyReader(l, d)
@@ -572,12 +579,17 @@ func (c *session) readFrames() <-chan frameOrErr {
 // hangUp gives the writer a moment to send what is queued, such as the
 // Detach frame, then closes the link, so the session learns at once that the
 // terminal has gone rather than after its idle timeout.
-func (c *session) hangUp(l link) {
+func (c *session) hangUp() {
 	for deadline := time.Now().Add(300 * time.Millisecond); len(c.outbound) > 0 && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}
 	time.Sleep(20 * time.Millisecond) // the frame the writer holds
-	l.Close()
+	c.wmu.Lock()
+	l := c.link // the link in use now, not the one the session began on
+	c.wmu.Unlock()
+	if l != nil {
+		l.Close()
+	}
 }
 
 // handleKeys routes input: to copy mode when open, to a prefix command when the
@@ -936,7 +948,8 @@ func (c *session) mirrorPorts(ports []int) {
 
 // mirrorLoop applies port updates one at a time, in order, off the input
 // loop: a forward is an ssh control command, too slow to hold up typing.
-func (c *session) mirrorLoop() {
+func (c *session) mirrorLoop(done chan<- struct{}) {
+	defer close(done)
 	for {
 		select {
 		case u := <-c.listeners:

@@ -517,3 +517,38 @@ func TestBackspaceErasesOnlyWhatWasTyped(t *testing.T) {
 		t.Fatalf("after three Backspaces over two typed characters: %q cursor col %d", s.Line(0), s.Cursor().Col)
 	}
 }
+
+// TestAbsorbKeepsOnlyTheOpenTail replays, after a repaint, just the start of
+// what was left open across chunks: a sequence or a multibyte character.
+func TestAbsorbKeepsOnlyTheOpenTail(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[1;1Hx"))
+	p.Absorb([]byte("ab\x1b[2;1Hcd\x1b[3"))
+	p.Absorb([]byte(";1"))
+	if string(p.tail) != "\x1b[3;1" {
+		t.Fatalf("tail %q", p.tail)
+	}
+	p.Absorb([]byte("Hé"[:2])) // completes the sequence, then the first byte of é
+	if string(p.tail) != "\xc3" {
+		t.Fatalf("tail after a split character: %q", p.tail)
+	}
+}
+
+// TestNoticeInGraphicsMode draws the notice in plain letters while the
+// application has the graphics set shifted in, and leaves that set shifted
+// in afterwards.
+func TestNoticeInGraphicsMode(t *testing.T) {
+	var out bytes.Buffer
+	p := NewPredictor(40, 5, &out, true)
+	p.Output([]byte("\x1b[2;1Hlq\x1b(0"))
+	p.Notice("aft - reconnecting")
+	s := screenOf(&out, 40, 5)
+	if s.Line(0) != "aft - reconnecting" {
+		t.Fatalf("notice drawn as %q", s.Line(0))
+	}
+	p.Output([]byte("q"))
+	if s := screenOf(&out, 40, 5); s.Line(1) != "lq─" {
+		t.Fatalf("the application's charset was not restored: %q", s.Line(1))
+	}
+}

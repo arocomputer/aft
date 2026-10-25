@@ -454,3 +454,37 @@ func TestLinksSurviveAResetAndCompaction(t *testing.T) {
 		t.Fatalf("after compaction the old line links to %q", u)
 	}
 }
+
+// TestCompactionWithAllLinksLive compacts a table whose links are all still
+// on screen without recursing or losing any, and lets it grow past the mark.
+func TestCompactionWithAllLinksLive(t *testing.T) {
+	v := New(200, 40) // 8000 cells, enough to keep more than maxLinks links live
+	for i := 0; i < maxLinks+50; i++ {
+		feed(t, v, fmt.Sprintf("\x1b]8;;https://x.test/%d\x1b\\x", i))
+	}
+	feed(t, v, "\x1b]8;;\x1b\\")
+	for i := 0; i < maxLinks+50; i++ {
+		row, col := i/200, i%200
+		if u := v.LinkURL(v.Cell(row, col).Attr.Link); u != fmt.Sprintf("https://x.test/%d", i) {
+			t.Fatalf("cell %d links to %q", i, u)
+		}
+	}
+}
+
+// TestRenderRowInGraphicsMode redraws a row of letters while the application
+// has the graphics set shifted in: the letters stay letters, and the
+// application's set is back afterwards.
+func TestRenderRowInGraphicsMode(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "hello\x1b(0")
+	real := New(20, 2)
+	feed(t, real, "\x1b(0")
+	feed(t, real, string(v.RenderRow(0)))
+	if got := real.Line(0); got != "hello" {
+		t.Fatalf("row redrawn as %q", got)
+	}
+	feed(t, real, "q")
+	if got := real.Line(0); got != "hello─" {
+		t.Fatalf("the application's charset was not restored: %q", got)
+	}
+}

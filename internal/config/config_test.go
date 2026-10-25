@@ -154,3 +154,19 @@ func TestLoadRefusesAHostWithoutSSH(t *testing.T) {
 		t.Fatal("a host without ssh was accepted")
 	}
 }
+
+// TestFindProjectWithARootSpelledThroughASymlink finds a project whose root
+// an older aft stored by its symlink spelling, from inside its real path.
+func TestFindProjectWithARootSpelledThroughASymlink(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "room")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip(err)
+	}
+	os.MkdirAll(filepath.Join(real, "app"), 0o755)
+	st := State{Projects: map[string]Project{link: {Host: "box", Dir: "/srv/room"}}}
+	root, _, ok := st.FindProject(filepath.Join(real, "app"))
+	if !ok || root != link {
+		t.Fatalf("got %q ok=%v", root, ok)
+	}
+}

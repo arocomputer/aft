@@ -192,10 +192,9 @@ func cmdSetup(args []string) int {
 	return 0
 }
 
-// chooseEditDotfiles asks whether aft should edit the shell config itself,
-// defaulting to no when the shell config looks managed.
-// chooseEditDotfiles asks whether setup may edit the shell config; ok is
-// false when the user backs out of setup.
+// chooseEditDotfiles asks whether setup may edit the shell config, offering
+// not to when the config looks managed; ok is false when the user backs out
+// of setup.
 func chooseEditDotfiles() (edit, ok bool) {
 	def := 0
 	if launcher.DotfilesManaged() {
@@ -307,9 +306,12 @@ func cmdHost(args []string) int {
 				}
 			}
 			if len(off) > 0 {
-				config.SaveState(st)
 				sort.Strings(off)
-				ui.Note("turned off %s, which ran on it", strings.Join(off, ", "))
+				if err := config.SaveState(st); err != nil {
+					ui.Warn("could not turn off %s, which ran on it: %v", strings.Join(off, ", "), err)
+				} else {
+					ui.Note("turned off %s, which ran on it", strings.Join(off, ", "))
+				}
 			}
 		}
 		ui.OK("Removed host %s from your config", ui.Bold(name))
@@ -540,7 +542,7 @@ func cmdHostShell(cfg config.Config, h transport.Host, args []string) int {
 }
 
 // hostName is what a host may be called: a word aft HOST can open, so never a
-// command, a name aft points to a command, or the hidden server command.
+// command or a name aft points to a command.
 var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 
 // checkHostName says why name cannot name a host, or nil.
@@ -629,17 +631,21 @@ type hostSessions struct {
 
 // allSessions asks every host for its sessions at once, connecting without a
 // terminal where no connection is open. There is no spinner: it takes a
-// fraction of a second, as ssh does, and an offline host gives up in seconds.
+// fraction of a second, as ssh does, and an offline host gives up in a few
+// seconds, so a listing is never held up by one.
 func allSessions(cfg config.Config) []hostSessions {
-	return sessionsOn(cfg, cfg.HostNames())
+	return sessionsOn(cfg, cfg.HostNames(), true, 4)
 }
 
-// sessionsOn lists this machine's sessions and those on the named hosts.
-func sessionsOn(cfg config.Config, names []string) []hostSessions {
+// sessionsOn lists the sessions on the named hosts, and this machine's when
+// local is set, giving each host secs seconds to connect.
+func sessionsOn(cfg config.Config, names []string, local bool, secs int) []hostSessions {
 	var out []hostSessions
-	list, _ := session.List()
-	if list = append(list, session.Remains()...); len(list) > 0 {
-		out = append(out, hostSessions{host: transport.Local, list: list})
+	if local {
+		list, _ := session.List()
+		if list = append(list, session.Remains()...); len(list) > 0 {
+			out = append(out, hostSessions{host: transport.Local, list: list})
+		}
 	}
 	if len(names) == 0 {
 		return out
@@ -653,7 +659,7 @@ func sessionsOn(cfg config.Config, names []string) []hostSessions {
 			h, err := cfg.Host(n)
 			hs := hostSessions{host: h, err: err}
 			if err == nil {
-				hs.err = transport.EnsureMasterWithin(h, 4) // an offline host must not hold up the list
+				hs.err = transport.EnsureMasterWithin(h, secs)
 			}
 			if hs.err == nil {
 				raw, err := transport.Output(h, nil, "ls", "--all")
@@ -781,16 +787,18 @@ func cmdLs(args []string) int {
 	return 0
 }
 
-// findSession locates a session by name: on the default host first, where it
-// almost always is, so the other hosts are asked only when it is not there.
+// findSession locates a session by name: on this machine and the default
+// host first, where it almost always is, so the other hosts are asked only
+// when it is not there. A host gets the full connect time, as aft HOST does:
+// a name the user typed deserves the wait.
 func findSession(cfg config.Config, id string) (transport.Host, session.Record, error) {
 	rounds := [][]string{cfg.HostNames()}
 	if used := cfg.UsedHost(); used != "" && len(cfg.Hosts) > 1 {
 		rest := slices.DeleteFunc(cfg.HostNames(), func(n string) bool { return n == used })
 		rounds = [][]string{{used}, rest}
 	}
-	for _, names := range rounds {
-		for _, hs := range sessionsOn(cfg, names) {
+	for i, names := range rounds {
+		for _, hs := range sessionsOn(cfg, names, i == 0, 10) {
 			for _, r := range hs.list {
 				if r.ID == id {
 					return hs.host, r, nil
@@ -1279,6 +1287,9 @@ func cmdDoctor(args []string) int {
 		d.ok(ui.Path(root) + " → " + ansi.Strip(where(p)))
 	} else {
 		d.info(ui.Path(cwd) + " is off · aft on makes agents here run on " + orAHost(cfg.UsedHost()))
+		if d.live != nil {
+			d.live.Advance() // this folder counts whether it is on or off
+		}
 	}
 
 	// A machine whose projects all run on itself needs no host.
@@ -1627,7 +1638,7 @@ func liveSessionNames(cfg config.Config) []string {
 		}
 	}
 	var out []string
-	for _, hs := range sessionsOn(cfg, names) {
+	for _, hs := range sessionsOn(cfg, names, true, 4) {
 		for _, r := range hs.list {
 			out = append(out, r.ID)
 		}

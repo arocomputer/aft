@@ -10,8 +10,9 @@ usage() {
 
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
 # The commit time orders builds, so a client never replaces a newer server
-# with its own older one; an uncommitted build counts as made now.
-case $version in *-dirty|dev) built=$(date +%s) ;; *) built=$(git log -1 --format=%ct) ;; esac
+# with its own older one. An uncommitted build is dated by its commit too:
+# dated by the clock it would outrank every release until that date passed.
+built=$(git log -1 --format=%ct 2>/dev/null || date +%s)
 ldflags="-s -w -X main.version=$version -X github.com/arocomputer/aft/internal/session.Version=$version -X github.com/arocomputer/aft/internal/session.Built=$built"
 
 task=${1:-check}

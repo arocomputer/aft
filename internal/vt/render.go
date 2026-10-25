@@ -148,12 +148,8 @@ func (t *Terminal) Render(o RenderOptions) []byte {
 	}
 	// Character sets, so an ncurses application mid-way through drawing a
 	// box keeps drawing lines rather than letters.
-	b.WriteString("\x1b(" + gset(t.charset.g0Graphics) + "\x1b)" + gset(t.charset.g1Graphics))
-	if t.charset.shiftOut {
-		b.WriteByte(0x0E)
-	} else {
-		b.WriteByte(0x0F)
-	}
+	_, restore := t.CharsetSequences()
+	b.WriteString(restore)
 	if o.Title && t.title != "" {
 		b.WriteString("\x1b]2;" + t.title + "\x1b\\")
 	}
@@ -174,13 +170,16 @@ func (t *Terminal) Render(o RenderOptions) []byte {
 	return b.Bytes()
 }
 
-// RenderRow returns the sequences that redraw one row of the screen in place,
-// leaving the pen reset.
+// RenderRow returns the sequences that redraw one row of the screen in place
+// on a terminal in the application's current state, leaving the pen reset
+// and the application's character sets as they were.
 func (t *Terminal) RenderRow(r int) []byte {
 	var b bytes.Buffer
+	plain, restore := t.CharsetSequences()
+	b.WriteString(plain)
 	b.WriteString(CUP(r, 0))
 	t.paintLine(&b, t.Row(r))
-	b.WriteString("\x1b[0m")
+	b.WriteString("\x1b[0m" + restore)
 	return b.Bytes()
 }
 

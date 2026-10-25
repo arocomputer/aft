@@ -83,7 +83,7 @@ func Droppable(path string) bool {
 // shell-escaped the way terminals escape a dropped file. Cancelling ctx stops
 // it.
 func Upload(ctx context.Context, h transport.Host, paths []string) ([]string, error) {
-	var out []string
+	var out, stored []string
 	for _, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
@@ -97,14 +97,30 @@ func Upload(ctx context.Context, h transport.Host, paths []string) ([]string, er
 		dest, err := transport.OutputContext(ctx, h, f, "clipboard-put", filepath.Base(p), strconv.FormatInt(fi.Size(), 10))
 		f.Close()
 		if err != nil {
+			// Files already sent are not wanted without the rest.
+			for _, s := range stored {
+				transport.Output(h, nil, "clipboard-rm", s)
+			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			return nil, fmt.Errorf("%s: %w", filepath.Base(p), err)
 		}
+		stored = append(stored, strings.TrimSpace(string(dest)))
 		out = append(out, Escape(strings.TrimSpace(string(dest))))
 	}
 	return out, nil
+}
+
+// Forget removes a pasted file Store kept, with its directory, and nothing
+// outside the clipboard directory. It runs on the server.
+func Forget(path string) error {
+	root := filepath.Join(home.Temp(), "clipboard")
+	dir := filepath.Dir(filepath.Clean(path))
+	if filepath.Dir(dir) != root {
+		return fmt.Errorf("%s is not a pasted file", path)
+	}
+	return os.RemoveAll(dir)
 }
 
 // Store keeps one pasted file, read from r, as <clipboard dir>/<unique>/<name>

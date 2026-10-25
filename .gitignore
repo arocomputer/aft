@@ -3,3 +3,4 @@
 __pycache__/
 *.pyc
 /internal/session/install/embed/aft-server-*
+/aft

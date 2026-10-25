@@ -58,4 +58,8 @@ func TestCompareNeverDowngrades(t *testing.T) {
 			t.Errorf("%s: compare = %d, want %d", name, got, c.want)
 		}
 	}
+	// A client without a build time cannot leave a different server alone.
+	if got := compare(session.Info{SHA: "new", Built: 150}, want, 0); got != -1 {
+		t.Errorf("undated client: compare = %d, want -1", got)
+	}
 }
