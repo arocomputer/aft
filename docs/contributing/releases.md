@@ -79,29 +79,33 @@ separate application, not the destination for these formulas.
   `gh attestation verify ARCHIVE --repo arocomputer/aft`.
 - Publishing the draft triggers checksum-verified native installation checks on
   Linux and macOS. After those pass, a protected `formula` job generates
-  `aft.rb` from the published checksums and opens a PR containing only that file.
-  Merge the formula PR after required CI passes; protected `main` rejects direct
-  pushes, including release automation.
+  `aft.rb` from the published checksums and pushes only that file directly to
+  `main`. Like ask and search, the main ruleset permits repository admins to
+  bypass its PR and status-check requirements. Ordinary contributors still
+  use checked PRs; the release job requires environment approval.
   The job refuses tags outside `main` and does not replace the latest formula
   with an older release. `RELEASE_ENABLED` also gates these post-publication jobs.
 - The formula job uses `secrets.RELEASE_TOKEN`, matching ask and search. The
   normal `github.token` creates the release and reads its assets; the shared
-  token is needed to push the formula branch and open its PR so CI runs.
+  token is needed to push the formula commit so CI runs on `main`.
 
 The existing `RELEASE_TOKEN` organization secret is now available to
 `arocomputer/aft`, as verified through the inherited-secret endpoint. A protected
 preflight checks token availability and the account's repository role before
 creating the draft. That role does not prove the token itself has write scopes:
 the first publication's formula push returned HTTP 403 despite the role check.
-The formula was instead submitted through a checked PR. The workflow now opens
-a formula PR because the repository rules require PRs and status checks.
+The first formula was submitted through a checked PR. The maintainer then
+chose the same admin-bypass rule and direct formula pushes as ask/search;
+token write access must be verified by a real git push, not inferred from the
+repository-role response.
 For future repositories, an organization administrator must grant access to the
 existing secret instead of creating another credential.
 The underlying credential must also include Aft in its repository selection,
-with **Contents: read and write** and **Pull requests: read and write**. Granting
+with **Contents: read and write**, and its account must have repository admin
+access to use the bypass. Pull request write permission is not needed. Granting
 the organization secret to a repository does not grant those token permissions.
-The formula branch and PR remain subject to repository rules. Do not copy a
-secret value into the repository, logs, an issue or a PR. GitHub does not return stored Actions secret values.
+Do not copy a secret value into the repository, logs, an issue or a PR. GitHub
+does not return stored Actions secret values.
 
 Check the names of inherited organization secrets without retrieving any value:
 
@@ -116,6 +120,18 @@ permission for a fine-grained token. A repository-level credential can inspect
 the inherited names through the endpoint above, but cannot change the grant.
 
 If `RELEASE_TOKEN` is unavailable, the formula job fails with a clear setup error.
+
+To retry the formula for an already published release without rebuilding,
+retagging or publishing anything, dispatch from `main`:
+
+```sh
+gh workflow run release.yml --ref main -f tag=v0.1.0 -F formula_only=true
+```
+
+This path verifies the native published downloads on Linux and macOS before
+the protected formula job. The `release` environment must permit `main` branch
+deployments as well as `v*` tags. An unchanged formula still performs a no-op
+git push to verify the token's write authentication.
 
 ## What users receive
 

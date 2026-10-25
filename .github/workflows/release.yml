@@ -8,9 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable tag (vX.Y.Z); select that tag as the workflow ref
+        description: Stable tag (vX.Y.Z); use its tag ref unless retrying only the formula
         required: true
         type: string
+      formula_only:
+        description: Verify published downloads and retry only the formula; run from main
+        type: boolean
+        default: false
 
 # Release preparation is disabled until the maintainer explicitly enables it.
 permissions:
@@ -22,7 +26,7 @@ concurrency:
 
 jobs:
   resolve:
-    if: vars.RELEASE_ENABLED == 'true' && (github.event_name == 'push' || github.ref == format('refs/tags/{0}', inputs.tag))
+    if: vars.RELEASE_ENABLED == 'true' && !inputs.formula_only && (github.event_name == 'push' || github.ref == format('refs/tags/{0}', inputs.tag))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -153,7 +157,10 @@ jobs:
             --notes-file release-notes.md ./*.tar.gz checksums.txt
 
   install:
-    if: vars.RELEASE_ENABLED == 'true' && github.event_name == 'release' && !github.event.release.prerelease
+    if: >-
+      vars.RELEASE_ENABLED == 'true' &&
+      ((github.event_name == 'release' && !github.event.release.prerelease) ||
+       (github.event_name == 'workflow_dispatch' && inputs.formula_only && github.ref == 'refs/heads/main'))
     strategy:
       fail-fast: false
       matrix:
@@ -165,7 +172,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -188,7 +195,10 @@ jobs:
 
   formula:
     needs: install
-    if: vars.RELEASE_ENABLED == 'true' && github.event_name == 'release' && !github.event.release.prerelease
+    if: >-
+      vars.RELEASE_ENABLED == 'true' &&
+      ((github.event_name == 'release' && !github.event.release.prerelease) ||
+       (github.event_name == 'workflow_dispatch' && inputs.formula_only && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: release
@@ -201,20 +211,20 @@ jobs:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           test -n "$RELEASE_TOKEN" || {
-            echo '::error::Grant Aft the RELEASE_TOKEN organization secret and token Contents/Pull requests write access.'
+            echo '::error::Grant Aft the RELEASE_TOKEN organization secret and token Contents write access.'
             exit 1
           }
-      # The repository is its own tap; protected main requires a formula PR.
+      # The shared admin token can bypass main rules, matching ask and search.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Propose the Homebrew formula for the latest published release
+      - name: Update the Homebrew formula for the latest published release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -225,17 +235,12 @@ jobs:
           gh release download "$TAG" --pattern checksums.txt --output "$RUNNER_TEMP/checksums.txt"
           python3 scripts/formula.py "$TAG" "$RUNNER_TEMP/checksums.txt" > aft.rb
           git add aft.rb
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then
+            # Exercise git write authentication even when the formula is current.
+            git push origin HEAD:main
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "release: update Homebrew formula for $TAG"
-          # This branch contains only the generated formula and is owned by this job.
-          branch="release/homebrew-$TAG"
-          git push --force-with-lease origin "HEAD:refs/heads/$branch"
-          number=$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')
-          if test -z "$number"; then
-            printf 'Update the Homebrew formula from the verified checksums for %s.\n\nMerge after the required CI checks pass.\n' "$TAG" > "$RUNNER_TEMP/formula-pr.md"
-            gh pr create --base main --head "$branch" \
-              --title "release: update Homebrew formula for $TAG" \
-              --body-file "$RUNNER_TEMP/formula-pr.md"
-          fi
+          git push origin HEAD:main
