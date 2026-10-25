@@ -547,23 +547,25 @@ func (p *Predictor) Absorb(b []byte) {
 		return
 	}
 	// Still inside something: a sequence, which began at the last ESC, or a
-	// multibyte character, which began at its lead byte. Without either in
-	// this chunk the open thing began in an earlier one.
-	p.tail = append(p.tail, b[openAt(b):]...)
+	// multibyte character, which began at its lead byte. When it began in
+	// this chunk, what was kept before is finished and goes; otherwise it
+	// began in an earlier chunk and this one continues it.
+	if i := openAt(b); i >= 0 {
+		p.tail = append(p.tail[:0], b[i:]...)
+	} else {
+		p.tail = append(p.tail, b...)
+	}
 }
 
 // openAt is where the sequence or character left open at the end of b
-// starts, or 0 when it started before b.
+// starts, or -1 when it started before b.
 func openAt(b []byte) int {
 	for i := len(b) - 1; i >= 0 && i >= len(b)-4; i-- {
 		if b[i]&0xC0 == 0xC0 && !utf8.FullRune(b[i:]) {
 			return i // the lead byte of an unfinished character
 		}
 	}
-	if i := bytes.LastIndexByte(b, 0x1b); i >= 0 {
-		return i
-	}
-	return 0
+	return bytes.LastIndexByte(b, 0x1b)
 }
 
 // Repaint clears the screen and redraws the live screen from the shadow,
