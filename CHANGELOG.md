@@ -45,6 +45,12 @@ configuration may change as we learn from use.
 - Portable binaries for Linux and macOS on amd64 and arm64. Each client embeds
   the servers for all four targets and installs the right one over SSH.
 
+### Build security
+
+- Require Go 1.26.10 or newer so release binaries include standard-library
+  security fixes. Source CI and the release workflow audit the code with the
+  actual compiler used for their builds.
+
 ### Limits
 
 - macOS downloads are not notarized. Archives are unsigned; SHA-256 checksums

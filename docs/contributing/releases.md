@@ -33,6 +33,12 @@ Record the OS, agent and terminal versions when those checks are performed. Use 
 account or machine for uninstall; keep credentials, hostnames and private paths
 out of committed evidence. See the [manual checks](testing.md#manual-checks-before-a-release).
 
+The initial candidate was stopped before publication because the pinned Go
+1.26.0 compiler introduced reachable standard-library vulnerabilities. Builds
+now require Go 1.26.10 or newer, and both CI and release qualification run
+`./x audit` under their actual compiler. A scan with a different, newer local
+compiler does not qualify binaries built by CI.
+
 ## Final release steps
 
 1. Merge the preparation PR after `check (ubuntu-latest)`,
@@ -40,7 +46,7 @@ out of committed evidence. See the [manual checks](testing.md#manual-checks-befo
    check natively on Linux and macOS.
 2. Review the outstanding real-host checks above and the maintainer's explicit
    release decision. Confirm the final source commit and `v0.1.0` notes. Run `./x check` and
-   `./x release-check v0.1.0` from that commit.
+   `./x audit` and `./x release-check v0.1.0` from that commit.
 3. With explicit maintainer approval, configure a `release` environment with a
    required reviewer and set `RELEASE_ENABLED=true`. Keep `main` as the default
    branch and pin Actions to full commit SHAs.

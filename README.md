@@ -41,7 +41,7 @@ Each archive includes the servers for all supported hosts, so using a binary
 release needs no Go installation. See [installation](docs/guides/start/install.md)
 for Homebrew installation, platform selection, checksum verification and upgrades.
 
-If no release is published yet, or to build from source, use Go 1.26 or newer:
+If no release is published yet, or to build from source, use Go 1.26.10 or newer:
 
 ```sh
 ./x build

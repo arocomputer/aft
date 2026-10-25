@@ -66,6 +66,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - run: ./x check
+      - run: ./x audit
       - name: Verify native release artifact
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
