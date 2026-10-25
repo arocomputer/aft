@@ -23,14 +23,14 @@ func setupProgramOptions(catalog, current, other []string, info session.Info, ho
 		_, err := launcher.RealBinary(name)
 		local := err == nil
 		remote := info.Agents[name] != ""
-		hint := "not found"
+		hint := "not detected"
 		switch {
 		case local && remote:
 			hint = "found on this device and " + host
 		case remote:
 			hint = "found on " + host
 		case local && host != "":
-			hint = "found on this device; not found on " + host
+			hint = "found on this device; not detected on " + host
 		case local:
 			hint = "found on this device"
 		case agentConfigFound(name):
