@@ -1,8 +1,8 @@
 # Aft plan
 
-Status: ready to build, decided. Revision 4 records the decisions made on
-2026-10-23 and replaces every earlier revision. No product code has been
-changed for this plan.
+Status: implemented baseline. Revision 4 records the decisions made on
+2026-10-23 and replaces every earlier revision. Later implementation decisions
+are recorded below; the user guides describe the current behavior.
 
 ## 1. What Aft is
 
@@ -222,8 +222,10 @@ setup. The connection carries four things:
 - **Port mirrors,** added on the live connection with `ssh -O forward`.
 - **Short server calls,** such as listing sessions.
 
-The transport is TCP. Prediction hides network stalls for typing, but not
-for output. UDP can be considered later if lossy networks prove a problem.
+Sessions prefer QUIC over UDP after an SSH introduction pins the session's
+certificate and provides its token. SSH remains the fallback when UDP is
+unreachable, and carries short server calls and port forwarding. Prediction
+hides typing latency; application responses still depend on the network.
 
 **Server install.** Aft copies its own static binary for the server's OS and
 architecture to `~/.local/share/aft/aft-server` on the server. It verifies the hash and pins
@@ -471,8 +473,9 @@ with a Linux server, and a macOS client with a macOS server.
 - **Terminal library fit.** It must track modes and render back out to escape
   codes. Mitigation: choose it by test at the start of Phase 2. Writing a
   focused emulator is the fallback.
-- **TCP stalls on lossy networks.** Output is delayed, but typing is not.
-  Mitigation: measure with simulated loss; UDP is a later option.
+- **TCP fallback on lossy networks.** Output is delayed when UDP is blocked.
+  Mitigation: prefer QUIC when reachable and measure the SSH fallback with
+  simulated loss.
 - **Image paste on macOS servers.** Some agents read the clipboard through
   `osascript`, which cannot be shimmed safely. Mitigation: verify each agent
   in Phase 4, and document any gaps.

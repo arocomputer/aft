@@ -66,11 +66,17 @@ type screen struct {
 	done chan struct{}
 }
 
+// start launches a client under a PTY. AFT_TEST_BINARY selects an extracted
+// release executable; otherwise the test binary acts as the client.
 func start(t *testing.T, args ...string) *screen {
 	t.Helper()
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	self := os.Getenv("AFT_TEST_BINARY")
+	if self == "" {
+		var err error
+		self, err = os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	cmd := exec.Command(self, args...)
 	cmd.Env = append(os.Environ(), "AFT_TEST_AS_AFT=1", "TERM=xterm-256color", "SHELL=/bin/sh", "PS1=$ ")

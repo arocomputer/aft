@@ -24,6 +24,10 @@ class ReleaseNotesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release_notes('v1.2.3', '## Unreleased\nPending\n')
 
+    def test_rejects_duplicate_version_sections(self):
+        with self.assertRaises(ValueError):
+            release_notes('v1.2.3', '## 1.2.3\nFirst\n## 1.2.3\nSecond\n')
+
 
 class DocsTests(unittest.TestCase):
     """Local links and guide navigation must fail when their targets drift."""

@@ -22,10 +22,10 @@ shell on Linux or macOS.
 | `./x try` | Open the interactive test command center (builds aft, runs the guided self-test) |
 | `./x bench` | Run the benchmarks (microbenchmarks and the end-to-end typing-latency benchmark) |
 | `./x docs` | Check guide metadata and local Markdown links |
-| `./x servers` | Cross-compile and gzip the server for every host platform into the embed directory |
+| `./x servers [VERSION]` | Cross-compile and gzip the servers; packaging passes its exact release version |
 | `./x build` | Cross-compile the embedded servers, then build `bin/aft` |
 | `./x check` | Formatting, vet, tests, docs and build |
-| `./x release-check [vX.Y.Z]` | Build and inspect all archives in a temporary directory |
+| `./x release-check [vX.Y.Z]` | Build all archives, inspect metadata and exercise the native artifact in a temporary directory |
 | `./x dist vX.Y.Z` | Write archives, checksums and notes to `dist/vX.Y.Z`; never publish |
 
 A plain `go build ./cmd/aft` works for development but embeds no servers, so it

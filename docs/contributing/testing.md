@@ -73,3 +73,18 @@ machine over the network is still the remaining check.
 
 Record OS and tool versions, source commit and outcomes in the review; never
 commit private hosts, logs or machine-specific paths.
+
+## Release artifact checks
+
+`./x release-check v0.1.0` builds matching client and embedded-server versions
+for all four targets. It inspects platform, CGO-free build settings and source
+revision, verifies archive contents and checksums, then extracts the native
+archive and checks `aft version` and the matching embedded server's metadata.
+
+The native executable runs through the existing terminal tests for independent
+shells, project visibility, reconnect and copy mode. It also exercises
+setup/on/off/uninstall in a throwaway home, checking that shell configuration,
+SSH configuration, agent data and project files are restored byte for byte.
+These checks use the reserved `local` host and require no SSH service or
+credentials. CI runs native artifact checks on Linux and macOS. They do not
+replace real-host browser login, clipboard or uninstall checks.
