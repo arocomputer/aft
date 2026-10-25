@@ -54,7 +54,7 @@ var (
 // binary, or the aft binary, either started as aft-server.
 func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: aft-server new|attach|serve|ls|end|udp|rename|remains|setup|info|listeners|clipboard-put|clipboard-rm")
+		fmt.Fprintln(stderr, "usage: aft-server new|attach|serve|ls|ls-projects|end|udp|rename|remains|setup|info|listeners|clipboard-put|clipboard-rm")
 		return 2
 	}
 	self, err := os.Executable()
@@ -171,14 +171,25 @@ func Main(prefix []string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			return 2
 		}
 		return relay(args[1], stdin, stdout, stderr)
-	case "ls":
+	case "ls", "ls-projects":
+		fs := flag.NewFlagSet("ls", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		all := fs.Bool("all", false, "include ended sessions")
+		var dirs multi
+		fs.Var(&dirs, "project-dir", "enabled project directory on this host (repeatable)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
 		list, err := List()
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if len(args) > 1 && args[1] == "--all" {
+		if *all {
 			list = append(list, Remains()...) // and sessions that ended unseen
+		}
+		if args[0] == "ls-projects" {
+			list = ProjectSessions(list, dirs)
 		}
 		if list == nil {
 			list = []Record{}

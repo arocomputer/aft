@@ -49,7 +49,7 @@ type Options struct {
 type Record struct {
 	ID      string   `json:"id"`
 	Command []string `json:"command"`
-	Dir     string   `json:"dir"`
+	Dir     string   `json:"dir"`     // startup directory; public shell listings report the current cwd
 	PID     int      `json:"pid"`     // the application's process id
 	Server  int      `json:"server"`  // the session server's process id
 	Started string   `json:"started"` // RFC 3339

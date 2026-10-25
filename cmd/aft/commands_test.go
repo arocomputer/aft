@@ -1,11 +1,170 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
+	"github.com/arocomputer/aft/internal/session"
 )
+
+// fakeSSH puts a test's SSH implementation on PATH without reaching a host.
+func fakeSSH(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestLegacyServerListsOnlyAgents preserves agent access during upgrades without
+// exposing shells whose current directory an older server cannot report.
+func TestLegacyServerListsOnlyAgents(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	records, err := json.Marshal([]session.Record{
+		{ID: "agent", Command: []string{"agent"}},
+		{ID: "shell", Command: session.ShellCommand},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeSSH(t, `case "$*" in
+  *ls-projects*) printf '%s\n' 'unknown server command "ls-projects"' >&2; exit 2 ;;
+  *'ls --all'*) cat <<'RECORDS'
+`+string(records)+`
+RECORDS
+    ;;
+  *) exit 99 ;;
+esac
+`)
+	got, err := projectSessions(transport.Host{Name: "box", SSH: "test-destination"}, config.State{})
+	if err != nil || len(got) != 1 || got[0].ID != "agent" {
+		t.Fatalf("legacy listing: %+v, %v", got, err)
+	}
+}
+
+// TestHostAttachAuthenticatesBeforeListing lets SSH prompt before querying
+// visibility, and never contacts unrelated hosts when --host is specified.
+func TestHostAttachAuthenticatesBeforeListing(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	connected := filepath.Join(t.TempDir(), "connected")
+	t.Setenv("AFT_TEST_CONNECTED", connected)
+	if err := config.Save(config.Config{Hosts: map[string]config.HostConfig{
+		"box": {SSH: "test-destination"}, "other": {SSH: "unrelated"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	fakeSSH(t, `case " $* " in
+  *unrelated*) exit 99 ;;
+  *' -O check '*) test -f "$AFT_TEST_CONNECTED" ;;
+  *' -fN '*)
+    case "$*" in
+      *BatchMode=yes*) printf '%s\n' 'Permission denied' >&2; exit 255 ;;
+      *) : > "$AFT_TEST_CONNECTED" ;;
+    esac ;;
+  *ls-projects*)
+    test -f "$AFT_TEST_CONNECTED" || exit 98
+    printf '[]\n' ;;
+  *) exit 97 ;;
+esac
+`)
+	for _, args := range [][]string{{"--host", "box", "owl"}, {"--host", "box"}} {
+		out := captureCLI(t, func() {
+			if code := cmdAttach(args); code != 1 {
+				t.Errorf("attach %v returned %d", args, code)
+			}
+		})
+		if !strings.Contains(out, "no attachable session") && !strings.Contains(out, "no sessions to attach") {
+			t.Fatalf("attach did not reach session selection: %s", out)
+		}
+	}
+	if _, err := os.Stat(connected); err != nil {
+		t.Fatalf("SSH never had an opportunity to authenticate: %v", err)
+	}
+}
+
+// captureCLI collects the small help screens from both output streams.
+func captureCLI(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = w, w
+	defer func() { os.Stdout, os.Stderr = stdout, stderr }()
+	fn()
+	w.Close()
+	out, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// TestHelpOverview keeps the default short and the full reference flat and readable.
+func TestHelpOverview(t *testing.T) {
+	compact := captureCLI(t, func() { printUsage(false) })
+	full := captureCLI(t, func() { printUsage(true) })
+	if len(strings.Split(compact, "\n")) > 15 || !strings.Contains(compact, "aft help") {
+		t.Fatalf("overview should be compact and point to help:\n%s", compact)
+	}
+	if strings.Contains(compact, "rename") || !strings.Contains(full, "rename NAME NEW") || !strings.Contains(full, "on [--host H] [--dir D]") {
+		t.Fatalf("full help should expand the overview:\n%s", full)
+	}
+	for _, line := range strings.Split(full, "\n") {
+		if len(line) > 80 {
+			t.Errorf("help exceeds 80 columns: %q", line)
+		}
+		if line != "" && !strings.HasPrefix(line, "  ") && !strings.ContainsAny(line, " :") {
+			t.Errorf("unexpected category header: %q", line)
+		}
+	}
+}
+
+// TestHelpRequests accepts conventional help without loading or changing setup.
+func TestHelpRequests(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "unused")
+	t.Setenv("AFT_HOME", home)
+	full := captureCLI(t, func() { printUsage(true) })
+	for _, cmd := range []string{"help", "--help", "-h"} {
+		out := captureCLI(t, func() {
+			if code := run(cmd, nil); code != 0 {
+				t.Errorf("%s returned %d", cmd, code)
+			}
+		})
+		if out != full {
+			t.Errorf("%s differs from full help", cmd)
+		}
+	}
+	for _, cmd := range commands {
+		name := strings.Fields(cmd[0])[0]
+		if name == "HOST" {
+			continue
+		}
+		captureCLI(t, func() {
+			if code := run(name, []string{"--help"}); code != 0 {
+				t.Errorf("%s --help returned %d", name, code)
+			}
+		})
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("help touched AFT_HOME: %v", err)
+	}
+	captureCLI(t, func() {
+		if code := run("on", []string{"--invalid"}); code != 2 {
+			t.Errorf("invalid flag returned %d, want 2", code)
+		}
+	})
+}
 
 // TestExpandHome maps a home-relative server path to an absolute one. The Mac
 // and the server have different home directories, so a stored ~ would break.

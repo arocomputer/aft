@@ -14,87 +14,50 @@ import (
 	"golang.org/x/term"
 )
 
-// Output for every command, so aft reads the same everywhere. Results and data
-// go to stdout; warnings, errors and the live spinner go to stderr. Colors are
-// the terminal's own ANSI colors, so they follow its theme, and each stream
-// drops them when it is not a terminal or NO_COLOR is set. Only the 16 colors
-// the terminal's theme defines are used, so they are the user's own, and
-// secondary text is faint rather than gray: faint is the user's text color,
-// dimmed, which stays readable on any theme where "bright black" may not. A
-// mark always comes with its color, so nothing depends on color alone.
-var (
-	stdout = lipgloss.NewRenderer(os.Stdout)
-	stderr = lipgloss.NewRenderer(os.Stderr)
-)
+// Only stderr warnings and errors use color. Renderer creation never probes or
+// writes to the terminal; piped output and NO_COLOR retain readable labels.
+var stderr = lipgloss.NewRenderer(os.Stderr)
 
-// Marks for results; each pairs a symbol with a color.
-const (
-	markOK   = "✓"
-	markWarn = "!"
-	markBad  = "✗"
-	markInfo = "·"
-)
-
-func style(r *lipgloss.Renderer, color string) lipgloss.Style {
-	return r.NewStyle().Foreground(lipgloss.Color(color))
-}
-
-func faint(r *lipgloss.Renderer) lipgloss.Style { return r.NewStyle().Faint(true) }
-
-// Bold, Dim and Accent style text for stdout.
-func Bold(s string) string   { return stdout.NewStyle().Bold(true).Render(s) }
-func Dim(s string) string    { return faint(stdout).Render(s) }
-func Accent(s string) string { return style(stdout, "6").Render(s) }
-
-// Mark returns the colored mark for a level: ok, warn, fix or info.
-func Mark(level string) string { return mark(stdout, level) }
-
-func mark(r *lipgloss.Renderer, level string) string {
+// Prefix labels warnings and errors; routine output needs no marker.
+func Prefix(level string) string {
 	switch level {
-	case "ok":
-		return style(r, "2").Render(markOK)
 	case "warn":
-		return style(r, "3").Render(markWarn)
+		return "warning: "
 	case "fix":
-		return style(r, "1").Render(markBad)
+		return "error: "
 	}
-	return faint(r).Render(markInfo)
+	return ""
 }
 
 // OK reports a finished action on stdout.
 func OK(format string, a ...any) {
-	fmt.Println(Mark("ok") + " " + fmt.Sprintf(format, a...))
+	fmt.Printf(format+"\n", a...)
 }
 
-// Note prints a short line to stderr, for telling the user what changed.
+// Note reports a change on stderr.
 func Note(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, style(stderr, "6").Render("•")+" "+fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, format+"\n", a...)
 }
 
-// Warn prints a warning to stderr.
+// Warn prints a labeled warning to stderr.
 func Warn(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, mark(stderr, "warn")+" "+fmt.Sprintf(format, a...))
+	fmt.Fprintln(os.Stderr, stderr.NewStyle().Foreground(lipgloss.Color("3")).Render("warning:")+" "+fmt.Sprintf(format, a...))
 }
 
-// Error prints an error to stderr.
+// Error prints a labeled error to stderr.
 func Error(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, mark(stderr, "fix")+" "+fmt.Sprintf(format, a...))
+	fmt.Fprintln(os.Stderr, stderr.NewStyle().Foreground(lipgloss.Color("1")).Render("error:")+" "+fmt.Sprintf(format, a...))
 }
 
-// Hint prints the next thing to do, indented under the line above, to stderr.
-// It is in the user's own text color: a hint is what they should read next.
+// Hint prints recovery instructions indented beneath a warning or error.
 func Hint(format string, a ...any) {
-	fmt.Fprintln(os.Stderr, "  "+style(stderr, "6").Render("→")+" "+fmt.Sprintf(format, a...))
+	fmt.Fprintln(os.Stderr, "  "+fmt.Sprintf(format, a...))
 }
 
-// Suggest prints, under an error, the command the user probably meant, in
-// bold accent so it is not skimmed past.
+// Suggest prints the command the user probably meant beneath an error.
 func Suggest(cmd string) {
-	fmt.Fprintln(os.Stderr, "  "+style(stderr, "6").Render("→")+" did you mean "+style(stderr, "6").Bold(true).Render(cmd)+"?")
+	Hint("Did you mean %s?", cmd)
 }
-
-// Command styles a command the user can copy.
-func Command(s string) string { return style(stdout, "6").Bold(true).Render(s) }
 
 // Path shortens a local path under the home directory to ~.
 func Path(p string) string {
@@ -125,10 +88,13 @@ func Ago(t time.Time) string {
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
-// Table prints rows in aligned columns under a dim header. Cells may carry
-// styles; widths ignore them.
+// Table prints aligned columns with an optional header. Widths ignore styles.
 func Table(header []string, rows [][]string) {
-	widths := make([]int, len(header))
+	cols := len(header)
+	for _, r := range rows {
+		cols = max(cols, len(r))
+	}
+	widths := make([]int, cols)
 	for _, r := range append([][]string{header}, rows...) {
 		for i, c := range r {
 			if w := lipgloss.Width(c); i < len(widths) && w > widths[i] {
@@ -136,12 +102,9 @@ func Table(header []string, rows [][]string) {
 			}
 		}
 	}
-	line := func(r []string, dim bool) {
+	line := func(r []string) {
 		var b strings.Builder
 		for i, c := range r {
-			if dim {
-				c = Dim(c)
-			}
 			b.WriteString(c)
 			if i < len(r)-1 && i < len(widths) {
 				b.WriteString(strings.Repeat(" ", max(widths[i]-lipgloss.Width(c), 0)+2))
@@ -149,33 +112,32 @@ func Table(header []string, rows [][]string) {
 		}
 		fmt.Println(b.String())
 	}
-	line(header, true)
+	if len(header) > 0 {
+		line(header)
+	}
 	for _, r := range rows {
-		line(r, false)
+		line(r)
 	}
 }
 
-// Live is a spinner on stderr with an optional step count and bar, for work
-// that takes a moment. Lines printed through it land above the spinner, so a
-// clean log remains when it stops. When stderr is not a terminal it draws
-// nothing and only passes lines through.
+// Live is a spinner on stderr for work that takes a moment. Lines printed
+// through it land above the spinner, leaving a clean log when it stops.
+// When stderr is not a terminal it draws nothing and only passes lines through.
 type Live struct {
 	mu          sync.Mutex
 	tty         bool
 	label       string
-	done, total int
 	frame       int
 	paused      bool
 	stop, ended chan struct{}
 	sig         chan os.Signal
 }
 
-var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var spinFrames = []string{"|", "/", "-", "\\"}
 
-// Start begins a spinner showing label. With total > 0 it also shows how many
-// of total steps are done; Advance counts them.
-func Start(label string, total int) *Live {
-	l := &Live{label: label, total: total, tty: term.IsTerminal(int(os.Stderr.Fd())), stop: make(chan struct{}), ended: make(chan struct{})}
+// Start begins a spinner showing label.
+func Start(label string) *Live {
+	l := &Live{label: label, tty: term.IsTerminal(int(os.Stderr.Fd())), stop: make(chan struct{}), ended: make(chan struct{})}
 	if !l.tty {
 		close(l.ended)
 		return l
@@ -214,13 +176,7 @@ func (l *Live) draw() {
 	if l.paused {
 		return
 	}
-	line := style(stderr, "6").Render(spinFrames[l.frame%len(spinFrames)]) + " " + l.label
-	if l.total > 0 {
-		const width = 16
-		n := width * l.done / l.total
-		bar := style(stderr, "6").Render(strings.Repeat("━", n)) + faint(stderr).Render(strings.Repeat("─", width-n))
-		line += "  " + bar + " " + faint(stderr).Render(fmt.Sprintf("%d/%d", l.done, l.total))
-	}
+	line := spinFrames[l.frame%len(spinFrames)] + " " + l.label
 	// A line wider than the terminal would wrap and break the redraw.
 	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 0 && lipgloss.Width(line) >= w {
 		line = ansi.Truncate(line, w-1, "")
@@ -232,15 +188,6 @@ func (l *Live) draw() {
 func (l *Live) Step(label string) {
 	l.mu.Lock()
 	l.label = label
-	l.mu.Unlock()
-}
-
-// Advance counts one finished step.
-func (l *Live) Advance() {
-	l.mu.Lock()
-	if l.done < l.total {
-		l.done++
-	}
 	l.mu.Unlock()
 }
 
@@ -292,7 +239,7 @@ func (l *Live) Stop() {
 
 // Spin shows label with a spinner while fn runs.
 func Spin(label string, fn func() error) error {
-	l := Start(label, 0)
+	l := Start(label)
 	defer l.Stop()
 	return fn()
 }

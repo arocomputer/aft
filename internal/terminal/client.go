@@ -306,7 +306,7 @@ func (c *session) dial() (link, error) {
 					c.fresh = true
 					return c.dial()
 				}
-				ui.Note("reattaching to %s %s", got.ID, ui.Dim("· aft kill "+got.ID+" starts a fresh one"))
+				ui.Note("Reattaching to %s", got.ID)
 			}
 			if answered {
 				c.id = got.ID
@@ -704,16 +704,26 @@ func (c *session) exitMessage(e proto.ExitInfo) func() {
 		case e.Code != 0:
 			ui.Warn("%s on %s exited with code %d", what, where, e.Code)
 		default:
-			ui.Note("%s on %s exited; session %s is closed", what, where, c.id)
+			if sess.IsShell(c.command) {
+				ui.Note("Shell on %s closed", where)
+			} else {
+				ui.Note("%s on %s exited; session %s is closed", what, where, c.id)
+			}
 		}
 	}
 }
 
 // detachMessage says the session runs on without this terminal, and how to
-// come back to it. format names the session with %s.
+// come back to it. Shells are discoverable only while inside an enabled
+// project. format names an agent session with %s.
 func (c *session) detachMessage(format string) func() {
 	id := c.id
 	return func() {
+		if sess.IsShell(c.command) {
+			ui.Note("Left the shell on %s; it keeps running", c.o.Host.Name)
+			ui.Hint("aft ls shows it while it is inside an enabled project")
+			return
+		}
 		ui.Note(format, id)
 		ui.Hint("aft attach %s", id)
 	}
@@ -899,6 +909,10 @@ func (sessionEnded) Error() string { return "the session ended" }
 func (c *session) goneMessage(gone sessionEnded) func() {
 	id, host := c.id, c.o.Host.Name
 	return func() {
+		if sess.IsShell(c.command) {
+			ui.Warn("Shell on %s is no longer running", host)
+			return
+		}
 		ui.Warn("%s is no longer running on %s", id, host)
 		if gone.Remains {
 			ui.Hint("aft attach %s shows its last screen and how it ended", id)

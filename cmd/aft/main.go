@@ -15,44 +15,30 @@ import (
 	"github.com/arocomputer/aft/internal/ui"
 )
 
-// commands is the help screen: groups of command, arguments and summary.
-var commands = []struct {
-	group string
-	cmds  [][3]string
-}{
-	{"Start", [][3]string{
-		{"setup", "", "add a host, create launchers, add the PATH block"},
-		{"on", "[--host H] [--dir D]", "this folder runs on the host; creates it there if needed"},
-		{"off", "", "run them locally again"},
-	}},
-	{"Sessions", [][3]string{
-		{"HOST", "[CMD...]", "a terminal on that host that survives disconnects; CMD runs once"},
-		{"ls", "", "sessions on every host"},
-		{"attach", "[NAME]", "reattach to a session"},
-		{"rename", "NAME NEW", "call a session what you like"},
-		{"kill", "NAME", "stop a session"},
-	}},
-	{"Hosts", [][3]string{
-		{"host", "[add|rm|use]", "list your hosts, add or remove one, pick the default"},
-		{"mount", "list|add|remove", "map a network-mounted folder"},
-	}},
-	{"Launchers", [][3]string{
-		{"agents add", "NAME...", "programs that run in sessions on the server"},
-		{"tools add", "NAME...", "commands like git and gh that run there once"},
-	}},
-	{"Maintain", [][3]string{
-		{"status", "", "where you are, hosts, sessions, ports, projects"},
-		{"doctor", "[--fix]", "check SSH, server, agents, launchers, shell block"},
-		{"uninstall", "", "remove everything Aft added, everywhere"},
-		{"completion", "bash|zsh|fish", "shell completion"},
-		{"version", "", "print the version"},
-		{"help", "", "this list"},
-	}},
+// commands supplies the flat command list for help, completion and suggestions.
+var commands = [][3]string{
+	{"setup", "[--host DEST]", "Set up a host and launchers"},
+	{"on", "[--host H] [--dir D]", "Enable Aft for this project"},
+	{"off", "", "Run this project's agents locally"},
+	{"HOST", "[CMD...]", "Open a new shell; CMD runs once"},
+	{"ls", "", "List sessions"},
+	{"attach", "[NAME]", "Attach to a session"},
+	{"rename", "NAME NEW", "Rename a session"},
+	{"kill", "NAME", "Stop a session"},
+	{"host", "[add|rm|use]", "Manage hosts and the default host"},
+	{"mount", "[list|add|remove]", "Map a mounted folder to a host"},
+	{"agents add", "NAME...", "Add programs that run in sessions"},
+	{"tools add", "NAME...", "Add commands that run once on the host"},
+	{"status", "", "Show projects, hosts, sessions and ports"},
+	{"doctor", "[--fix] [--host H]", "Check setup and optionally repair it"},
+	{"uninstall", "", "Remove Aft from this machine and its hosts"},
+	{"completion", "bash|zsh|fish", "Print shell completion"},
+	{"version", "", "Print the version"},
+	{"help", "", "Show the full command reference"},
 }
 
 // meant maps names people reach for, including commands aft no longer has, to
-// what they are after. A command is a word, never a flag, so --help is
-// answered with a suggestion rather than accepted.
+// what they are after. Standard help and version flags are also accepted.
 var meant = map[string]string{
 	"list": "ls", "sessions": "ls", "ps": "ls",
 	"end": "kill", "stop": "kill", "rm": "kill", "mv": "rename",
@@ -68,11 +54,9 @@ func isCommand(name string) bool {
 	case "selftest", "_complete":
 		return true
 	}
-	for _, g := range commands {
-		for _, c := range g.cmds {
-			if strings.Fields(c[0])[0] == name {
-				return true
-			}
+	for _, c := range commands {
+		if strings.Fields(c[0])[0] == name {
+			return true
 		}
 	}
 	return false
@@ -92,18 +76,16 @@ func suggest(word string) string {
 		return m
 	}
 	best, bestD := "", 3
-	for _, g := range commands {
-		for _, c := range g.cmds {
-			name := strings.Fields(c[0])[0]
-			if name == "HOST" {
-				continue // a placeholder, not a command
-			}
-			if name == w && w != word {
-				return name // --help, -version
-			}
-			if d := distance(w, name); d < bestD && d <= len(name)/2 {
-				best, bestD = name, d
-			}
+	for _, c := range commands {
+		name := strings.Fields(c[0])[0]
+		if name == "HOST" {
+			continue // a placeholder, not a command
+		}
+		if name == w && w != word {
+			return name // --help, -version
+		}
+		if d := distance(w, name); d < bestD && d <= len(name)/2 {
+			best, bestD = name, d
 		}
 	}
 	return best
@@ -130,17 +112,35 @@ func distance(a, b string) int {
 	return prev[len(b)]
 }
 
-// printUsage prints the help screen: the commands by group.
-func printUsage() {
-	fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
-	for _, g := range commands {
-		fmt.Println("\n" + ui.Bold(g.group))
-		for _, c := range g.cmds {
-			name := fmt.Sprintf("%-11s", c[0])
-			fmt.Printf("  %s %s%s\n", ui.Accent(name), fmt.Sprintf("%-22s", c[1]), ui.Dim(c[2]))
+// printUsage prints a compact overview, or the full reference when detailed.
+func printUsage(detailed bool) {
+	fmt.Println("Usage: aft <command>")
+	fmt.Println()
+	var rows [][]string
+	for _, c := range commands {
+		if !detailed {
+			switch c[0] {
+			case "setup", "on", "off", "HOST", "ls", "attach", "status", "help":
+			default:
+				continue
+			}
 		}
+		invocation := c[0]
+		if (detailed || c[0] == "HOST" || c[0] == "attach") && c[1] != "" {
+			invocation += " " + c[1]
+		}
+		rows = append(rows, []string{"  " + invocation, c[2]})
 	}
-	fmt.Println("\n" + ui.Dim("In a project that is on, run claude, codex, opencode or pi exactly as before."))
+	ui.Table(nil, rows)
+	if detailed {
+		fmt.Print("\nRun claude, codex, opencode or pi as usual in an enabled project.\n" +
+			"Host shells appear in aft ls only while inside an enabled project.\n" +
+			"Host commands: aft host add NAME DEST, aft host rm NAME, aft host use NAME.\n" +
+			"Mount a folder: aft mount add --local DIR --host HOST --remote DIR.\n" +
+			"Use aft <command> --help for flags (for example, aft on --help).\n")
+	} else {
+		fmt.Println("\nRun aft setup to get started; aft help lists every command.")
+	}
 }
 
 // version is set by the build.
@@ -162,25 +162,30 @@ func main() {
 		os.Exit(launcher.Launch(base, os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
-		// A fresh install has one next step; the full list can wait.
-		if cfg, err := config.Load(); err == nil && len(cfg.Hosts) == 0 {
-			fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
-			fmt.Println()
-			fmt.Println("Start with " + ui.Command("aft setup") + ui.Dim(" to add your server. aft help lists the commands."))
-			os.Exit(0)
-		}
-		printUsage()
+		printUsage(false)
 		os.Exit(0)
 	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
 }
 
+// run dispatches a command; help requests return before any setup or connection.
 func run(cmd string, args []string) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		switch cmd {
+		case "off", "ls", "status", "host", "mount", "agents", "tools", "completion", "version":
+			for _, c := range commands {
+				if strings.Fields(c[0])[0] == cmd {
+					fmt.Printf("Usage: aft %s\n%s\n", strings.TrimSpace(c[0]+" "+c[1]), c[2])
+					return 0
+				}
+			}
+		}
+	}
 	switch cmd {
-	case "help":
-		printUsage()
+	case "help", "--help", "-h":
+		printUsage(true)
 		return 0
-	case "version":
+	case "version", "--version", "-v":
 		fmt.Println("aft", version)
 		return 0
 	case "setup":
