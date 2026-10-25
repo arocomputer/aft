@@ -16,7 +16,7 @@ Evidence gathered on 2026-10-25:
 | --- | --- |
 | Linux and macOS source CI | Passed on merged PR #16; [main CI run](https://github.com/arocomputer/aft/actions/runs/40148257486) |
 | Archive versions, embedded servers, platform metadata and checksums | Verified by `./x release-check v0.1.0`; rerun on the final release commit |
-| Native artifact sessions and isolated uninstall | Verified locally on Linux; macOS artifact execution must pass the preparation PR's CI |
+| Native artifact sessions and isolated uninstall | Passed on Linux and macOS in preparation PR #17 and infrastructure PR #18 CI |
 | Typing on a real host | Maintainer reports checked; OS, agent and terminal versions were not recorded |
 | Sleep and reconnect | Maintainer reports checked |
 | Clipboard and image paste | Maintainer reports checked |
@@ -24,11 +24,12 @@ Evidence gathered on 2026-10-25:
 | Uninstall on a real remote host | Still needs a check; isolated local uninstall is covered automatically |
 | Private vulnerability reports | Enabled in repository settings |
 | Dependency integrity and vulnerability scan | `go mod verify` passed; `govulncheck v1.9.0` found no vulnerable imported packages or reachable symbols. `x/net` and `x/crypto` updated to patched versions; the unused, unmaintained `x/crypto/openpgp` advisory has no fixed version |
-| Release publication | Not authorized by preparation; `RELEASE_ENABLED` is unset and no `release` environment is configured |
+| Release publication | Maintainer authorized v0.1.0 after verifying the organization-secret grant and release checks; browser login and real-host uninstall remain unverified |
 
 The maintainer's reports are hands-on evidence, not an independently reproduced
-OS/agent matrix. Before tagging, record the OS, agent and terminal versions and
-outcomes for browser login and uninstall in the release review. Use a disposable
+OS/agent matrix. The maintainer authorized v0.1.0 with browser login and real-host
+uninstall still unverified; those checks must not be represented as completed.
+Record the OS, agent and terminal versions when those checks are performed. Use a disposable
 account or machine for uninstall; keep credentials, hostnames and private paths
 out of committed evidence. See the [manual checks](testing.md#manual-checks-before-a-release).
 
@@ -37,8 +38,8 @@ out of committed evidence. See the [manual checks](testing.md#manual-checks-befo
 1. Merge the preparation PR after `check (ubuntu-latest)`,
    `check (macos-latest)` and `release-check` pass. CI runs the versioned archive
    check natively on Linux and macOS.
-2. Complete the outstanding real-host checks above. Confirm the final source
-   commit and `v0.1.0` notes. Run `./x check` and
+2. Review the outstanding real-host checks above and the maintainer's explicit
+   release decision. Confirm the final source commit and `v0.1.0` notes. Run `./x check` and
    `./x release-check v0.1.0` from that commit.
 3. With explicit maintainer approval, configure a `release` environment with a
    required reviewer and set `RELEASE_ENABLED=true`. Keep `main` as the default
@@ -79,8 +80,11 @@ separate application, not the destination for these formulas.
   normal `github.token` creates the release and reads its assets; the shared
   token is needed for the formula commit that triggers CI on `main`.
 
-An organization administrator must make the existing `RELEASE_TOKEN` secret
-available to `arocomputer/aft` (or confirm its visibility already includes Aft).
+The existing `RELEASE_TOKEN` organization secret is now available to
+`arocomputer/aft`, as verified through the inherited-secret endpoint. A protected
+preflight checks its repository access inside Actions before creating the draft.
+For future repositories, an organization administrator must grant access to the
+existing secret instead of creating another credential.
 Its credential needs repository contents write access to Aft and must satisfy
 any branch protection on `main`. Do not copy a secret value into the repository,
 logs, an issue or a PR. GitHub does not return stored Actions secret values.

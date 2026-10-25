@@ -126,6 +126,16 @@ jobs:
         with:
           name: release-assets
           path: assets
+      - name: Verify the organization release token before creating the draft
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test -n "$GH_TOKEN" || { echo '::error::RELEASE_TOKEN is unavailable to Aft.'; exit 1; }
+          test "$(gh api "repos/$GH_REPO" --jq .permissions.push)" = true || {
+            echo '::error::RELEASE_TOKEN does not report repository write access to Aft.'
+            exit 1
+          }
       - name: Verify selected source and create a draft
         env:
           GH_TOKEN: ${{ github.token }}
