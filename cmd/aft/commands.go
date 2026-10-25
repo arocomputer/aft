@@ -130,6 +130,8 @@ func cmdSetup(args []string) int {
 		return fail(err)
 	}
 
+	var discovered session.Info
+	discoveredHost := ""
 	dest := *hostFlag
 	if dest == "" && !*yes {
 		dest = ask("SSH destination for your server (alias from ~/.ssh/config; empty to skip)", "")
@@ -154,6 +156,7 @@ func cmdSetup(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		discovered, discoveredHost = info, n
 		ui.OK("Server ready on %s %s", n, info.OS+"/"+info.Arch+"; "+info.Version)
 		if found := agentsIn(info.Agents); len(found) == 0 {
 			ui.Warn("no agents on %s yet; install one there (claude, codex, opencode, pi)", n)
@@ -162,42 +165,63 @@ func cmdSetup(args []string) int {
 			ui.OK("Agents on %s: %s", n, strings.Join(found, ", "))
 		}
 	}
-	if len(cfg.Agents) == 0 {
-		cfg.Agents = config.DefaultAgents
+	fresh := st.Binary == "" && len(cfg.Agents) == 0 && len(cfg.Tools) == 0
+	agentOptions := setupProgramOptions(config.KnownAgents, cfg.Agents, cfg.Tools, discovered, discoveredHost, fresh)
+	agents, ok := selectSetupPrograms("Agents (persistent sessions)", agentOptions, *yes)
+	if !ok {
+		return 130
 	}
-	if err := launcher.InstallLaunchers(self, cfg.Launched(), &st); err != nil {
-		return fail(err)
+	toolOptions := setupProgramOptions([]string{"git", "gh"}, cfg.Tools, agents, discovered, discoveredHost, fresh)
+	tools, ok := selectSetupPrograms("Tools (run once)", toolOptions, *yes)
+	if !ok {
+		return 130
 	}
-	ui.OK("Launchers for %s in %s", strings.Join(cfg.Launched(), ", "), ui.Path(home.Launchers()))
+	cfg.Agents, cfg.Tools = agents, tools
 
 	// Decide how the PATH line reaches the shell. People who manage their
 	// dotfiles want to add it themselves, so ask rather than edit blindly.
-	if cfg.EditDotfiles == nil && !*yes {
+	if len(cfg.Launched()) > 0 && cfg.EditDotfiles == nil && !*yes {
 		b, ok := chooseEditDotfiles()
 		if !ok {
 			return 130
 		}
 		cfg.EditDotfiles = &b
 	}
-	if cfg.EditingDotfiles() {
-		changed, err := launcher.InstallShellBlock(&st)
-		if err != nil {
-			return fail(err)
-		}
-		for _, f := range changed {
-			ui.OK("Added the PATH line to %s (open a new terminal to apply)", ui.Path(f))
-		}
-	} else {
-		fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
-		fmt.Printf("  export PATH=\"%s:$PATH\"\n", launcher.PathDir)
+	if err := launcher.SyncLaunchers(self, cfg.Launched(), &st); err != nil {
+		return fail(err)
 	}
+	if names := cfg.Launched(); len(names) > 0 {
+		ui.OK("Launchers for %s in %s", strings.Join(names, ", "), ui.Path(home.Launchers()))
+	} else {
+		ui.OK("No agent or tool launchers selected")
+	}
+	if len(cfg.Launched()) > 0 {
+		if cfg.EditingDotfiles() {
+			changed, err := launcher.InstallShellBlock(&st)
+			if err != nil {
+				return fail(err)
+			}
+			for _, f := range changed {
+				ui.OK("Added the PATH line to %s (open a new terminal to apply)", ui.Path(f))
+			}
+		} else {
+			fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
+			fmt.Printf("  export PATH=\"%s:$PATH\"\n", launcher.PathDir)
+		}
+	}
+
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
 	}
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Println("Run aft on in a project, then start your agent as usual.")
+	if len(cfg.Launched()) > 0 {
+		fmt.Println("Run aft on in a project, then start your selected agent or tool as usual.")
+	} else {
+		fmt.Println("Run aft HOST to open a remote shell.")
+	}
+	ui.Hint("aft agents add NAME or aft tools add NAME adds another program")
 	return 0
 }
 
@@ -377,7 +401,7 @@ func hostUse(cfg config.Config, args []string) int {
 
 func agentsIn(m map[string]string) []string {
 	var out []string
-	for _, a := range config.DefaultAgents {
+	for _, a := range config.KnownAgents {
 		if _, ok := m[a]; ok {
 			out = append(out, a)
 		}
@@ -740,7 +764,7 @@ func describe(r session.Record) string {
 	if session.IsShell(r.Command) {
 		name = "shell" // aft HOST's login-shell wrapper
 	}
-	for _, a := range config.DefaultAgents {
+	for _, a := range config.KnownAgents {
 		if name == a {
 			name = strings.ToUpper(name[:1]) + name[1:]
 		}
@@ -1502,6 +1526,9 @@ func cmdLaunchers(kind string, args []string) int {
 		ui.OK("%s run once on the server wherever aft is on", strings.Join(added, ", "))
 	} else {
 		ui.OK("%s now run in sessions on the server wherever aft is on", strings.Join(added, ", "))
+	}
+	if !launcher.OnPath() && !launcher.PathInShellConfig(st) {
+		ui.Hint("Run aft setup to put the launchers on PATH")
 	}
 	return 0
 }

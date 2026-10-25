@@ -5,7 +5,11 @@ User-visible changes are recorded here. Publication status and downloads are on
 
 ## Unreleased
 
-No changes yet.
+- Interactive setup lets you choose agent and tool launchers. New setups
+  preselect programs found on the execution machine, show local/server discovery
+  hints, and treat configuration directories as hints rather than installations.
+  Reruns keep saved choices and remove deselected, unchanged Aft launchers.
+  Setup no longer enables the entire known-agent catalog.
 
 ## 0.1.0
 

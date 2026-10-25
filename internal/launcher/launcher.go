@@ -255,7 +255,8 @@ func ValidName(name string) error {
 }
 
 // InstallLaunchers creates a launcher symlink for each agent that points at
-// self; a name that cannot be a launcher is skipped.
+// self; a name that cannot be a launcher is skipped. Unrelated files and
+// symlinks in the launcher directory are never replaced.
 func InstallLaunchers(self string, agents []string, st *config.State) error {
 	if err := home.Ensure(); err != nil {
 		return err
@@ -269,7 +270,16 @@ func InstallLaunchers(self string, agents []string, st *config.State) error {
 			continue
 		}
 		link := filepath.Join(home.Launchers(), a)
-		os.Remove(link)
+		if target, err := os.Readlink(link); err == nil {
+			if target != self && (st.Binary == "" || target != st.Binary) {
+				return fmt.Errorf("%s exists and is not an Aft launcher", link)
+			}
+			if err := os.Remove(link); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("%s exists and is not an Aft launcher", link)
+		}
 		if err := os.Symlink(self, link); err != nil {
 			return err
 		}
@@ -279,6 +289,33 @@ func InstallLaunchers(self string, agents []string, st *config.State) error {
 		}
 	}
 	st.Binary = self
+	return nil
+}
+
+// SyncLaunchers installs the selected commands and removes deselected owned
+// symlinks. A launcher changed by the user is left alone and no longer owned.
+func SyncLaunchers(self string, names []string, st *config.State) error {
+	for _, name := range names {
+		if err := ValidName(name); err != nil {
+			return err
+		}
+	}
+	previous, binary := slices.Clone(st.Shims), st.Binary
+	if err := InstallLaunchers(self, names, st); err != nil {
+		return err
+	}
+	for _, name := range previous {
+		if slices.Contains(names, name) || ValidName(name) != nil {
+			continue
+		}
+		path := filepath.Join(home.Launchers(), name)
+		if target, err := os.Readlink(path); err == nil && (target == self || (binary != "" && target == binary)) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	st.Shims = slices.Clone(names)
 	return nil
 }
 

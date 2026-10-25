@@ -21,7 +21,7 @@ machine, then reconciles it with the server. Everything else, the agent, its
 tools, builds, tests and git, runs where your code lives.
 
 ```sh
-aft setup          # once: add a server
+aft setup          # choose a server, agents and tools
 cd ~/code/app
 aft on             # agents started here now run on the server
 claude             # same command as always; also codex, opencode, pi, any program

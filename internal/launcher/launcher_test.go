@@ -182,3 +182,35 @@ func TestValidName(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncLaunchersRemovesOnlyOwnedSelections leaves a user-replaced launcher
+// and unrelated files intact while removing a deselected Aft symlink.
+func TestSyncLaunchersRemovesOnlyOwnedSelections(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	var state config.State
+	if err := InstallLaunchers("/test/aft", []string{"claude", "codex"}, &state); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home.Launchers(), "codex")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user-owned"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncLaunchers("/test/aft", nil, &state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(home.Launchers(), "claude")); !os.IsNotExist(err) {
+		t.Fatalf("owned launcher remains: %v", err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "user-owned" {
+		t.Fatalf("modified launcher removed: %q %v", data, err)
+	}
+	if len(state.Shims) != 0 {
+		t.Fatal("deselected names still owned")
+	}
+	if err := InstallLaunchers("/test/aft", []string{"codex"}, &state); err == nil {
+		t.Fatal("overwrote the user's file")
+	}
+}

@@ -20,9 +20,9 @@ import (
 	"github.com/arocomputer/aft/internal/home"
 )
 
-// DefaultAgents are the launchers setup creates when they are installed.
-// Agents run in sessions; tools, which people add themselves, run once.
-var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
+// KnownAgents is the discovery catalog, not a list of enabled launchers.
+// Setup offers these programs; only the user's selection enters Config.Agents.
+var KnownAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
 
 // Config is ~/.aft/config.toml. Top-level keys set defaults; a [host.<name>]
 // table or a repository's aft.toml can override most of them. Keys are flat and

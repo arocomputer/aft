@@ -217,7 +217,7 @@ When the session closes, paste (Cmd+V / Ctrl+Shift+V) somewhere to check.
 func selftestAgent(prefix byte) {
 	info := session.GatherInfo()
 	var found []string
-	for _, a := range config.DefaultAgents {
+	for _, a := range config.KnownAgents {
 		if _, ok := info.Agents[a]; ok {
 			found = append(found, a)
 		}

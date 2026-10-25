@@ -5,8 +5,8 @@
 // Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
 //
-// A prompt shows its choices and nothing else: arrows and Enter, y and n need
-// no legend.
+// Single-choice prompts show just their choices. Checklists also explain
+// Space to toggle and Enter to continue.
 //
 // The prompts are driven directly in raw mode rather than with a TUI framework:
 // Bubble Tea queries the terminal (an OSC 11 background probe) merely on import,
@@ -41,6 +41,7 @@ const (
 	keyCancel
 	keyYes
 	keyNo
+	keySpace
 )
 
 // readKey reads one keypress in raw mode.
@@ -91,6 +92,8 @@ func decodeKey(b []byte) key {
 		return keyYes
 	case 'n', 'N':
 		return keyNo
+	case ' ':
+		return keySpace
 	}
 	return keyOther
 }
@@ -176,10 +179,11 @@ func Confirm(question string, def bool) bool {
 	}
 }
 
-// Option is one entry in a Choose list.
+// Option is a prompt entry; Checked supplies a checklist's initial selection.
 type Option struct {
-	Label string
-	Hint  string
+	Label   string
+	Hint    string
+	Checked bool
 }
 
 // Choose presents a single-choice list and returns the selected index: def
@@ -234,6 +238,82 @@ func Choose(title string, options []Option, def int) int {
 		case keyCancel:
 			sc.clear()
 			return -1
+		}
+	}
+}
+
+// Checklist returns selected option indices and false on cancellation. Without
+// a terminal it returns the initial choices. It never mutates the options.
+func Checklist(title string, options []Option) ([]int, bool) {
+	checked := make([]bool, len(options))
+	for i, option := range options {
+		checked[i] = option.Checked
+	}
+	selection := func() []int {
+		selected := []int{}
+		for i, value := range checked {
+			if value {
+				selected = append(selected, i)
+			}
+		}
+		return selected
+	}
+	if !Interactive() || len(options) == 0 {
+		return selection(), true
+	}
+	state, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return selection(), true
+	}
+	defer term.Restore(int(os.Stdin.Fd()), state)
+	index := 0
+	var sc screen
+	render := func() {
+		lines := []string{title + " (Space to toggle, Enter to continue)"}
+		for i, option := range options {
+			cursor, mark := "  ", "[ ]"
+			if i == index {
+				cursor = "> "
+			}
+			if checked[i] {
+				mark = "[x]"
+			}
+			line := cursor + mark + " " + option.Label
+			if option.Hint != "" {
+				line += "  " + option.Hint
+			}
+			lines = append(lines, line)
+		}
+		sc.render(lines)
+	}
+	render()
+	for {
+		switch readKey() {
+		case keyUp:
+			if index > 0 {
+				index--
+				render()
+			}
+		case keyDown:
+			if index < len(options)-1 {
+				index++
+				render()
+			}
+		case keySpace:
+			checked[index] = !checked[index]
+			render()
+		case keyYes:
+			checked[index] = true
+			render()
+		case keyNo:
+			checked[index] = false
+			render()
+		case keyEnter:
+			sc.clear()
+			return selection(), true
+		case keyCancel:
+			sc.clear()
+			return nil, false
 		}
 	}
 }
