@@ -146,7 +146,7 @@ func cmdSetup(args []string) int {
 	discoveredHost := ""
 	dest := *hostFlag
 	if dest == "" && !*yes {
-		dest = ask("SSH destination for your server (alias from ~/.ssh/config; empty to skip)", "")
+		dest = ask("SSH destination (empty skips)", "")
 	}
 	if dest != "" {
 		n := *name
@@ -190,8 +190,7 @@ func cmdSetup(args []string) int {
 	}
 	cfg.Agents, cfg.Tools = agents, tools
 
-	// Decide how the PATH line reaches the shell. People who manage their
-	// dotfiles want to add it themselves, so ask rather than edit blindly.
+	// Ask before changing shell configuration; managed dotfiles default to manual edits.
 	if len(cfg.Launched()) > 0 && cfg.EditDotfiles == nil && !*yes {
 		b, ok := chooseEditDotfiles()
 		if !ok {
@@ -217,7 +216,7 @@ func cmdSetup(args []string) int {
 				ui.OK("Added the PATH line to %s (open a new terminal to apply)", ui.Path(f))
 			}
 		} else {
-			fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
+			fmt.Println("Add to your shell configuration:")
 			fmt.Printf("  export PATH=\"%s:$PATH\"\n", launcher.PathDir)
 		}
 	}
@@ -231,17 +230,16 @@ func cmdSetup(args []string) int {
 	return 0
 }
 
-// chooseEditDotfiles asks whether setup may edit the shell config, offering
-// not to when the config looks managed; ok is false when the user backs out
-// of setup.
+// chooseEditDotfiles asks how to configure PATH; managed dotfiles default to
+// manual integration. Cancellation returns ok=false.
 func chooseEditDotfiles() (edit, ok bool) {
 	def := 0
 	if launcher.DotfilesManaged() {
 		def = 1
 	}
-	i := ui.Choose("How should aft put its launchers on your PATH?", []ui.Option{
-		{Label: "Edit my shell config for me", Hint: "~/.zshrc or ~/.bashrc"},
-		{Label: "Show me the line, I manage my dotfiles", Hint: "chezmoi, stow, nix, a repo"},
+	i := ui.Choose("Configure launcher PATH", []ui.Option{
+		{Label: "Edit shell configuration", Hint: "~/.zshrc or ~/.bashrc"},
+		{Label: "Print PATH directive", Hint: "manual integration"},
 	}, def)
 	return i == 0, i >= 0
 }
@@ -507,7 +505,7 @@ func cmdOn(args []string) int {
 	}
 	p := config.Project{Host: h.Name, Dir: *dir}
 	ui.OK("On: %s -> %s", ui.Path(root), where(p))
-	if !launcher.OnPath() {
+	if len(cfg.Launched()) > 0 && !launcher.OnPath() {
 		ui.Warn("aft's launchers are not first on PATH in this shell")
 		ui.Hint("open a new terminal, or run aft doctor")
 	}
@@ -767,7 +765,7 @@ func describe(r session.Record) string {
 		name = "shell" // aft HOST's login-shell wrapper
 	}
 	r.Title = ansi.Strip(r.Title)
-	// Before it has a topic, an agent's title is often just its own name.
+	// Suppress titles that duplicate the command name.
 	if r.Title == "" || strings.EqualFold(r.Title, name) || strings.EqualFold(r.Title, name+" Code") {
 		return name
 	}

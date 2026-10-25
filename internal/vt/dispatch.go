@@ -399,7 +399,7 @@ func (t *Terminal) csiKitty(private byte, params [][]int, inter []byte, final by
 	case private == '=' && final == 'c':
 		t.reply("\x1bP!|00000000\x1b\\")
 	case private == '>' && (final == 'm' || final == 'n' || final == 'p'):
-		// XTMODKEYS and friends: accepted silently
+		// XTMODKEYS and related queries: accepted silently
 	}
 }
 

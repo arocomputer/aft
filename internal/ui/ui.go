@@ -1,7 +1,5 @@
-// Package ui is how aft's commands talk to people: small interactive prompts
-// for setup and configuration, and the plain diagnostic output and transient
-// progress in out.go. The session client, which must pass the terminal through
-// untouched, uses only the output, and only once it has restored the terminal.
+// Package ui provides plain command output, prompts and transient progress.
+// The session client uses diagnostics only after restoring the terminal.
 // Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
 //

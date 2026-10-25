@@ -13,7 +13,7 @@ import (
 
 // A session that ends with no terminal attached leaves remains, so nothing is
 // lost without a word: its record, marked with how it ended, and its last
-// screen as plain text. Both live in the logs directory, where people look.
+// screen as plain text. Both are stored in the logs directory.
 // aft ls lists them, aft attach shows one and clears it, aft kill clears it.
 
 // Ending says how a session ended when no one was watching.

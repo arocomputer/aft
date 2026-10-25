@@ -5,6 +5,9 @@ User-visible changes are recorded here. Publication status and downloads are on
 
 ## Unreleased
 
+- Add `./x setup` for an isolated setup preview and named `./x try` checks for
+  CLI output, projects, shells, reconnect, paste, URLs and host connectivity.
+
 - Simplify command output: plain text, compact listings without table headers,
   shorter help without branding or footers, and `aft help COMMAND` for details.
   Doctor reports problems and repairs, or `ok` when healthy; JSON retains all

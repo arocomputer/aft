@@ -1,4 +1,4 @@
-// aft runs your agents on your server while the terminal stays on your machine.
+// aft provides the client CLI and configured program launchers.
 package main
 
 import (
@@ -38,8 +38,7 @@ var commands = [][3]string{
 	{"help", "[COMMAND]", "List commands or show command help"},
 }
 
-// meant maps names people reach for, including commands aft no longer has, to
-// what they are after. Standard help and version flags are also accepted.
+// meant maps common aliases and retired commands to supported commands.
 var meant = map[string]string{
 	"list": "ls", "sessions": "ls", "ps": "ls",
 	"end": "kill", "stop": "kill", "rm": "kill", "mv": "rename",

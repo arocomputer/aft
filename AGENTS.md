@@ -37,8 +37,8 @@ Supporting packages, not parts of their own:
 - `cmd/aft` is the user binary: dispatch, commands, and the launcher entry when
   invoked under an agent's name. `cmd/aft-server` is the server binary, as
   mosh-server is mosh's, cross-compiled per platform into `internal/session/install/embed` (gzipped)
-  and carried inside aft for install. `cmd/aft/selftest.go` is the guided
-  hands-on harness, isolated in a throwaway home.
+  and carried inside aft for install. `cmd/aft/selftest*.go` contains the interactive checks, using private Aft
+  state and a temporary project; the setup preview also isolates HOME.
 - `internal/vt` is the terminal emulator both sides use: the terminal's shadow
   screen and the session's detached screen. It renders a screen back to escape
   sequences and answers terminal queries.

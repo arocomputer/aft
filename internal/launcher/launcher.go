@@ -1,7 +1,5 @@
-// Package launcher makes `claude`, `codex` and friends start on the server when
-// the current project is on, and run normally when it is off. It owns the shim
-// directory on PATH and the block Aft adds to shell config files, and it knows
-// how to remove both exactly.
+// Package launcher routes configured programs to project hosts or local
+// executables. It manages launcher symlinks and the recorded shell PATH block.
 package launcher
 
 import (

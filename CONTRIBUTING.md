@@ -19,7 +19,8 @@ shell on Linux or macOS.
 | `./x fmt` | Format all Go source |
 | `./x fmt --check` | Check formatting without editing |
 | `./x test` | Run Go tests with the race detector and the Python script tests |
-| `./x try` | Open the interactive test command center (builds aft, runs the guided self-test) |
+| `./x setup [FLAGS]` | Build and preview setup in a temporary home, with SSH disabled |
+| `./x try [TEST]` | Build and open the test menu, or run one named check |
 | `./x bench` | Run the benchmarks (microbenchmarks and the end-to-end typing-latency benchmark) |
 | `./x docs` | Check guide metadata and local Markdown links |
 | `./x servers [VERSION]` | Cross-compile and gzip the servers; packaging passes its exact release version |
