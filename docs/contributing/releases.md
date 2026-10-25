@@ -1,7 +1,7 @@
 # Releases and repository setup
 
-The first release candidate is **v0.1.0**. It is not published by preparing this
-branch, building local archives or merging a PR. Publication status and
+The first official release is **v0.1.0**. Preparing a branch, building local
+archives or merging a PR does not publish a release. Publication status and
 available downloads are on [GitHub Releases](https://github.com/arocomputer/aft/releases).
 
 ## v0.1.0 qualification
@@ -79,21 +79,29 @@ separate application, not the destination for these formulas.
   `gh attestation verify ARCHIVE --repo arocomputer/aft`.
 - Publishing the draft triggers checksum-verified native installation checks on
   Linux and macOS. After those pass, a protected `formula` job generates
-  `aft.rb` from the published checksums and commits only that file to `main`.
+  `aft.rb` from the published checksums and opens a PR containing only that file.
+  Merge the formula PR after required CI passes; protected `main` rejects direct
+  pushes, including release automation.
   The job refuses tags outside `main` and does not replace the latest formula
   with an older release. `RELEASE_ENABLED` also gates these post-publication jobs.
 - The formula job uses `secrets.RELEASE_TOKEN`, matching ask and search. The
   normal `github.token` creates the release and reads its assets; the shared
-  token is needed for the formula commit that triggers CI on `main`.
+  token is needed to push the formula branch and open its PR so CI runs.
 
 The existing `RELEASE_TOKEN` organization secret is now available to
 `arocomputer/aft`, as verified through the inherited-secret endpoint. A protected
-preflight checks its repository access inside Actions before creating the draft.
+preflight checks token availability and the account's repository role before
+creating the draft. That role does not prove the token itself has write scopes:
+the first publication's formula push returned HTTP 403 despite the role check.
+The formula was instead submitted through a checked PR. The workflow now opens
+a formula PR because the repository rules require PRs and status checks.
 For future repositories, an organization administrator must grant access to the
 existing secret instead of creating another credential.
-Its credential needs repository contents write access to Aft and must satisfy
-any branch protection on `main`. Do not copy a secret value into the repository,
-logs, an issue or a PR. GitHub does not return stored Actions secret values.
+The underlying credential must also include Aft in its repository selection,
+with **Contents: read and write** and **Pull requests: read and write**. Granting
+the organization secret to a repository does not grant those token permissions.
+The formula branch and PR remain subject to repository rules. Do not copy a
+secret value into the repository, logs, an issue or a PR. GitHub does not return stored Actions secret values.
 
 Check the names of inherited organization secrets without retrieving any value:
 
