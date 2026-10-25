@@ -10,6 +10,25 @@ Aft is one binary on your laptop. It carries a small server for each host
 platform and installs the right one over SSH the first time you connect, so
 there is nothing to install on the server by hand.
 
+## Homebrew
+
+After the first release is published and its formula job succeeds, this
+repository also acts as its own Homebrew tap, like the other arocomputer CLIs:
+
+```sh
+brew tap arocomputer/aft https://github.com/arocomputer/aft
+brew install aft
+```
+
+The formula installs the checksum-verified prebuilt binary for your platform.
+It does not run setup or edit shell configuration; run `aft setup` yourself.
+Until `aft.rb` exists on the published repository's `main` branch, use an archive
+or source build below.
+
+Upgrade with `brew update` then `brew upgrade aft`. For full removal, run
+`aft uninstall` to remove Aft's state and servers, then `brew uninstall aft` to
+remove the package-managed client binary.
+
 ## Release archives
 
 Download an archive and `checksums.txt` from the same published
@@ -90,7 +109,8 @@ server reboots.
 
 ## Upgrade
 
-Replace the installed `aft` executable with one from a verified newer release.
+For an archive installation, replace the installed `aft` executable with one
+from a verified newer release. Homebrew installations should use `brew upgrade aft`.
 Aft updates an older server on the next connection; it does not replace a newer
 server with an older client build. Running sessions keep their existing server
 process until they end. Keep the previous client binary if you need to roll

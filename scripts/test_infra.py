@@ -6,6 +6,7 @@ import unittest
 
 from check_docs import check
 from release import release_notes
+from formula import formula, TARGETS
 
 
 class ReleaseNotesTests(unittest.TestCase):
@@ -27,6 +28,32 @@ class ReleaseNotesTests(unittest.TestCase):
     def test_rejects_duplicate_version_sections(self):
         with self.assertRaises(ValueError):
             release_notes('v1.2.3', '## 1.2.3\nFirst\n## 1.2.3\nSecond\n')
+
+
+class FormulaTests(unittest.TestCase):
+    """A formula must use exactly the release's checksums for every platform."""
+
+    def manifest(self):
+        """Return distinct platform digests to catch swapped architecture mappings."""
+        return ''.join(f'{str(i) * 64}  aft-v0.1.0-{target}.tar.gz\n'
+                       for i, target in enumerate(TARGETS, 1))
+
+    def test_platforms_match_the_release_manifest(self):
+        result = formula('v0.1.0', self.manifest())
+        for i, target in enumerate(TARGETS, 1):
+            self.assertIn(f'url "https://github.com/arocomputer/aft/releases/download/v0.1.0/aft-v0.1.0-{target}.tar.gz"\n      sha256 "{str(i) * 64}"', result)
+        self.assertIn('assert_equal "aft v0.1.0"', result)
+        self.assertIn('bin.install "aft"', result)
+
+    def test_invalid_manifests_do_not_generate_a_formula(self):
+        valid = self.manifest()
+        for manifest in ('', valid.splitlines()[0], valid + valid.splitlines()[0],
+                         valid.replace('1' * 64, 'not-a-checksum'),
+                         valid.replace('linux-arm64', 'windows-arm64')):
+            with self.subTest(manifest=manifest), self.assertRaises(ValueError):
+                formula('v0.1.0', manifest)
+        with self.assertRaises(ValueError):
+            formula('v0.1.0;anything', valid)
 
 
 class DocsTests(unittest.TestCase):

@@ -16,7 +16,7 @@ Evidence gathered on 2026-10-25:
 | --- | --- |
 | Linux and macOS source CI | Passed on merged PR #16; [main CI run](https://github.com/arocomputer/aft/actions/runs/40148257486) |
 | Archive versions, embedded servers, platform metadata and checksums | Verified by `./x release-check v0.1.0`; rerun on the final release commit |
-| Native artifact sessions and isolated uninstall | Verified locally on Linux; macOS artifact execution must pass the preparation PR's CI |
+| Native artifact sessions and isolated uninstall | Passed on Linux and macOS in preparation PR #17 and infrastructure PR #18 CI |
 | Typing on a real host | Maintainer reports checked; OS, agent and terminal versions were not recorded |
 | Sleep and reconnect | Maintainer reports checked |
 | Clipboard and image paste | Maintainer reports checked |
@@ -24,11 +24,12 @@ Evidence gathered on 2026-10-25:
 | Uninstall on a real remote host | Still needs a check; isolated local uninstall is covered automatically |
 | Private vulnerability reports | Enabled in repository settings |
 | Dependency integrity and vulnerability scan | `go mod verify` passed; `govulncheck v1.9.0` found no vulnerable imported packages or reachable symbols. `x/net` and `x/crypto` updated to patched versions; the unused, unmaintained `x/crypto/openpgp` advisory has no fixed version |
-| Release publication | Not authorized by preparation; `RELEASE_ENABLED` is unset and no `release` environment is configured |
+| Release publication | Maintainer authorized v0.1.0 after verifying the organization-secret grant and release checks; browser login and real-host uninstall remain unverified |
 
 The maintainer's reports are hands-on evidence, not an independently reproduced
-OS/agent matrix. Before tagging, record the OS, agent and terminal versions and
-outcomes for browser login and uninstall in the release review. Use a disposable
+OS/agent matrix. The maintainer authorized v0.1.0 with browser login and real-host
+uninstall still unverified; those checks must not be represented as completed.
+Record the OS, agent and terminal versions when those checks are performed. Use a disposable
 account or machine for uninstall; keep credentials, hostnames and private paths
 out of committed evidence. See the [manual checks](testing.md#manual-checks-before-a-release).
 
@@ -37,23 +38,70 @@ out of committed evidence. See the [manual checks](testing.md#manual-checks-befo
 1. Merge the preparation PR after `check (ubuntu-latest)`,
    `check (macos-latest)` and `release-check` pass. CI runs the versioned archive
    check natively on Linux and macOS.
-2. Complete the outstanding real-host checks above. Confirm the final source
-   commit and `v0.1.0` notes. Run `./x check` and
+2. Review the outstanding real-host checks above and the maintainer's explicit
+   release decision. Confirm the final source commit and `v0.1.0` notes. Run `./x check` and
    `./x release-check v0.1.0` from that commit.
 3. With explicit maintainer approval, configure a `release` environment with a
    required reviewer and set `RELEASE_ENABLED=true`. Keep `main` as the default
    branch and pin Actions to full commit SHAs.
 4. With explicit approval to tag, create an annotated `v0.1.0` tag on the
    qualified commit reachable from `main`, then push that tag. Alternatively,
-   dispatch the release workflow from `main` with the existing tag.
+   dispatch the release workflow using the same tag as its workflow ref:
+   `gh workflow run release.yml --ref v0.1.0 -f tag=v0.1.0`. A manual run from
+   `main` is not allowed: the run's source identity must match the built tag
+   for its provenance to be accurate.
 5. The workflow reruns source and native artifact checks on Linux and macOS,
-   builds the archives and waits for the `release` environment approval. It
+   builds and attests the archives and waits for the `release` environment approval. It
    verifies the selected tag, source commit and hashes, then creates a **draft**.
 6. Review the draft's version, source commit, notes, four archives and
-   `checksums.txt`. Download and verify a native archive. Publishing the draft
-   is a separate, explicit maintainer action.
+   `checksums.txt` and provenance. Download and verify a native archive. Publishing
+   the draft is a separate, explicit maintainer action; it starts the install
+   checks and protected Homebrew formula update described below.
 
 No command in `./x` publishes, creates tags or changes repository settings.
+
+## Shared arocomputer release infrastructure
+
+Like [ask](https://github.com/arocomputer/ask/blob/main/.github/workflows/release.yml)
+and [search](https://github.com/arocomputer/search/blob/main/.github/workflows/release.yml),
+Aft uses its own repository as its Homebrew tap. The `tap` repository is a
+separate application, not the destination for these formulas.
+
+- Archive provenance is attested in a separate job before a draft is created.
+  That job only handles built artifacts; repository code does not execute with
+  its OIDC/attestation credentials. Verify a downloaded archive with
+  `gh attestation verify ARCHIVE --repo arocomputer/aft`.
+- Publishing the draft triggers checksum-verified native installation checks on
+  Linux and macOS. After those pass, a protected `formula` job generates
+  `aft.rb` from the published checksums and commits only that file to `main`.
+  The job refuses tags outside `main` and does not replace the latest formula
+  with an older release. `RELEASE_ENABLED` also gates these post-publication jobs.
+- The formula job uses `secrets.RELEASE_TOKEN`, matching ask and search. The
+  normal `github.token` creates the release and reads its assets; the shared
+  token is needed for the formula commit that triggers CI on `main`.
+
+The existing `RELEASE_TOKEN` organization secret is now available to
+`arocomputer/aft`, as verified through the inherited-secret endpoint. A protected
+preflight checks its repository access inside Actions before creating the draft.
+For future repositories, an organization administrator must grant access to the
+existing secret instead of creating another credential.
+Its credential needs repository contents write access to Aft and must satisfy
+any branch protection on `main`. Do not copy a secret value into the repository,
+logs, an issue or a PR. GitHub does not return stored Actions secret values.
+
+Check the names of inherited organization secrets without retrieving any value:
+
+```sh
+gh api repos/arocomputer/aft/actions/organization-secrets --jq '.secrets[].name'
+```
+
+`RELEASE_TOKEN` must appear in that list. Organization-wide secret listing and
+changes to repository grants require an appropriately authorized org-admin
+session: classic `admin:org`, or the corresponding organization Actions-secrets
+permission for a fine-grained token. A repository-level credential can inspect
+the inherited names through the endpoint above, but cannot change the grant.
+
+If `RELEASE_TOKEN` is unavailable, the formula job fails with a clear setup error.
 
 ## What users receive
 

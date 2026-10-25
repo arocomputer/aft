@@ -39,7 +39,7 @@ removes every file and line it added.
 Install a published archive from [GitHub Releases](https://github.com/arocomputer/aft/releases).
 Each archive includes the servers for all supported hosts, so using a binary
 release needs no Go installation. See [installation](docs/guides/start/install.md)
-for platform selection, checksum verification and upgrades.
+for Homebrew installation, platform selection, checksum verification and upgrades.
 
 If no release is published yet, or to build from source, use Go 1.26 or newer:
 
