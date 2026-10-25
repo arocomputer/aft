@@ -11,8 +11,8 @@ features for power users, copy and paste among them.
   is planned until users ask for it.
 - Only printable characters and Backspace are predicted. Menus, popups and the
   agent's replies arrive at network speed.
-- The transport is TCP over the user's OpenSSH. Lossy links delay output,
-  though not typed characters. UDP is a later option.
+- Sessions use QUIC over UDP when reachable and fall back to SSH. Application
+  responses still depend on the network; prediction hides typing latency.
 - Remote commands run with the user's full permissions on the server. There is
   no remote sandbox.
 - Agent accounts and configuration live on the server; nothing follows the user
@@ -30,6 +30,6 @@ features for power users, copy and paste among them.
 
 ## Possible follow-ups
 
-Opt-in sync for teams on rented servers, a UDP transport, per-user agent
+Opt-in sync for teams on rented servers, per-user agent
 configuration that follows the user, and native integration with agents that
 separate their interface from their engine. None is promised.

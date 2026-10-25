@@ -66,6 +66,10 @@ jobs:
           go-version-file: go.mod
           cache: false
       - run: ./x check
+      - name: Verify native release artifact
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: ./x release-check "$TAG"
 
   build:
     needs: [resolve, check]
@@ -116,6 +120,5 @@ jobs:
           test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_SHA"
           cd assets
           sha256sum --check checksums.txt
-          printf '\nSource commit: %s\n' "$SOURCE_SHA" >> release-notes.md
           gh release create "$TAG" --verify-tag --draft --title "$TAG" \
             --notes-file release-notes.md ./*.tar.gz checksums.txt

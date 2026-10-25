@@ -4,19 +4,20 @@ set -eu
 cd "$(dirname "$0")"
 
 usage() {
-  echo 'usage: ./x [fmt [--check]|check|test|try|bench|docs|servers|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
+  echo 'usage: ./x [fmt [--check]|check|test|try|bench|docs|servers [VERSION]|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
   exit 2
 }
 
+task=${1:-check}
+if [ "$#" -gt 0 ]; then shift; fi
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+if [ "$task" = servers ] && [ "$#" -eq 1 ]; then version=$1; fi
 # The commit time orders builds, so a client never replaces a newer server
 # with its own older one. An uncommitted build is dated by its commit too:
 # dated by the clock it would outrank every release until that date passed.
 built=$(git log -1 --format=%ct 2>/dev/null || date +%s)
 ldflags="-s -w -X main.version=$version -X github.com/arocomputer/aft/internal/session.Version=$version -X github.com/arocomputer/aft/internal/session.Built=$built"
 
-task=${1:-check}
-if [ "$#" -gt 0 ]; then shift; fi
 case "$task" in
   fmt)
     [ "$#" -le 1 ] || usage
@@ -63,8 +64,8 @@ case "$task" in
   servers)
     # Cross-compile the server for every supported host platform and gzip each,
     # so the aft binary embeds them compressed (about half the size) and
-    # decompresses on install.
-    [ "$#" -eq 0 ] || usage
+    # decompresses on install. Packaging supplies the matching release version.
+    [ "$#" -le 1 ] || usage
     for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
       os=${target%/*}; arch=${target#*/}
       out="internal/session/install/embed/aft-server-$os-$arch"
@@ -80,12 +81,10 @@ case "$task" in
     ;;
   release-check)
     [ "$#" -le 1 ] || usage
-    ./x servers
     exec python3 scripts/release.py check "$@"
     ;;
   dist)
     [ "$#" -eq 1 ] || usage
-    ./x servers
     exec python3 scripts/release.py dist "$1"
     ;;
   *) usage ;;

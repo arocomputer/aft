@@ -1,17 +1,17 @@
 # Security policy
 
-Aft is in initial development; there are no published releases or supported
-maintenance branches yet. Fixes target the current development branch.
+Aft is in early 0.x development. Security fixes target the latest published
+version and `main`; older 0.x versions have no separate maintenance branches.
+If no version has been published yet, fixes target `main`. Commands and
+configuration may change during 0.x development.
 
 ## Reporting a vulnerability
 
 Do not disclose vulnerabilities, credentials or private host details in public
-issues. Once private vulnerability reporting is enabled for the repository, use
+issues. Private vulnerability reporting is enabled for the repository. Use
 GitHub's **Security → Report a vulnerability** at
 [arocomputer/aft](https://github.com/arocomputer/aft/security).
-If that option is unavailable, open an issue requesting a private reporting
-channel without including vulnerability details. No response-time guarantee is
-currently offered.
+No response-time guarantee is currently offered.
 
 ## Scope and boundaries
 
