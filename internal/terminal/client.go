@@ -8,6 +8,7 @@ package terminal
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/bridge/udp"
 	"github.com/arocomputer/aft/internal/home"
+	sess "github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/session/install"
 	"github.com/arocomputer/aft/internal/ui"
 	"github.com/arocomputer/aft/internal/vt"
@@ -41,19 +43,27 @@ type Options struct {
 	Host      transport.Host
 	SessionID string   // attach to this session; empty starts a new one
 	Command   []string // for a new session
-	Dir       string   // working directory on the server
-	Env       []string // KEY=VALUE pairs to pass through
-	Wrapper   []string // optional command to run the agent inside
-	Predict   bool
-	UDP       bool // reach the session over UDP when the host allows it
-	Ports     ports.Range
-	DetachKey byte // 0 disables
-	Prefix    byte // 0 disables; opens copy mode and detach
-	LatencyMS int  // simulated one-way delay each direction, for the selftest
-	Quiet     bool
+	// Reuse comes back to the session already running Command in Dir on the
+	// host, if there is one, instead of starting a second. Existing, when set,
+	// is asked first, with that session's name, title and whether a terminal
+	// shows it; false starts a new one.
+	Reuse    bool
+	Existing func(id, title string, attached bool) bool
+	Dir      string   // working directory on the server
+	Env      []string // KEY=VALUE pairs to pass through
+	Wrapper  []string // optional command to run the agent inside
+	Predict  bool
+	UDP      bool // reach the session over UDP when the host allows it
+	// ServerPath names a local file on the host when it is already there,
+	// through a mounted folder; a pasted file it names is not uploaded.
+	ServerPath func(local string) (string, bool)
+	Ports      ports.Range
+	DetachKey  byte // 0 disables
+	Prefix     byte // 0 disables; opens copy mode and detach
+	LatencyMS  int  // simulated one-way delay each direction, for the selftest
+	Quiet      bool
 }
 
-// Run attaches the terminal to a session and returns the process exit code.
 // saneSize defaults a terminal size to 80x24 when the terminal reports an error
 // or a zero dimension. A 0x0 size would otherwise be sent as a resize the
 // session reads as a control connection, so the session would never attach.
@@ -64,6 +74,9 @@ func saneSize(cols, rows int, err error) (int, int) {
 	return cols, rows
 }
 
+// Run attaches the terminal to a session, starting one if o names none, and
+// returns the exit code to leave with: the application's when it ended, 0
+// after a detach, 1 when the session could not be reached or was lost.
 func Run(o Options) int {
 	// Advanced/testing env overrides: AFT_LATENCY_MS simulates a slow link each
 	// direction, and AFT_PREDICT=0 turns prediction off, so you can feel the
@@ -94,18 +107,32 @@ func Run(o Options) int {
 	c := &session{o: o, in: in, out: out, cols: cols, rows: rows, id: o.SessionID, command: o.Command}
 	c.outbound = make(chan []byte, 4096)
 	c.uploads = make(chan uploadResult, 1)
+	c.unflash = make(chan int, 1)
 	c.sendDone = make(chan struct{})
-	defer close(c.sendDone)
 	go c.writer()
 	c.mirror = ports.New(o.Host, o.Ports)
+	c.listeners = make(chan mirrorUpdate, 1)
+	mirrorsDone := make(chan struct{})
+	go c.mirrorLoop(mirrorsDone)
 	c.pred = NewPredictor(cols, rows, out, o.Predict)
 	// A copy made by the agent on the server (OSC 52) sets the laptop clipboard,
 	// even when the terminal itself blocks OSC 52.
 	c.pred.OnClipboard(func(data []byte) { go bridge.SetClipboard(data) })
-	defer c.mirror.Close()
-	defer c.clearMirrors()
+	defer func() {
+		// Stop taking updates before the forwards go, or one received at the
+		// last moment would bring them back.
+		close(c.sendDone)
+		<-mirrorsDone
+		c.mirror.Close()
+		c.clearMirrors()
+	}()
 
-	proc, err := c.open(true)
+	proc, err := c.open()
+	var gone sessionEnded
+	if errors.As(err, &gone) {
+		c.goneMessage(gone)()
+		return 1
+	}
 	if err != nil {
 		ui.Error("%v", err)
 		return 1
@@ -125,9 +152,12 @@ func Run(o Options) int {
 	go func() {
 		<-death
 		restore()
+		c.mirror.Close() // the forwards live on the shared connection
+		c.clearMirrors()
 		os.Exit(1)
 	}()
 	code := c.loop(proc)
+	c.hangUp()
 	restore()
 	if c.message != nil {
 		c.message()
@@ -145,14 +175,22 @@ type session struct {
 	message    func() // prints why the client left, after the terminal is restored
 
 	command []string // what the session runs, for the leaving message
+	unflash chan int // a flashed notice is due to be taken down; its sequence number
+
+	cancelled    bool               // Ctrl-C cancelled the upload in progress
+	noticeUp     bool               // a notice covers the top row
+	cancelUpload context.CancelFunc // stops the paste upload in progress
+	uploadCtx    context.Context    // done once the upload has finished or stopped
 
 	offer      *udp.Offer // how to reach the session over UDP, once it offered
 	udpAddr    string     // the host's address for UDP
 	udpBlocked bool       // UDP failed after an offer: stay on SSH
+	fresh      bool       // the existing session was declined: start a new one
 
-	wmu sync.Mutex
-	wr  io.Writer
-	rd  io.Reader
+	wmu  sync.Mutex
+	wr   io.Writer
+	rd   io.Reader
+	link link // the connection in use, which hangUp closes
 
 	z     Tokenizer        // input tokenizer, kept across the loop
 	flush <-chan time.Time // fires to release a lone Escape held by the tokenizer
@@ -160,9 +198,12 @@ type session struct {
 	outbound chan []byte   // frames queued for the writer goroutine
 	sendDone chan struct{} // closed on exit to stop the writer
 
-	copy          *copyMode // non-nil while the scrollback pager is open
-	prefixPending bool      // the prefix key was pressed; the next key is a command
-	awaitSnap     bool      // a snapshot was requested to open copy mode
+	copy          *copyMode         // non-nil while the scrollback pager is open
+	prefixPending bool              // the prefix key was pressed; the next key is a command
+	awaitSnap     bool              // a snapshot was requested to open copy mode
+	snapAsked     time.Time         // when, so a snapshot that never comes stops blocking copy mode
+	noticeSeq     int               // which notice is up; a flash takes down only its own
+	listeners     chan mirrorUpdate // the server's listening ports, mirrored in order off the input loop
 
 	holding  bool              // a pasted file is uploading; input is held
 	held     []Token           // keys typed during the upload, sent after it
@@ -179,6 +220,9 @@ type link interface {
 	Wait() string
 }
 
+// sshLink is the session relayed through an ssh process: Close kills the
+// process, and Wait reaps it and returns what the relay wrote to stderr, which
+// is how a failure to start a session is explained.
 type sshLink struct{ p *transport.Proc }
 
 func (l sshLink) Read(b []byte) (int, error)  { return l.p.Stdout.Read(b) }
@@ -186,13 +230,15 @@ func (l sshLink) Write(b []byte) (int, error) { return l.p.Stdin.Write(b) }
 func (l sshLink) Close()                      { l.p.Kill() }
 func (l sshLink) Wait() string                { msg, _ := l.p.Wait(); return msg }
 
+// udpLink is the session reached directly over QUIC; Wait just closes it, as a
+// dropped connection has nothing to say.
 type udpLink struct{ net.Conn }
 
 func (l udpLink) Close()       { l.Conn.Close() }
 func (l udpLink) Wait() string { l.Conn.Close(); return "" }
 
 // open starts or attaches to the session and performs the handshake.
-func (c *session) open(first bool) (link, error) {
+func (c *session) open() (link, error) {
 	l, err := c.dial()
 	if err != nil {
 		return nil, err
@@ -204,15 +250,29 @@ func (c *session) open(first bool) (link, error) {
 // handshake.
 func (c *session) use(l link) error {
 	c.wmu.Lock()
-	c.wr, c.rd = l, l
+	c.link, c.wr, c.rd = l, l, l
 	if d := time.Duration(c.o.LatencyMS) * time.Millisecond / 2; d > 0 {
 		c.wr = laggyWriter{l, d}
 		c.rd = laggyReader(l, d)
+	}
+	// Frames queued for the link that died never reached the session, and
+	// the session takes nothing before the size: forget them.
+	for drained := false; !drained; {
+		select {
+		case <-c.outbound:
+		default:
+			drained = true
+		}
 	}
 	c.wmu.Unlock()
 	if err := c.send(proto.Resize, proto.EncodeResize(c.cols, c.rows)); err != nil {
 		l.Close()
 		return err
+	}
+	// Say which machine this is, so a terminal this one replaces can be told.
+	if name, err := os.Hostname(); err == nil {
+		name, _, _ = strings.Cut(name, ".")
+		c.send(proto.From, []byte(name))
 	}
 	return nil
 }
@@ -228,18 +288,51 @@ func (c *session) dial() (link, error) {
 			var got struct {
 				ID string `json:"id"`
 				udp.Offer
+				Gone     bool   `json:"gone"`    // the session is not running
+				Remains  bool   `json:"remains"` // and it left its last screen
+				Reused   bool   `json:"reused"`  // it was already running here; then:
+				Title    string `json:"title"`
+				Attached bool   `json:"attached"`
 			}
 			if err != nil && c.id == "" && !strings.Contains(err.Error(), "unknown server command") {
 				return nil, fmt.Errorf("could not start the session: %w", err)
 			}
-			if err == nil && json.Unmarshal(out, &got) == nil {
-				c.id, c.offer, c.udpAddr = got.ID, &got.Offer, addr
-				if conn, err := udp.Dial(addr, got.Offer); err == nil {
-					return udpLink{conn}, nil
+			answered := err == nil && json.Unmarshal(out, &got) == nil
+			if answered && got.Gone {
+				return nil, sessionEnded{Remains: got.Remains}
+			}
+			if answered && got.Reused {
+				if c.o.Existing != nil && !c.o.Existing(got.ID, got.Title, got.Attached) {
+					c.fresh = true
+					return c.dial()
+				}
+				ui.Note("reattaching to %s %s", got.ID, ui.Dim("· aft kill "+got.ID+" starts a fresh one"))
+			}
+			if answered {
+				c.id = got.ID
+				if got.Port != 0 {
+					c.offer, c.udpAddr = &got.Offer, addr
+					if conn, err := udp.Dial(addr, got.Offer); err == nil {
+						return udpLink{conn}, nil
+					}
+					// The host offered UDP and it did not get through: the
+					// network blocks it, so stop asking for this client.
+					c.udpBlocked = true
 				}
 			}
-			// UDP is blocked, or the server or session predates it.
-			c.udpBlocked = true
+			// Otherwise the request itself failed (an older server, a slow
+			// answer): use SSH this time and ask again on the next connect.
+		}
+	}
+	if c.id == "" && c.o.Reuse && !c.fresh && c.o.Existing != nil {
+		// Over SSH the server cannot ask before joining a running session,
+		// so look first and ask here.
+		if r, ok := c.running(); ok {
+			if c.o.Existing(r.ID, r.Title, r.Attached) {
+				c.id = r.ID
+			} else {
+				c.fresh = true
+			}
 		}
 	}
 	args := []string{"attach", c.id}
@@ -253,12 +346,37 @@ func (c *session) dial() (link, error) {
 	return sshLink{proc}, nil
 }
 
+// running finds the session already running this command in this directory
+// on the host, as the server's --reuse would.
+func (c *session) running() (sess.Record, bool) {
+	out, err := transport.Output(c.o.Host, nil, "ls")
+	if err != nil {
+		return sess.Record{}, false
+	}
+	var recs []sess.Record
+	if json.Unmarshal(out, &recs) != nil {
+		return sess.Record{}, false
+	}
+	for _, r := range recs {
+		if r.Dir != c.o.Dir || len(r.Command) == 0 || len(c.o.Command) == 0 {
+			continue
+		}
+		if sess.IsShell(c.o.Command) && sess.IsShell(r.Command) || !sess.IsShell(c.o.Command) && !sess.IsShell(r.Command) && r.Command[0] == c.o.Command[0] {
+			return r, true
+		}
+	}
+	return sess.Record{}, false
+}
+
 // sessionArgs names the session to attach to, or describes the one to start.
 func (c *session) sessionArgs() []string {
 	if c.id != "" {
 		return []string{c.id}
 	}
 	args := []string{"--dir", c.o.Dir, "--cols", strconv.Itoa(c.cols), "--rows", strconv.Itoa(c.rows)}
+	if c.o.Reuse && !c.fresh {
+		args = append(args, "--reuse")
+	}
 	for _, kv := range c.o.Env {
 		args = append(args, "--env", kv)
 	}
@@ -302,10 +420,6 @@ func (c *session) writer() {
 	}
 }
 
-func (c *session) title(s string) {
-	c.out.Write([]byte("\x1b]2;" + s + "\x1b\\"))
-}
-
 type frameOrErr struct {
 	f   proto.Frame
 	err error
@@ -337,60 +451,62 @@ func (c *session) loop(proc link) int {
 	beat := time.NewTicker(10 * time.Second)
 	defer beat.Stop()
 
-	connected := true
-	frames := c.readFrames(proc)
+	frames := c.readFrames()
 	for {
 		// Keystrokes take priority: drain every queued key before touching
 		// output, so a burst of agent output never stalls your typing.
-		if connected {
-		drain:
-			for {
-				select {
-				case b, ok := <-keys:
-					if leave, code := c.handleBatch(b, ok, connected); leave {
-						return code
-					}
-				default:
-					break drain
+	drain:
+		for {
+			select {
+			case b, ok := <-keys:
+				if leave, code := c.handleBatch(b, ok); leave {
+					return code
 				}
+			default:
+				break drain
 			}
 		}
 		select {
 		case b, ok := <-keys:
-			if leave, code := c.handleBatch(b, ok, connected); leave {
+			if leave, code := c.handleBatch(b, ok); leave {
 				return code
 			}
 		case <-c.flush:
 			c.flush = nil
-			if connected && !c.handleKeys(c.z.Flush()) {
+			if !c.handleKeys(c.z.Flush()) {
 				return 0
 			}
 		case <-winch:
-			if cols, rows, err := term.GetSize(int(c.out.Fd())); err == nil {
-				c.cols, c.rows = cols, rows
-				c.pred.Resize(cols, rows)
-				if c.copy != nil {
-					c.copy.resize(cols, rows)
-					c.out.Write(c.copy.view())
-				}
-				if connected {
-					c.send(proto.Resize, proto.EncodeResize(cols, rows))
-				}
+			cols, rows := saneSize(term.GetSize(int(c.out.Fd())))
+			c.cols, c.rows = cols, rows
+			c.pred.Resize(cols, rows)
+			if c.copy != nil {
+				c.copy.resize(cols, rows)
+				c.out.Write(c.copy.view())
 			}
+			c.send(proto.Resize, proto.EncodeResize(cols, rows))
 		case <-tick.C:
 			c.pred.Tick()
-		case <-beat.C:
-			if connected {
-				c.send(proto.Ping, nil)
+			if c.awaitSnap && time.Since(c.snapAsked) > 5*time.Second {
+				c.awaitSnap = false // the snapshot is not coming; allow another try
 			}
+		case seq := <-c.unflash:
+			if c.copy == nil && c.noticeUp && seq == c.noticeSeq {
+				c.pred.RestoreRow(0)
+				c.noticeUp = false
+			}
+		case <-beat.C:
+			c.send(proto.Ping, nil)
 		case u := <-c.uploads:
 			if !c.finishUpload(u) {
 				return 0
 			}
 		case fe := <-frames:
 			if fe.err != nil {
-				// The connection dropped without the application ending.
-				connected = false
+				// The connection dropped, or sent what cannot be decoded; either
+				// way this link is over. Close it before waiting, or a relay
+				// that is still alive would never be reaped.
+				proc.Close()
 				// Leave copy mode: its snapshot is stale and the reattach repaints.
 				c.copy = nil
 				c.awaitSnap = false
@@ -399,12 +515,19 @@ func (c *session) loop(proc link) int {
 					c.message = func() { ui.Error("could not start the session: %s", msg) }
 					return 1
 				}
-				c.title("aft · reconnecting")
 				var typed []byte
 				var err error
 				proc, typed, err = c.reconnect(keys)
+				var gone sessionEnded
+				if errors.As(err, &gone) {
+					c.pred.Repaint() // clear the reconnecting notice
+					c.noticeUp = false
+					c.message = c.goneMessage(gone)
+					return 1
+				}
 				if errors.Is(err, errLeft) {
 					c.pred.Repaint() // clear the reconnecting notice
+					c.noticeUp = false
 					c.message = c.detachMessage("left %s while disconnected; it keeps running")
 					return 1
 				}
@@ -412,11 +535,17 @@ func (c *session) loop(proc link) int {
 					c.message = func() { ui.Error("%v", err) }
 					return 1
 				}
-				connected = true
-				frames = c.readFrames(proc)
-				// Deliver what was typed while disconnected, in order.
-				if len(typed) > 0 && !c.handleKeys(c.z.Feed(typed)) {
-					return 0
+				frames = c.readFrames()
+				// Deliver what was typed while disconnected, in order; a lone
+				// Escape among it is released by the usual timer.
+				if len(typed) > 0 {
+					toks := c.z.Feed(typed)
+					if c.z.Pending() {
+						c.flush = time.After(40 * time.Millisecond)
+					}
+					if !c.handleKeys(toks) {
+						return 0
+					}
 				}
 				continue
 			}
@@ -429,7 +558,8 @@ func (c *session) loop(proc link) int {
 	}
 }
 
-func (c *session) readFrames(proc link) <-chan frameOrErr {
+// readFrames decodes frames from the current link on its own goroutine.
+func (c *session) readFrames() <-chan frameOrErr {
 	ch := make(chan frameOrErr, 256)
 	rd := c.rd
 	go func() {
@@ -446,13 +576,36 @@ func (c *session) readFrames(proc link) <-chan frameOrErr {
 	return ch
 }
 
+// hangUp gives the writer a moment to send what is queued, such as the
+// Detach frame, then closes the link, so the session learns at once that the
+// terminal has gone rather than after its idle timeout.
+func (c *session) hangUp() {
+	for deadline := time.Now().Add(300 * time.Millisecond); len(c.outbound) > 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // the frame the writer holds
+	c.wmu.Lock()
+	l := c.link // the link in use now, not the one the session began on
+	c.wmu.Unlock()
+	if l != nil {
+		l.Close()
+	}
+}
+
 // handleKeys routes input: to copy mode when open, to a prefix command when the
 // prefix was just pressed, otherwise to the application with prediction. While
-// a pasted file uploads, every key is held and replayed after the paste. It
-// returns false when the client should leave (the user detached).
+// a pasted file uploads, keys are held and replayed after the paste, except
+// Ctrl-C, which cancels the upload. It returns false when the client should
+// leave (the user detached).
 func (c *session) handleKeys(toks []Token) bool {
 	for _, t := range toks {
 		switch {
+		case c.holding && len(t.Bytes) == 1 && t.Bytes[0] == 0x03 && (c.uploading() || c.cancelled):
+			// Ctrl-C while a pasted file uploads cancels it; pressing it
+			// again before the cancel lands is the same request, not a key
+			// for the app.
+			c.cancelUpload()
+			c.cancelled = true
 		case c.holding:
 			c.held = append(c.held, t)
 		case c.copy != nil:
@@ -495,18 +648,10 @@ func (c *session) handleKeys(toks []Token) bool {
 // handleBatch tokenizes one read from the terminal and routes it. It returns
 // leave=true with an exit code when the client should stop (stdin closed, or a
 // detach). It is called both from the priority drain and the main select.
-func (c *session) handleBatch(b []byte, ok, connected bool) (leave bool, code int) {
+func (c *session) handleBatch(b []byte, ok bool) (leave bool, code int) {
 	if !ok {
 		c.send(proto.Detach, nil)
 		return true, 0
-	}
-	if !connected {
-		// While disconnected, only Ctrl-C leaves; other keys are dropped.
-		if len(b) == 1 && b[0] == 0x03 {
-			c.message = c.detachMessage("left %s while disconnected; it keeps running")
-			return true, 1
-		}
-		return false, 0
 	}
 	toks := c.z.Feed(b)
 	if c.z.Pending() {
@@ -542,11 +687,11 @@ func (c *session) prefixCommand(t Token) bool {
 // closed: what ended, where, and how, if it failed.
 func (c *session) exitMessage(e proto.ExitInfo) func() {
 	what := "the program"
-	if len(c.command) > 0 {
+	switch {
+	case sess.IsShell(c.command):
+		what = "the shell" // aft HOST's login shell
+	case len(c.command) > 0:
 		what = filepath.Base(c.command[0])
-		if len(c.command) == 3 && c.command[0] == "sh" && strings.Contains(c.command[2], "SHELL") {
-			what = "the shell" // aft HOST's login shell
-		}
 	}
 	where := c.o.Host.Name
 	if c.o.Host.IsLocal() {
@@ -579,6 +724,7 @@ func (c *session) enterCopy() {
 	if c.awaitSnap || c.copy != nil {
 		return
 	}
+	c.snapAsked = time.Now()
 	c.awaitSnap = true
 	c.send(proto.ReqSnapshot, nil)
 }
@@ -587,6 +733,7 @@ func (c *session) enterCopy() {
 func (c *session) exitCopy() {
 	c.copy = nil
 	c.pred.Repaint()
+	c.noticeUp = false
 }
 
 // handleFrame applies one frame. done is true when the client should exit.
@@ -628,10 +775,27 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 		return e.Code, true
 	case proto.Detached:
 		if c.message == nil { // not our own detach: another terminal took the session
-			c.message = c.detachMessage("detached from %s; another terminal took it, and it keeps running")
+			who := "another terminal"
+			if len(f.Payload) > 0 {
+				who = strings.ReplaceAll(string(f.Payload), "%", "%%")
+			}
+			c.message = c.detachMessage("detached from %s; " + who + " took it over, and it keeps running")
 		}
 		return 0, true
+	case proto.Renamed:
+		// aft rename, from another terminal: follow the name, so reconnects
+		// and the leaving message use it.
+		c.clearMirrors()
+		c.id = string(f.Payload)
+		c.mirrorPorts(nil)
+		c.flash("aft - this session is now called " + c.id)
 	case proto.Error:
+		if c.noticeUp {
+			// A reconnect may have drawn a notice that no repaint will
+			// cover now; take it down before saying why we leave.
+			c.pred.RestoreRow(0)
+			c.noticeUp = false
+		}
 		msg := string(f.Payload)
 		c.message = func() { ui.Error("%s", msg) }
 		return 1, true
@@ -646,7 +810,7 @@ func (c *session) handleFrame(f proto.Frame) (code int, done bool) {
 			}()
 		}
 	case proto.Listeners:
-		go func() { c.mirror.Update(proto.DecodePorts(f.Payload)); c.writeMirrors() }()
+		c.mirrorPorts(proto.DecodePorts(f.Payload))
 	case proto.Pong:
 	}
 	return 0, false
@@ -659,9 +823,12 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 	delay := 500 * time.Millisecond
 	var typed []byte
 	lost := time.Now()
+	// The dead stream may have stopped inside an escape sequence; the
+	// reattach repaints everything, so the notice need not wait for its end.
+	c.pred.DropSequence()
 	for attempt := 1; ; attempt++ {
 		if attempt > 1 {
-			c.notice(fmt.Sprintf("aft · no contact with %s for %ds · reconnecting · Ctrl-C leaves, the session keeps running", c.o.Host.Name, int(time.Since(lost).Seconds())))
+			c.notice(fmt.Sprintf("aft - no contact with %s for %ds - reconnecting - Ctrl-C leaves, the session keeps running", c.o.Host.Name, int(time.Since(lost).Seconds())))
 		}
 		wait := time.After(delay)
 	collect:
@@ -682,23 +849,59 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 			if conn, err := udp.Dial(c.udpAddr, *c.offer); err == nil {
 				if l := (udpLink{conn}); c.use(l) == nil {
 					c.pred.Reset()
-					c.title("")
+					c.noticeUp = false // the reattach repaints over it
 					return l, typed, nil
 				}
 			}
 		}
 		if err := transport.EnsureMasterBatch(c.o.Host); err == nil {
-			if proc, err := c.open(false); err == nil {
+			// A session that is gone says so: the UDP request answers
+			// "gone" (see dial) and an SSH attach sends an Error frame, which
+			// ends the client with the reason. No extra question is needed.
+			proc, err := c.open()
+			var gone sessionEnded
+			if errors.As(err, &gone) {
+				return nil, nil, gone
+			}
+			if err == nil {
 				c.pred.Reset()
-				c.title("")
+				c.noticeUp = false // the reattach repaints over it
 				return proc, typed, nil
 			}
 		}
 		if delay < 5*time.Second {
 			delay *= 2
 		}
-		if attempt%4 == 0 {
-			c.title(fmt.Sprintf("aft · reconnecting (%d)", attempt))
+	}
+}
+
+// flash shows a notice across the top row for a few seconds, then restores
+// the row; the input loop does the restoring when unflash fires.
+func (c *session) flash(text string) {
+	c.notice(text)
+	seq := c.noticeSeq
+	time.AfterFunc(5*time.Second, func() {
+		select {
+		case c.unflash <- seq:
+		default:
+		}
+	})
+}
+
+// sessionEnded is the client giving up because the session is gone, as the
+// host answered: it ended unattended and left its remains, or it vanished.
+type sessionEnded struct{ Remains bool }
+
+func (sessionEnded) Error() string { return "the session ended" }
+
+// goneMessage says the session is gone and, if it left its last screen, how
+// to see it.
+func (c *session) goneMessage(gone sessionEnded) func() {
+	id, host := c.id, c.o.Host.Name
+	return func() {
+		ui.Warn("%s is no longer running on %s", id, host)
+		if gone.Remains {
+			ui.Hint("aft attach %s shows its last screen and how it ended", id)
 		}
 	}
 }
@@ -706,25 +909,68 @@ func (c *session) reconnect(keys <-chan []byte) (link, []byte, error) {
 // errLeft is reconnect giving up because the user left; the session runs on.
 var errLeft = errors.New("left while disconnected")
 
-// notice draws a one-line message over the top row while the connection is
-// down, as mosh does, since a title is easy to miss. The repaint that follows
-// a reconnect draws over it.
+// notice draws a one-line message over the top row, as mosh does, since a
+// title is easy to miss: while the connection is down, where the repaint on
+// reconnect draws over it, and through flash, which takes it down itself.
 func (c *session) notice(text string) {
-	if r := []rune(text); len(r) > c.cols {
-		text = string(r[:c.cols])
+	if c.copy != nil {
+		return // the pager owns the screen; the reattach or exit repaints
 	}
-	pad := c.cols - len([]rune(text))
-	c.out.Write([]byte("\x1b7\x1b[1;1H\x1b[0;7m" + text + strings.Repeat(" ", max(pad, 0)) + "\x1b[0m\x1b8"))
+	c.pred.Notice(text)
+	c.noticeUp = true
+	c.noticeSeq++
 }
 
-// writeMirrors records the currently mirrored ports so `aft status` can report
-// them. It is keyed by session id and removed when the client exits.
-func (c *session) writeMirrors() {
-	if c.id == "" {
+// mirrorUpdate asks the mirror goroutine to match the server's listening
+// ports, or with nil ports only to rewrite the record under the session's
+// current name.
+type mirrorUpdate struct {
+	ports []int
+	id    string
+}
+
+// mirrorPorts hands the latest listening ports to mirrorLoop; a newer set
+// replaces one not yet taken.
+func (c *session) mirrorPorts(ports []int) {
+	u := mirrorUpdate{ports: ports, id: c.id}
+	for {
+		select {
+		case c.listeners <- u:
+			return
+		default:
+			select {
+			case <-c.listeners:
+			default:
+			}
+		}
+	}
+}
+
+// mirrorLoop applies port updates one at a time, in order, off the input
+// loop: a forward is an ssh control command, too slow to hold up typing.
+func (c *session) mirrorLoop(done chan<- struct{}) {
+	defer close(done)
+	for {
+		select {
+		case u := <-c.listeners:
+			if u.ports != nil {
+				c.mirror.Update(u.ports)
+			}
+			c.writeMirrors(u.id)
+		case <-c.sendDone:
+			return
+		}
+	}
+}
+
+// writeMirrors records the currently mirrored ports under the session id, so
+// `aft status` can report them; the record goes when the client exits.
+func (c *session) writeMirrors(id string) {
+	if id == "" {
 		return
 	}
 	active := c.mirror.Active()
-	path := filepath.Join(home.Sockets(), "mirrors-"+c.id+".json")
+	path := filepath.Join(home.Sockets(), "mirrors-"+id+".json")
 	if len(active) == 0 {
 		os.Remove(path)
 		return

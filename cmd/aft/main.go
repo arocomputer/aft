@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/launcher"
@@ -30,6 +29,7 @@ var commands = []struct {
 		{"HOST", "[CMD...]", "a terminal on that host that survives disconnects; CMD runs once"},
 		{"ls", "", "sessions on every host"},
 		{"attach", "[NAME]", "reattach to a session"},
+		{"rename", "NAME NEW", "call a session what you like"},
 		{"kill", "NAME", "stop a session"},
 	}},
 	{"Hosts", [][3]string{
@@ -55,8 +55,8 @@ var commands = []struct {
 // answered with a suggestion rather than accepted.
 var meant = map[string]string{
 	"list": "ls", "sessions": "ls", "ps": "ls",
-	"end": "kill", "stop": "kill", "rm": "kill",
-	"ssh": "HOST", "shell": "HOST", "connect": "HOST", "server": "HOST",
+	"end": "kill", "stop": "kill", "rm": "kill", "mv": "rename",
+	"ssh": "HOST", "shell": "HOST", "connect": "HOST",
 	"use": "host use", "hosts": "host",
 	"clone": "on", "ports": "status", "exec": "tools add", "run": "tools add",
 	"check": "doctor", "init": "setup", "install": "setup", "remove": "uninstall",
@@ -65,7 +65,7 @@ var meant = map[string]string{
 // isCommand reports whether name is one of aft's commands.
 func isCommand(name string) bool {
 	switch name {
-	case serverCommand, "selftest":
+	case "selftest", "_complete":
 		return true
 	}
 	for _, g := range commands {
@@ -130,6 +130,7 @@ func distance(a, b string) int {
 	return prev[len(b)]
 }
 
+// printUsage prints the help screen: the commands by group.
 func printUsage() {
 	fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
 	for _, g := range commands {
@@ -142,10 +143,6 @@ func printUsage() {
 	fmt.Println("\n" + ui.Dim("In a project that is on, run claude, codex, opencode or pi exactly as before."))
 }
 
-// serverCommand runs the session server inside the aft binary, for sessions on
-// this machine (the host "local"). It cannot be a host's name.
-const serverCommand = transport.LocalServerCommand
-
 // version is set by the build.
 var version = "dev"
 
@@ -155,8 +152,8 @@ func main() {
 	if bridge.IsShim(base) {
 		os.Exit(bridge.RunShim(os.Args[0], os.Args[1:]))
 	}
-	if home.Migrate() {
-		moveShellBlocks()
+	if base == home.ServerName {
+		os.Exit(serverMain(os.Args[1:]))
 	}
 	// Invoked under an agent's name (via a launcher symlink), run that agent
 	// on the server; invoked as aft (or a dev build whose name starts with
@@ -165,33 +162,17 @@ func main() {
 		os.Exit(launcher.Launch(base, os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
+		// A fresh install has one next step; the full list can wait.
+		if cfg, err := config.Load(); err == nil && len(cfg.Hosts) == 0 {
+			fmt.Println(ui.Bold("aft") + ui.Dim(" — your agents on your server, your terminal on your machine"))
+			fmt.Println()
+			fmt.Println("Start with " + ui.Command("aft setup") + ui.Dim(" to add your server. aft help lists the commands."))
+			os.Exit(0)
+		}
 		printUsage()
 		os.Exit(0)
 	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
-}
-
-// moveShellBlocks points the PATH line at the launchers' new home and tells
-// you about any line it could not change. Remove it with home.Migrate.
-func moveShellBlocks() {
-	st, err := config.LoadState()
-	if err != nil {
-		return
-	}
-	kept := launcher.MoveShellBlocks(&st)
-	config.SaveState(st)
-	ui.Note("launchers moved to %s; open a new shell to use them", ui.Path(home.Launchers()))
-	if len(st.ShellBlocks) == 0 || len(kept) > 0 {
-		ui.Warn("put this first on your PATH instead of $HOME/.aft/launchers%s:", inFiles(kept))
-		fmt.Fprintf(os.Stderr, "    export PATH=\"%s:$PATH\"\n", launcher.PathDir)
-	}
-}
-
-func inFiles(files []string) string {
-	if len(files) == 0 {
-		return ""
-	}
-	return " in " + strings.Join(files, ", ")
 }
 
 func run(cmd string, args []string) int {
@@ -202,12 +183,6 @@ func run(cmd string, args []string) int {
 	case "version":
 		fmt.Println("aft", version)
 		return 0
-	case serverCommand:
-		self, err := os.Executable()
-		if err != nil {
-			return fail(err)
-		}
-		return session.Main([]string{self, serverCommand}, args, os.Stdin, os.Stdout, os.Stderr)
 	case "setup":
 		return cmdSetup(args)
 	case "host":
@@ -222,6 +197,8 @@ func run(cmd string, args []string) int {
 		return cmdAttach(args)
 	case "kill":
 		return cmdKill(args)
+	case "rename":
+		return cmdRename(args)
 	case "status":
 		return cmdStatus(args)
 	case "doctor":
@@ -236,6 +213,8 @@ func run(cmd string, args []string) int {
 		return cmdSelftest(args)
 	case "completion":
 		return cmdCompletion(args)
+	case "_complete":
+		return cmdComplete(args)
 	}
 	// aft HOST: a host you have, or one SSH can reach, which becomes one.
 	if cfg, err := config.Load(); err == nil {
@@ -263,6 +242,12 @@ func run(cmd string, args []string) int {
 		ui.Hint("aft help lists the commands")
 	}
 	return 2
+}
+
+// serverMain runs the session server: aft started as aft-server is the server
+// for sessions on this machine, the same program a host runs as aft-server.
+func serverMain(args []string) int {
+	return session.Main(nil, args, os.Stdin, os.Stdout, os.Stderr)
 }
 
 // fail reports err on stderr and returns the exit code for a failed command.

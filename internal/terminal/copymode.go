@@ -2,7 +2,10 @@ package terminal
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
+
+	"github.com/mattn/go-runewidth"
 
 	"github.com/arocomputer/aft/internal/vt"
 )
@@ -24,7 +27,7 @@ type copyMode struct {
 	searching bool // typing a query into the status bar
 	query     []rune
 	lastQuery string
-	lastDir   int // +1 older (up), -1 newer (down)
+	lastDir   int // -1 toward older output (up, lower index), +1 toward newer
 }
 
 // newCopyMode builds a pager from a snapshot sized to the terminal, starting at
@@ -51,8 +54,13 @@ func (c *copyMode) resize(cols, rows int) {
 	c.scrollToCursor()
 }
 
-// clamp keeps top within range and the cursor on a real line.
+// clamp keeps top within range and the cursor on a real line, or at 0 when
+// there are no lines.
 func (c *copyMode) clamp() {
+	if len(c.lines) == 0 {
+		c.cursor, c.top = 0, 0
+		return
+	}
 	if c.cursor < 0 {
 		c.cursor = 0
 	}
@@ -154,7 +162,7 @@ func (c *copyMode) searchKey(t Token) (exit bool) {
 }
 
 // repeatSearch jumps to the next line containing the query in the given
-// direction (+1 older, -1 newer), case-insensitively, and remembers it for n/N.
+// direction (-1 older, +1 newer), case-insensitively, and remembers it for n/N.
 func (c *copyMode) repeatSearch(dir int) {
 	if c.lastQuery == "" || dir == 0 {
 		return
@@ -173,6 +181,9 @@ func (c *copyMode) repeatSearch(dir int) {
 // selection returns the selected lines as text, or the current line when not
 // selecting, with trailing blank lines dropped.
 func (c *copyMode) selection() []byte {
+	if len(c.lines) == 0 {
+		return nil
+	}
 	lo, hi := c.cursor, c.cursor
 	if c.selecting {
 		lo, hi = c.selStart, c.cursor
@@ -225,21 +236,20 @@ func (c *copyMode) view() []byte {
 }
 
 // status is the text of the bottom bar: the mode, position and any search.
+// It names no keys: they are the usual pager keys, listed in the guide.
 func (c *copyMode) status() string {
 	if c.searching {
 		return " search: " + string(c.query)
 	}
 	pos := ""
 	if len(c.lines) > 0 {
-		pos = itoa(c.cursor+1) + "/" + itoa(len(c.lines))
+		pos = strconv.Itoa(c.cursor+1) + "/" + strconv.Itoa(len(c.lines))
 	}
 	mode := "COPY"
 	if c.selecting {
 		mode = "SELECT"
 	}
-	hint := "  ↑↓ scroll · / search · v select · y copy · q quit"
-	left := " " + mode + " " + pos
-	return left + hint
+	return " " + mode + " " + pos
 }
 
 // writeCells draws one row with each cell's own style, padded to width. In a
@@ -253,8 +263,8 @@ func writeCells(b *bytes.Buffer, cells []vt.Cell, width int, plain bool) {
 		if cell.Width == 0 {
 			continue
 		}
-		if n >= width {
-			break
+		if n+int(cell.Width) > width {
+			break // a wide character must not spill past the last column
 		}
 		if !plain && (first || cell.Attr != cur) {
 			b.WriteString(vt.SGR(cell.Attr))
@@ -270,32 +280,10 @@ func writeCells(b *bytes.Buffer, cells []vt.Cell, width int, plain bool) {
 	}
 }
 
+// padRight fits s to width columns, by display width.
 func padRight(s string, width int) string {
-	if len([]rune(s)) >= width {
-		r := []rune(s)
-		if width <= 0 {
-			return ""
-		}
-		return string(r[:width])
+	if width <= 0 {
+		return ""
 	}
-	return s + strings.Repeat(" ", width-len([]rune(s)))
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var d []byte
-	for n > 0 {
-		d = append([]byte{byte('0' + n%10)}, d...)
-		n /= 10
-	}
-	if neg {
-		d = append([]byte{'-'}, d...)
-	}
-	return string(d)
+	return runewidth.FillRight(runewidth.Truncate(s, width, ""), width)
 }

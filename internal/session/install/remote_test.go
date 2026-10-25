@@ -1,6 +1,7 @@
 package install
 
 import (
+	"github.com/arocomputer/aft/internal/session"
 	"runtime"
 	"testing"
 )
@@ -35,5 +36,30 @@ func TestBlobDecompresses(t *testing.T) {
 func TestBlobUnknownPlatform(t *testing.T) {
 	if _, err := Blob("plan9", "sparc"); err == nil {
 		t.Fatal("expected an error for an unsupported platform")
+	}
+}
+
+// TestCompareNeverDowngrades orders the installed server against this build:
+// the same binary is current, an older build or a rebuild of this commit is
+// replaced, and a newer build is left alone.
+func TestCompareNeverDowngrades(t *testing.T) {
+	const want = "abc"
+	for name, c := range map[string]struct {
+		info session.Info
+		want int
+	}{
+		"same":    {session.Info{SHA: want, Built: 50}, 0},
+		"older":   {session.Info{SHA: "old", Built: 50}, -1},
+		"rebuild": {session.Info{SHA: "other", Built: 100}, -1},
+		"newer":   {session.Info{SHA: "new", Built: 150}, 1},
+		"unknown": {session.Info{SHA: "x"}, -1}, // a server from before build times
+	} {
+		if got := compare(c.info, want, 100); got != c.want {
+			t.Errorf("%s: compare = %d, want %d", name, got, c.want)
+		}
+	}
+	// A client without a build time cannot leave a different server alone.
+	if got := compare(session.Info{SHA: "new", Built: 150}, want, 0); got != -1 {
+		t.Errorf("undated client: compare = %d, want -1", got)
 	}
 }

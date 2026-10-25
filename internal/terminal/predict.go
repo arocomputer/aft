@@ -1,9 +1,12 @@
 package terminal
 
 import (
+	"bytes"
 	"io"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 
@@ -46,6 +49,15 @@ type Predictor struct {
 	caretValid bool
 	caretRow   int
 	caretCol   int
+	// typed counts the characters typed since the last key whose effect was
+	// unforeseeable. A Backspace is predicted only over one of them: what is
+	// left of the caret otherwise, such as a prompt, may be nothing the
+	// application would erase.
+	typed int
+	// tail is the start of a sequence the shadow has absorbed but the real
+	// terminal has not seen, while copy mode owns the screen; a repaint
+	// replays it so the sequence completes on both.
+	tail []byte
 
 	onClip func([]byte)
 }
@@ -56,6 +68,7 @@ type prediction struct {
 	gen      uint64
 	at       time.Time
 	drawn    bool
+	erase    bool // a Backspace: the cell is predicted blank, left of the caret
 }
 
 // NewPredictor returns a predictor writing passthrough and overlays to w.
@@ -97,14 +110,20 @@ func (p *Predictor) Reset() {
 	p.caretValid = false
 	p.displaced = false
 	p.posKnown, p.penKnown = false, false
-	p.confident = true
+	p.typed = 0
+	p.tail = nil
+	// Nothing is drawn until the first echo matches: the session is about
+	// to repaint, and keys typed while it was away must not land on an empty
+	// shadow.
+	p.confident = false
 }
 
-// Title returns the title the application set, if any.
-func (p *Predictor) Title() string {
+// DropSequence abandons a sequence the shadow's parser is inside, when the
+// stream that was sending it is gone.
+func (p *Predictor) DropSequence() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.shadow.Title()
+	p.shadow.DropSequence()
 }
 
 // Output passes server output to the terminal and updates the shadow.
@@ -114,7 +133,7 @@ func (p *Predictor) Output(b []byte) error {
 	if p.displaced && p.shadow.InGround() {
 		// Put the real cursor and attributes back where the server left them.
 		c := p.shadow.Cursor()
-		fix := vt.CUP(c.Row, c.Col) + vt.SGR(c.Attr)
+		fix := p.serverCursor() + vt.SGR(c.Attr)
 		if _, err := p.w.Write([]byte(fix)); err != nil {
 			return err
 		}
@@ -151,7 +170,23 @@ func (p *Predictor) Key(t Token) {
 	default:
 		// Anything else may move the caret in ways we cannot foresee.
 		p.caretValid = false
+		p.typed = 0
+		if isEnter(t.Bytes) {
+			// What comes next may be a password prompt: draw nothing until
+			// an echo shows the application is echoing again.
+			p.confident = false
+		}
 	}
+}
+
+// isEnter reports whether b is the Enter key, in the legacy encoding or the
+// kitty keyboard protocol (CSI 13 u, with any modifiers).
+func isEnter(b []byte) bool {
+	if len(b) == 1 && (b[0] == '\r' || b[0] == '\n') {
+		return true
+	}
+	s := string(b)
+	return s == "\x1b[13u" || strings.HasPrefix(s, "\x1b[13;") && strings.HasSuffix(s, "u")
 }
 
 // shadowCaret returns where the server's caret is: the terminal cursor, or
@@ -207,6 +242,7 @@ func (p *Predictor) predictText(r rune, now time.Time) {
 	if cell.Width == 0 {
 		return
 	}
+	p.typed++
 	pred := prediction{row: row, col: col, r: r, gen: p.shadow.Gen(), at: now, drawn: p.confident}
 	if p.confident {
 		attr := cell.Attr
@@ -247,15 +283,25 @@ func (p *Predictor) predictText(r rune, now time.Time) {
 }
 
 func (p *Predictor) predictBackspace(now time.Time) {
-	if !p.confident || !p.shadow.InGround() {
+	if !p.confident || !p.shadow.InGround() || p.typed == 0 {
 		p.caretValid = false
+		p.typed = 0
 		return
 	}
+	p.typed--
 	// Undo the most recent unconfirmed prediction if there is one on this row.
 	if n := len(p.pending); n > 0 && p.pending[n-1].drawn && p.caretValid && p.pending[n-1].row == p.caretRow && p.pending[n-1].col == p.caretCol-1 {
 		last := p.pending[n-1]
 		p.pending = p.pending[:n-1]
 		cell := p.shadow.Cell(last.row, last.col)
+		// The cell shows what an earlier prediction put there, if one did,
+		// such as a predicted erase; otherwise what the server has.
+		for i := len(p.pending) - 1; i >= 0; i-- {
+			if pr := p.pending[i]; pr.row == last.row && pr.col == last.col {
+				cell.Rune = pr.r
+				break
+			}
+		}
 		out := vt.CUP(last.row, last.col) + vt.SGR(cell.Attr) + cellRune(cell)
 		if !p.shadow.Modes().CursorVisible {
 			// Restore the drawn caret to this cell and clear the moved one.
@@ -265,6 +311,8 @@ func (p *Predictor) predictBackspace(now time.Time) {
 			next := p.shadow.Cell(last.row, last.col+1)
 			out += vt.SGR(next.Attr) + cellRune(next)
 		}
+		// Leave the cursor on the cell the next character goes into.
+		out += vt.CUP(last.row, last.col)
 		p.w.Write([]byte(out))
 		p.displaced = true
 		p.posKnown, p.penKnown = false, false
@@ -293,10 +341,11 @@ func (p *Predictor) predictBackspace(now time.Time) {
 		ca.Reverse = false
 		out += vt.SGR(ca) + cellRune(cur)
 	}
+	out += vt.CUP(row, col-1) // where the next character goes
 	p.w.Write([]byte(out))
 	p.displaced = true
 	p.posKnown, p.penKnown = false, false
-	p.pending = append(p.pending, prediction{row: row, col: col - 1, r: ' ', gen: p.shadow.Gen(), at: now, drawn: true})
+	p.pending = append(p.pending, prediction{row: row, col: col - 1, r: ' ', gen: p.shadow.Gen(), at: now, drawn: true, erase: true})
 	p.caretValid, p.caretRow, p.caretCol = true, row, col-1
 }
 
@@ -309,12 +358,17 @@ func cellRune(c vt.Cell) string {
 
 // reconcile checks pending predictions against the shadow after server
 // output. A prediction is confirmed when the server writes the predicted
-// character into its cell. When the server writes something else into a cell
-// it has not reached yet (at or right of its caret on the same row), it has
-// simply not processed that key: applications such as Ink-based agents redraw
-// the whole input line on every echo, erasing the cells still in flight. Such
-// predictions are kept and redrawn rather than counted as wrong, otherwise the
-// caret visibly snaps back to the server's position on every echo.
+// character into its cell, or, for a typed character, when the server's caret
+// moves past a cell that already shows it: some renderers echo a space by
+// moving over the blank cell. When the server blanks a cell it has not
+// reached yet (at or right of its caret on the same row), it has simply not
+// processed that key: applications such as Ink-based agents redraw the whole
+// input line on every echo, erasing the cells still in flight. Such
+// predictions are kept and redrawn, otherwise the caret visibly snaps back on
+// every echo. That holds only while every key since was foreseeable: after
+// Enter or Ctrl-C the app may rightly clear the line, so the predictions are
+// dropped, not counted against us. A cell filled with something else, as in
+// vim's normal mode, is a wrong prediction.
 func (p *Predictor) reconcile() {
 	if len(p.pending) == 0 {
 		return
@@ -326,6 +380,14 @@ func (p *Predictor) reconcile() {
 	for _, pr := range p.pending {
 		cell := p.shadow.Cell(pr.row, pr.col)
 		switch {
+		case cell.Gen <= pr.gen && !pr.erase && caretOK && pr.row == cr && cc > pr.col && holds(cell, pr.r):
+			// The server moved its caret past the cell without rewriting it,
+			// which is how some renderers echo a space: it handled the key.
+			p.confident = true
+		case cell.Gen <= pr.gen && !pr.drawn && caretOK && cr != pr.row:
+			// Never drawn, and the server's caret has left its row, as after
+			// a prompt that echoed nothing: it is not coming, and it must not
+			// hold up predictions on the new row.
 		case cell.Gen <= pr.gen:
 			keep = append(keep, pr)
 		case cell.Rune == pr.r:
@@ -333,8 +395,11 @@ func (p *Predictor) reconcile() {
 			rtt := now.Sub(pr.at)
 			p.srtt = (p.srtt*7 + rtt) / 8
 			p.confident = true
-		case caretOK && pr.row == cr && pr.col >= cc:
-			// Overwritten ahead of the server's caret: still in flight.
+		case !p.caretValid:
+			// A key we could not foresee came after it; the app may rightly
+			// have cleared it. Drop it without judging.
+		case caretOK && pr.row == cr && pr.col >= cc && holds(cell, ' '):
+			// Blanked ahead of the server's caret: still in flight.
 			if pr.drawn {
 				erased = append(erased, len(keep))
 			}
@@ -350,9 +415,13 @@ func (p *Predictor) reconcile() {
 		p.caretValid = false
 		return
 	}
-	if len(erased) == 0 || !p.confident || !p.shadow.InGround() {
+	if !p.confident || !p.shadow.InGround() {
 		// Without a redraw the screen shows the server's cells, which is
 		// always correct; the next output or Tick settles the rest.
+		return
+	}
+	if len(erased) == 0 {
+		p.placeCursor(cr, drawnCaret, caretOK)
 		return
 	}
 	var out []byte
@@ -375,6 +444,41 @@ func (p *Predictor) reconcile() {
 	p.w.Write(out)
 	p.displaced = true
 	p.posKnown, p.penKnown = false, false
+	p.placeCursor(cr, drawnCaret, caretOK)
+}
+
+// placeCursor puts the terminal's cursor after the predictions still in
+// flight. Server output leaves it where the server's input ends, which trails
+// what was typed, so an application that redraws on its own clock (Claude
+// Code's classic renderer does, about twice a second) would otherwise make
+// the cursor jump back and forth. It applies only to a visible cursor on the
+// server caret's row; a drawn caret is moved by reconcile itself.
+func (p *Predictor) placeCursor(serverRow int, drawnCaret, caretOK bool) {
+	if !caretOK || drawnCaret || !p.caretValid || p.caretRow != serverRow || !p.allDrawn() {
+		return
+	}
+	if p.posKnown && p.realRow == p.caretRow && p.realCol == p.caretCol {
+		return
+	}
+	p.w.Write([]byte(vt.CUP(p.caretRow, p.caretCol)))
+	p.realRow, p.realCol, p.posKnown = p.caretRow, p.caretCol, true
+	p.displaced = true
+}
+
+// allDrawn reports whether every pending prediction is on screen, so the
+// cursor may go after them without skipping cells that show nothing yet.
+func (p *Predictor) allDrawn() bool {
+	for _, pr := range p.pending {
+		if !pr.drawn {
+			return false
+		}
+	}
+	return true
+}
+
+// holds reports whether cell already shows r, a blank counting as a space.
+func holds(cell vt.Cell, r rune) bool {
+	return cell.Rune == r || (r == ' ' && cell.Rune == 0)
 }
 
 // Tick expires predictions the server never answered and repaints them from
@@ -410,36 +514,145 @@ func (p *Predictor) Tick() {
 		p.confident = false
 	}
 	p.pending = keep
+	if len(p.pending) == 0 {
+		p.caretValid = false
+	}
 	if len(out) > 0 {
+		// Repainting left the cursor on the last repainted cell; put it back
+		// after the predictions still in flight, or where the server has it.
+		cur := p.shadow.Cursor()
+		row, col := cur.Row, cur.Col
+		if p.caretValid && p.caretRow == cur.Row && p.allDrawn() {
+			col = p.caretCol
+		}
+		if p.shadow.Modes().CursorVisible && !cur.Wrap {
+			out = append(out, vt.CUP(row, col)...)
+		}
 		p.w.Write(out)
 		p.displaced = true
 		p.posKnown, p.penKnown = false, false
-	}
-	if len(p.pending) == 0 {
-		p.caretValid = false
 	}
 }
 
 // Absorb feeds server output to the shadow without writing to the terminal.
 // Copy mode uses it so the shadow stays current while the pager owns the
-// screen; Repaint then restores the live screen on exit.
+// screen; Repaint then restores the live screen on exit. The bytes of a
+// sequence still open at the end are kept, for Repaint to replay.
 func (p *Predictor) Absorb(b []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.shadow.Write(b)
+	if p.shadow.InGround() {
+		p.tail = p.tail[:0]
+		return
+	}
+	// Still inside something: a sequence, which began at the last ESC, or a
+	// multibyte character, which began at its lead byte. When it began in
+	// this chunk, what was kept before is finished and goes; otherwise it
+	// began in an earlier chunk and this one continues it.
+	if i := openAt(b); i >= 0 {
+		p.tail = append(p.tail[:0], b[i:]...)
+	} else {
+		p.tail = append(p.tail, b...)
+	}
+}
+
+// openAt is where the sequence or character left open at the end of b
+// starts, or -1 when it started before b.
+func openAt(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-4; i-- {
+		if b[i]&0xC0 == 0xC0 && !utf8.FullRune(b[i:]) {
+			return i // the lead byte of an unfinished character
+		}
+	}
+	return bytes.LastIndexByte(b, 0x1b)
 }
 
 // Repaint clears the screen and redraws the live screen from the shadow,
 // dropping any predictions. Copy mode calls it on exit. It paints the current
 // screen only, never scrollback, so the terminal's own history is untouched.
+// A sequence the shadow is still inside is replayed, so the real terminal is
+// inside it too when the rest arrives.
 func (p *Predictor) Repaint() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.w.Write([]byte("[H[2J"))
+	// Render clears the screen itself before painting it, and leaves the
+	// cursor and pen as the shadow has them.
 	p.w.Write(p.shadow.Render(vt.RenderOptions{Scrollback: false, Title: true}))
+	p.w.Write(p.tail)
+	p.tail = nil
 	p.pending = nil
 	p.caretValid = false
 	p.displaced = false
+	cur := p.shadow.Cursor()
+	p.realRow, p.realCol, p.posKnown = cur.Row, cur.Col, !cur.Wrap
+	p.realPen, p.penKnown = cur.Attr, true
+}
+
+// Notice draws a one-line message in reverse video across the top row, then
+// puts the cursor back where it was. It moves the cursor explicitly rather
+// than with save and restore (ESC 7 / ESC 8), which would overwrite a cursor
+// the application saved itself. RestoreRow takes the notice down.
+func (p *Predictor) Notice(text string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.shadow.InGround() {
+		return
+	}
+	// It stops short of the last column, so drawing it never leaves the
+	// terminal waiting to wrap, whatever width the terminal gives each
+	// character; callers keep notices to plain ASCII punctuation.
+	cols, _ := p.shadow.Size()
+	width := max(cols-1, 0)
+	text = runewidth.Truncate(text, width, "")
+	// Plain ASCII whatever character set the application has shifted in.
+	plain, restore := p.shadow.CharsetSequences()
+	out := plain + vt.CUP(0, 0) + "\x1b[0;7m" + text + strings.Repeat(" ", max(width-runewidth.StringWidth(text), 0)) + "\x1b[0m" + restore
+	p.w.Write([]byte(out + p.cursorBack()))
+	p.penKnown = false
+	p.displaced = true
+}
+
+// serverCursor moves the real cursor to the shadow's, wrap state included:
+// at the last column with a wrap pending, the next character starts a new
+// line, which a plain move would forget. Reprinting the last cell restores
+// it, as it is how the terminal got there.
+func (p *Predictor) serverCursor() string {
+	cur := p.shadow.Cursor()
+	if !cur.Wrap {
+		return vt.CUP(cur.Row, cur.Col)
+	}
+	cols, _ := p.shadow.Size()
+	col := cols - 1
+	cell := p.shadow.Cell(cur.Row, col)
+	if cell.Width == 0 && col > 0 {
+		col-- // the last cell is the right half of a wide character
+		cell = p.shadow.Cell(cur.Row, col)
+	}
+	return vt.CUP(cur.Row, col) + vt.SGR(cell.Attr) + cellRune(cell)
+}
+
+// cursorBack returns the real cursor to where it was before an overlay was
+// drawn: where predictions left it, or the server's cursor.
+func (p *Predictor) cursorBack() string {
+	if p.posKnown {
+		return vt.CUP(p.realRow, p.realCol)
+	}
+	return p.serverCursor()
+}
+
+// RestoreRow redraws one row from the shadow, taking back a notice drawn
+// over it.
+func (p *Predictor) RestoreRow(r int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, rows := p.shadow.Size()
+	if r < 0 || r >= rows || !p.shadow.InGround() {
+		return
+	}
+	p.w.Write(append(p.shadow.RenderRow(r), p.cursorBack()...))
+	p.penKnown = false
+	p.displaced = true
 }
 
 // Shadow exposes the emulator for tests.

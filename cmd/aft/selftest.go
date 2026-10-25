@@ -9,6 +9,7 @@ import (
 	"github.com/arocomputer/aft/internal/bridge/ports"
 	"github.com/arocomputer/aft/internal/bridge/proto"
 	"github.com/arocomputer/aft/internal/bridge/transport"
+	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/terminal"
 )
@@ -216,7 +217,7 @@ When the session closes, paste (Cmd+V / Ctrl+Shift+V) somewhere to check.
 func selftestAgent(prefix byte) {
 	info := session.GatherInfo()
 	var found []string
-	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"} {
+	for _, a := range config.DefaultAgents {
 		if _, ok := info.Agents[a]; ok {
 			found = append(found, a)
 		}

@@ -11,9 +11,9 @@ import (
 	"github.com/arocomputer/aft/internal/bridge/proto"
 )
 
-// TestShimPassthroughOutsideSession checks a shim without a session falls back
-// to the real command rather than failing.
-func TestShimPassthroughOutsideSession(t *testing.T) {
+// TestIsShim recognizes a shim by its path, so aft knows when it was
+// started as one; outside a session RunShim then runs the real command.
+func TestIsShim(t *testing.T) {
 	t.Setenv("AFT_HOME", t.TempDir())
 	t.Setenv("AFT_BRIDGE", "")
 	if !IsShim("/x/.local/share/aft/shims/xdg-open") || IsShim("/usr/bin/server") {

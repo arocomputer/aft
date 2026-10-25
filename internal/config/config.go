@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -26,13 +28,14 @@ var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp
 // table or a repository's aft.toml can override most of them. Keys are flat and
 // snake_case; a host is addressed by name, so its table is singular: host.mini.
 type Config struct {
-	Use          string                `toml:"use,omitempty"` // the host used when none is given; a lone host needs no line
+	Use          string                `toml:"use,omitempty"`      // the host used when none is given; a lone host needs no line
+	Existing     string                `toml:"existing,omitempty"` // when an agent is launched where one already runs: ask (default), attach or new
 	Agents       []string              `toml:"agents"`
 	Tools        []string              `toml:"tools,omitempty"` // commands like git and gh that run once on the host, not in a session
 	Predict      *bool                 `toml:"predict,omitempty"`
 	UDP          *bool                 `toml:"udp,omitempty"`           // reach sessions over UDP when the host allows it; nil means yes
 	Prefix       *string               `toml:"prefix,omitempty"`        // key for copy mode and detach; nil means the default ctrl-]
-	DetachKey    string                `toml:"detach,omitempty"`        // key after the prefix that detaches
+	DetachKey    string                `toml:"detach,omitempty"`        // a key that detaches on its own, besides prefix then d; off by default
 	EditDotfiles *bool                 `toml:"edit_dotfiles,omitempty"` // let setup edit the shell config; nil means yes
 	Wrapper      []string              `toml:"wrapper,omitempty"`       // default command wrapper on the host
 	Env          []string              `toml:"env,omitempty"`           // extra variables to pass to the host
@@ -101,8 +104,6 @@ type Settings struct {
 	UDP     bool
 	Ports   string
 	Env     []string
-	Alive   int
-	Persist int
 }
 
 // Resolve merges settings for a host and an optional repository config.
@@ -114,8 +115,6 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 		UDP:     c.UDP == nil || *c.UDP,
 		Ports:   c.Ports,
 		Env:     append([]string(nil), c.Env...),
-		Alive:   h.Alive,
-		Persist: h.Persist,
 	}
 	if len(h.Wrapper) > 0 {
 		s.Wrapper = h.Wrapper
@@ -147,7 +146,6 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 // their dotfiles.
 func (c Config) EditingDotfiles() bool { return c.EditDotfiles == nil || *c.EditDotfiles }
 
-// Path is the config file.
 // Launched is every name with a launcher: the agents, then the tools.
 func (c Config) Launched() []string { return append(append([]string{}, c.Agents...), c.Tools...) }
 
@@ -162,6 +160,7 @@ func (c Config) IsTool(name string) bool {
 	return false
 }
 
+// Path is the config file.
 func Path() string { return filepath.Join(home.Dir(), "config.toml") }
 
 // StatePath is the state file.
@@ -183,7 +182,27 @@ func Load() (Config, error) {
 	if c.Hosts == nil {
 		c.Hosts = map[string]HostConfig{}
 	}
+	switch c.Existing {
+	case "", "ask", "attach", "new":
+	default:
+		return c, fmt.Errorf("%s: existing must be ask, attach or new, not %q", Path(), c.Existing)
+	}
+	for name, h := range c.Hosts {
+		if h.SSH == "" {
+			// Without a destination the host would be taken for this machine.
+			return c, fmt.Errorf("%s: host %q has no ssh destination", Path(), name)
+		}
+	}
 	return c, nil
+}
+
+// RealPath spells p without symlinks. If p does not exist, its folder is
+// resolved and its name kept.
+func RealPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Join(resolve(filepath.Dir(p)), filepath.Base(p))
 }
 
 // Save writes the config.
@@ -292,14 +311,35 @@ func writeFile(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// FindProject returns the on project containing dir, if any, with the local
-// root it was turned on at.
+// FindProject returns the project dir belongs to, with its root as stored,
+// choosing the most specific. Roots are kept by their real path (aft on sees
+// to it), and dir is compared as given and by its real spelling, so a folder
+// reached through a symlink (~/room for /Volumes/Room) is found either way.
+// dir is where the caller stands, so resolving it is safe. A root written
+// down by an older aft may be spelled through a symlink; when nothing else
+// matches, such roots are resolved too, each with a short time limit, since
+// one on a share whose server is offline would otherwise hang every command.
 func (s State) FindProject(dir string) (root string, p Project, ok bool) {
-	dir = filepath.Clean(dir)
+	dirs := spellings(dir)
 	best := ""
-	for r := range s.Projects {
-		if within(dir, r) && len(r) > len(best) {
-			best = r
+	for _, d := range dirs {
+		for r := range s.Projects {
+			if _, inside := relInside(d, r); inside && len(r) > len(best) {
+				best = r
+			}
+		}
+	}
+	if best == "" {
+		for r := range s.Projects {
+			real, ok := resolveWithin(r, 200*time.Millisecond)
+			if !ok || real == r {
+				continue
+			}
+			for _, d := range dirs {
+				if _, inside := relInside(d, real); inside && len(r) > len(best) {
+					best = r
+				}
+			}
 		}
 	}
 	if best == "" {
@@ -308,17 +348,29 @@ func (s State) FindProject(dir string) (root string, p Project, ok bool) {
 	return best, s.Projects[best], true
 }
 
-// within reports whether dir is root or inside it, spelled either way: a
-// project turned on through a symlink (~/room is /Volumes/Room) matches the
-// real path too.
-func within(dir, root string) bool {
-	if _, ok := relInside(dir, root); ok {
-		return true
+// resolveWithin is p's real path, unless finding it takes longer than d, as
+// it does for a path on a share that is not answering.
+func resolveWithin(p string, d time.Duration) (string, bool) {
+	done := make(chan string, 1)
+	go func() { done <- resolve(p) }()
+	select {
+	case real := <-done:
+		return real, true
+	case <-time.After(d):
+		return "", false
 	}
-	_, ok := relInside(resolve(dir), resolve(root))
-	return ok
 }
 
+// spellings is a path as given and, when that differs, by its real path.
+func spellings(p string) []string {
+	p = filepath.Clean(p)
+	if real := RealPath(p); real != p {
+		return []string{p, real}
+	}
+	return []string{p}
+}
+
+// relInside returns dir relative to root when dir is root or inside it.
 func relInside(dir, root string) (string, bool) {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -336,43 +388,55 @@ func resolve(p string) string {
 
 // RemoteDir maps a local directory inside a project to its server directory.
 func RemoteDir(root string, p Project, dir string) string {
-	rel, ok := relInside(dir, root)
-	if !ok {
-		rel, _ = relInside(resolve(dir), resolve(root))
+	rel := "."
+	for _, d := range spellings(dir) {
+		if r, ok := relInside(d, root); ok {
+			rel = r
+			break
+		}
 	}
-	if rel == "" || rel == "." {
+	if rel == "." {
 		return p.Dir
 	}
 	return p.Dir + "/" + filepath.ToSlash(rel)
 }
 
-// LoadRepo reads aft.toml from dir or its parents, returning the root it was
-// found in.
-func LoadRepo(dir string) (RepoConfig, string, bool) {
+// LoadRepo finds the nearest aft.toml at or above dir and returns it with
+// the directory it is in. With none the error is fs.ErrNotExist; a file that
+// does not parse is an error naming it, never silently ignored.
+func LoadRepo(dir string) (RepoConfig, string, error) {
 	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
-		b, err := os.ReadFile(filepath.Join(d, "aft.toml"))
+		path := filepath.Join(d, "aft.toml")
+		b, err := os.ReadFile(path)
 		if err == nil {
 			var r RepoConfig
-			if toml.Unmarshal(b, &r) == nil {
-				return r, d, true
+			if err := toml.Unmarshal(b, &r); err != nil {
+				return RepoConfig{}, d, fmt.Errorf("%s: %w", path, err)
 			}
-			return RepoConfig{}, d, false
+			return r, d, nil
 		}
 		if filepath.Dir(d) == d {
-			return RepoConfig{}, "", false
+			return RepoConfig{}, "", fs.ErrNotExist
 		}
 	}
 }
 
-// DefaultRemoteDir maps a local directory to the same path relative to home.
+// DefaultRemoteDir maps a local directory to the same path relative to home,
+// whichever spelling of home it is under: the real one, as project roots are
+// stored, or the one in HOME.
 func DefaultRemoteDir(local string) string {
 	h, err := os.UserHomeDir()
-	if err == nil {
-		if rel, err := filepath.Rel(h, local); err == nil && !strings.HasPrefix(rel, "..") {
-			if rel == "." {
-				return "~"
+	if err != nil {
+		return local
+	}
+	for _, d := range spellings(local) {
+		for _, root := range []string{h, RealPath(h)} {
+			if rel, ok := relInside(d, root); ok {
+				if rel == "." {
+					return "~"
+				}
+				return "~/" + filepath.ToSlash(rel)
 			}
-			return "~/" + filepath.ToSlash(rel)
 		}
 	}
 	return local
@@ -394,7 +458,12 @@ func DetachByte(s string) (byte, error) {
 	if s == "" || s == "off" || s == "none" {
 		return 0, nil
 	}
-	s = strings.TrimPrefix(strings.TrimPrefix(s, "ctrl-"), "^")
+	// One prefix form: "ctrl-]" or "^]"; "ctrl-^" names Ctrl-^ itself.
+	if rest, ok := strings.CutPrefix(s, "ctrl-"); ok {
+		s = rest
+	} else if rest, ok := strings.CutPrefix(s, "^"); ok && rest != "" {
+		s = rest
+	}
 	if len(s) != 1 {
 		return 0, fmt.Errorf("detach must look like \"ctrl-]\"")
 	}
@@ -409,24 +478,27 @@ func DetachByte(s string) (byte, error) {
 }
 
 // MapLocal returns the host and server directory for a local path that lives
-// under a configured mount, choosing the most specific mount. The local path
-// should be resolved of symlinks by the caller, since a mountpoint is physical.
+// under a configured mount, choosing the most specific mount. Mounts are kept
+// by their real path (aft mount add and detection see to it), so the path is
+// compared as given and, when it is reached through a symlink (~/room may be
+// /Volumes/Room), by its real spelling too. Mounts themselves are never
+// resolved here, which could block on a share whose server is offline;
+// callers pass paths they have just used, which cannot.
 func (c Config) MapLocal(local string) (host, remote string, ok bool) {
-	local = filepath.Clean(local)
+	forms := spellings(local)
 	best := -1
 	var chosen Mount
+	var rest string
 	for _, m := range c.Mounts {
 		ml := filepath.Clean(m.Local)
-		if local == ml || strings.HasPrefix(local, ml+string(filepath.Separator)) {
-			if len(ml) > best {
-				best, chosen = len(ml), m
+		for _, f := range forms {
+			if (f == ml || strings.HasPrefix(f, ml+string(filepath.Separator))) && len(ml) > best {
+				best, chosen, rest = len(ml), m, strings.TrimPrefix(f, ml)
 			}
 		}
 	}
 	if best < 0 {
 		return "", "", false
 	}
-	suffix := filepath.ToSlash(strings.TrimPrefix(local, filepath.Clean(chosen.Local)))
-	remote = strings.TrimRight(chosen.Path, "/") + suffix
-	return chosen.Host, remote, true
+	return chosen.Host, strings.TrimRight(chosen.Path, "/") + filepath.ToSlash(rest), true
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/session/install"
 	"github.com/arocomputer/aft/internal/ui"
 )
 
@@ -182,16 +181,8 @@ func sameServer(h transport.Host, server string) bool {
 // sshHostName returns the HostName ssh resolves for a destination, or the
 // destination itself when ssh gives nothing useful.
 func sshHostName(h transport.Host) string {
-	out, err := exec.Command("ssh", "-G", h.Dest()).Output()
-	if err != nil {
-		return h.Dest()
-	}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	for sc.Scan() {
-		f := strings.Fields(sc.Text())
-		if len(f) == 2 && strings.EqualFold(f[0], "hostname") {
-			return f[1]
-		}
+	if a, err := h.Address(); err == nil {
+		return a // as ssh resolves it, with the host's own options
 	}
 	return h.Dest()
 }
@@ -263,6 +254,7 @@ func cmdMount(args []string) int {
 			return 2
 		}
 		abs, _ := filepath.Abs(*local)
+		abs = config.RealPath(abs) // mounts are kept by their real path; see MapLocal
 		cfg, err := config.Load()
 		if err != nil {
 			return fail(err)
@@ -286,11 +278,18 @@ func cmdMount(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		// Either spelling names the mount, which is kept by its real path.
+		real := config.RealPath(abs)
 		var kept []config.Mount
 		for _, m := range cfg.Mounts {
-			if filepath.Clean(m.Local) != filepath.Clean(abs) {
+			if l := filepath.Clean(m.Local); l != filepath.Clean(abs) && l != real {
 				kept = append(kept, m)
 			}
+		}
+		if len(kept) == len(cfg.Mounts) {
+			ui.Error("no mount at %s", abs)
+			ui.Hint("aft mount list shows them")
+			return 1
 		}
 		cfg.Mounts = kept
 		if err := config.Save(cfg); err != nil {
@@ -343,11 +342,11 @@ func resolveLocalDir(cfg *config.Config, cwd string) (host, dir string, ok bool)
 		return "", "", false
 	}
 	if d.Kind == "smb" {
-		if err := transport.EnsureMaster(h); err != nil {
+		if err := connect(h); err != nil {
 			ui.Error("%v", err)
 			return "", "", false
 		}
-		if _, err := install.Ensure(h); err != nil {
+		if _, err := ensureServer(h); err != nil {
 			ui.Error("%v", err)
 			return "", "", false
 		}

@@ -9,9 +9,14 @@ import (
 
 // control handles a C0 control character in the ground state.
 func (t *Terminal) control(c byte) {
+	t.repeat = 0
 	switch c {
 	case 0x07:
 		t.Bells++
+	case 0x0E:
+		t.charset.shiftOut = true
+	case 0x0F:
+		t.charset.shiftOut = false
 	case 0x08:
 		if t.cur.Col > 0 {
 			t.cur.Col--
@@ -30,6 +35,7 @@ func (t *Terminal) control(c byte) {
 
 // escDispatch handles ESC sequences that are not CSI, OSC or DCS.
 func (t *Terminal) escDispatch(inter []byte, final byte) {
+	t.repeat = 0
 	if len(inter) > 0 {
 		switch {
 		case inter[0] == '#' && final == '8': // DECALN
@@ -39,8 +45,12 @@ func (t *Terminal) escDispatch(inter []byte, final byte) {
 					t.set(r, c, Cell{Rune: 'E', Width: 1})
 				}
 			}
+		case inter[0] == '(': // designate G0: 0 is DEC special graphics, anything else ASCII
+			t.charset.g0Graphics = final == '0'
+		case inter[0] == ')':
+			t.charset.g1Graphics = final == '0'
 		}
-		return // charset designations and the like are ignored
+		return
 	}
 	switch final {
 	case '7':
@@ -76,6 +86,10 @@ func param(params [][]int, i, def int) int {
 
 // csiDispatch handles a complete CSI sequence.
 func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final byte) {
+	// Only a printed character can be repeated: any sequence in between ends
+	// that, and CSI b itself repeats what came before it.
+	repeat := t.repeat
+	t.repeat = 0
 	if private == '?' {
 		t.csiPrivate(params, inter, final)
 		return
@@ -93,19 +107,18 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		}
 		return
 	}
-	n := param(params, 0, 1)
+	// A count is bounded by a screenful: anything larger has the same effect
+	// and would otherwise cost seconds of work for one sequence.
+	n := min(param(params, 0, 1), t.cols*t.rows)
 	switch final {
 	case '@':
 		t.gen++
 		t.insertCells(t.cur.Row, t.cur.Col, n)
 	case 'A':
-		t.cur.Row = max(t.top, t.cur.Row-n)
-		if t.cur.Row < t.top && t.cur.Row > 0 { // cursor above region moves freely
-			t.cur.Row = max(0, t.cur.Row-n)
-		}
+		t.cur.Row = t.up(n)
 		t.cur.Wrap = false
 	case 'B':
-		t.cur.Row = min(t.bot, t.cur.Row+n)
+		t.cur.Row = t.down(n)
 		t.cur.Wrap = false
 	case 'C', 'a':
 		t.cur.Col = min(t.cols-1, t.cur.Col+n)
@@ -114,11 +127,11 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		t.cur.Col = max(0, t.cur.Col-n)
 		t.cur.Wrap = false
 	case 'E':
-		t.cur.Row = min(t.bot, t.cur.Row+n)
+		t.cur.Row = t.down(n)
 		t.cur.Col = 0
 		t.cur.Wrap = false
 	case 'F':
-		t.cur.Row = max(t.top, t.cur.Row-n)
+		t.cur.Row = t.up(n)
 		t.cur.Col = 0
 		t.cur.Wrap = false
 	case 'G', '`':
@@ -149,12 +162,16 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 		t.eraseRegion(t.cur.Row, t.cur.Col, t.cur.Row, min(t.cols-1, t.cur.Col+n-1))
 	case 'Z':
 		t.backTab(n)
-	case 'b': // REP: repeat last printed character; approximated as spaces are rare, skip
+	case 'b': // REP: ncurses uses it for runs of one character
+		if repeat != 0 {
+			for ; n > 0; n-- {
+				t.print(repeat)
+			}
+		}
 	case 'c':
 		t.reply("\x1b[?62;1;2;4;6;9;15;22c")
 	case 'd':
-		t.cur.Row = min(t.rows-1, n-1)
-		t.cur.Wrap = false
+		t.moveTo(n-1, t.cur.Col) // within the region under origin mode
 	case 'g':
 		if param(params, 0, 0) == 3 {
 			for i := range t.tabs {
@@ -208,6 +225,23 @@ func (t *Terminal) csiDispatch(private byte, params [][]int, inter []byte, final
 			t.reply("\x1b[6;16;8t")
 		}
 	}
+}
+
+// up and down move the cursor by n rows, stopping at the scroll region's edge
+// when the cursor is inside the region and at the screen's edge when it is
+// outside, as a VT does.
+func (t *Terminal) up(n int) int {
+	if t.cur.Row >= t.top {
+		return max(t.top, t.cur.Row-n)
+	}
+	return max(0, t.cur.Row-n)
+}
+
+func (t *Terminal) down(n int) int {
+	if t.cur.Row <= t.bot {
+		return min(t.bot, t.cur.Row+n)
+	}
+	return min(t.rows-1, t.cur.Row+n)
 }
 
 func (t *Terminal) ansiModeState(mode int) int {
@@ -372,15 +406,16 @@ func (t *Terminal) csiKitty(private byte, params [][]int, inter []byte, final by
 // sgr applies character attributes.
 func (t *Terminal) sgr(params [][]int) {
 	a := &t.cur.Attr
+	// A hyperlink is not a character attribute: SGR 0 leaves it in place.
 	if len(params) == 0 {
-		*a = Attr{}
+		*a = Attr{Link: a.Link}
 		return
 	}
 	for i := 0; i < len(params); i++ {
 		p := params[i]
 		switch p[0] {
 		case 0:
-			*a = Attr{}
+			*a = Attr{Link: a.Link}
 		case 1:
 			a.Bold = true
 		case 2:
@@ -482,6 +517,7 @@ func extendedColor(v []int, colon bool) (Color, int) {
 
 // oscDispatch handles operating system commands.
 func (t *Terminal) oscDispatch(s []byte) {
+	t.repeat = 0
 	str := string(s)
 	code, rest, _ := strings.Cut(str, ";")
 	switch code {
@@ -511,6 +547,10 @@ func (t *Terminal) oscDispatch(s []byte) {
 		}
 	case "52":
 		t.clipboard(rest)
+	case "8":
+		// Hyperlink: OSC 8 ; params ; url opens one, an empty url ends it.
+		_, url, _ := strings.Cut(rest, ";")
+		t.cur.Attr.Link = t.linkID(url)
 	}
 }
 
@@ -541,6 +581,7 @@ func (t *Terminal) clipboard(rest string) {
 
 // dcsDispatch handles device control strings; only XTGETTCAP gets an answer.
 func (t *Terminal) dcsDispatch(private byte, params [][]int, inter []byte, final byte, s []byte) {
+	t.repeat = 0
 	if len(inter) == 1 && inter[0] == '+' && final == 'q' {
 		var ok, bad []string
 		for _, name := range strings.Split(string(s), ";") {

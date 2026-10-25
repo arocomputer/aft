@@ -1,6 +1,9 @@
 package config
 
 import (
+	"errors"
+	"github.com/arocomputer/aft/internal/home"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,31 +76,97 @@ func TestLoadRepo(t *testing.T) {
 	}
 	sub := filepath.Join(dir, "a", "b")
 	os.MkdirAll(sub, 0o755)
-	r, root, ok := LoadRepo(sub)
+	r, root, err := LoadRepo(sub)
+	ok := err == nil
 	if !ok || root != dir || r.Host != "box" || r.Dir != "/srv/x" {
 		t.Fatalf("got %+v %q %v", r, root, ok)
 	}
-	if _, _, ok := LoadRepo(t.TempDir()); ok {
+	if _, _, err := LoadRepo(t.TempDir()); err == nil {
 		t.Fatal("found aft.toml where there is none")
 	}
 }
 
-// TestFindProjectThroughSymlink finds a project turned on through a symlinked
-// path when the current directory is spelled by its real path, and maps the
-// subdirectory to the server.
+// TestFindProjectThroughSymlink finds a project, kept by its real path, from a
+// current directory spelled through a symlink, and maps the subdirectory to
+// the server.
 func TestFindProjectThroughSymlink(t *testing.T) {
-	real := t.TempDir()
+	real, _ := filepath.EvalSymlinks(t.TempDir())
 	os.MkdirAll(filepath.Join(real, "code", "app"), 0o755)
 	link := filepath.Join(t.TempDir(), "room")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skip(err)
 	}
-	st := State{Projects: map[string]Project{filepath.Join(link, "code"): {Host: "box", Dir: "/srv/code"}}}
-	root, p, ok := st.FindProject(filepath.Join(real, "code", "app"))
+	st := State{Projects: map[string]Project{filepath.Join(real, "code"): {Host: "box", Dir: "/srv/code"}}}
+	root, p, ok := st.FindProject(filepath.Join(link, "code", "app"))
 	if !ok || p.Host != "box" {
 		t.Fatalf("not found: %q %+v", root, p)
 	}
-	if got := RemoteDir(root, p, filepath.Join(real, "code", "app")); got != "/srv/code/app" {
+	if got := RemoteDir(root, p, filepath.Join(link, "code", "app")); got != "/srv/code/app" {
 		t.Fatalf("RemoteDir = %q", got)
+	}
+}
+
+// TestLoadRepoReportsABrokenFile returns the parse error for an aft.toml
+// that does not parse, instead of pretending there is none.
+func TestLoadRepoReportsABrokenFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "aft.toml"), []byte("wrapper = [nix, develop]\n"), 0o644)
+	if _, _, err := LoadRepo(dir); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// TestDefaultRemoteDirThroughASymlinkedHome maps a real-path project root
+// to ~/... when HOME itself is a symlink, as on ostree systems.
+func TestDefaultRemoteDirThroughASymlinkedHome(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip(err)
+	}
+	t.Setenv("HOME", link)
+	os.MkdirAll(filepath.Join(real, "code", "app"), 0o755)
+	if got := DefaultRemoteDir(filepath.Join(real, "code", "app")); got != "~/code/app" {
+		t.Fatalf("got %q", got)
+	}
+	if got := DefaultRemoteDir(filepath.Join(link, "..cache")); got != "~/..cache" {
+		t.Fatalf("a name starting with dots: %q", got)
+	}
+}
+
+// TestDetachByteSpellings accepts the control key in each written form,
+// including ctrl-^ itself.
+func TestDetachByteSpellings(t *testing.T) {
+	for in, want := range map[string]byte{"ctrl-]": 0x1d, "^]": 0x1d, "ctrl-^": 0x1e, "^^": 0x1e, "ctrl-a": 1, "": 0} {
+		if got, err := DetachByte(in); err != nil || got != want {
+			t.Errorf("DetachByte(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+}
+
+// TestLoadRefusesAHostWithoutSSH rejects a host table with no destination,
+// which would otherwise stand for this machine.
+func TestLoadRefusesAHostWithoutSSH(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	os.MkdirAll(home.Dir(), 0o700)
+	os.WriteFile(Path(), []byte("[host.box]\nports = \"4000-4100\"\n"), 0o600)
+	if _, err := Load(); err == nil {
+		t.Fatal("a host without ssh was accepted")
+	}
+}
+
+// TestFindProjectWithARootSpelledThroughASymlink finds a project whose root
+// an older aft stored by its symlink spelling, from inside its real path.
+func TestFindProjectWithARootSpelledThroughASymlink(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "room")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip(err)
+	}
+	os.MkdirAll(filepath.Join(real, "app"), 0o755)
+	st := State{Projects: map[string]Project{link: {Host: "box", Dir: "/srv/room"}}}
+	root, _, ok := st.FindProject(filepath.Join(real, "app"))
+	if !ok || root != link {
+		t.Fatalf("got %q ok=%v", root, ok)
 	}
 }

@@ -2,4 +2,5 @@
 /dist/
 __pycache__/
 *.pyc
-/internal/session/install/embed/server-*
+/internal/session/install/embed/aft-server-*
+/aft

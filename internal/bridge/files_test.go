@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"github.com/arocomputer/aft/internal/home"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,7 +15,7 @@ import (
 // directory is private, and that a name cannot escape it.
 func TestStoreKeepsPastedFilePrivate(t *testing.T) {
 	t.Setenv("AFT_HOME", t.TempDir())
-	path, err := Store("Screen Recording.mov", strings.NewReader("video"))
+	path, err := Store("Screen Recording.mov", int64(len("video")), strings.NewReader("video"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +29,7 @@ func TestStoreKeepsPastedFilePrivate(t *testing.T) {
 	if fi, _ := os.Stat(tmp); fi.Mode().Perm() != 0o700 {
 		t.Fatalf("temp directory mode %v", fi.Mode().Perm())
 	}
-	if _, err := Store("../escape", strings.NewReader("x")); err == nil {
+	if _, err := Store("../escape", int64(len("x")), strings.NewReader("x")); err == nil {
 		t.Fatal("a name with a path must be refused")
 	}
 }
@@ -36,10 +37,10 @@ func TestStoreKeepsPastedFilePrivate(t *testing.T) {
 // TestStorePrunesOldFiles checks that pasted files older than a week go.
 func TestStorePrunesOldFiles(t *testing.T) {
 	t.Setenv("AFT_HOME", t.TempDir())
-	old, _ := Store("old.png", strings.NewReader("x"))
+	old, _ := Store("old.png", int64(len("x")), strings.NewReader("x"))
 	week := time.Now().Add(-8 * 24 * time.Hour)
 	os.Chtimes(filepath.Dir(old), week, week)
-	if _, err := Store("new.png", strings.NewReader("x")); err != nil {
+	if _, err := Store("new.png", int64(len("x")), strings.NewReader("x")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
@@ -57,7 +58,7 @@ func TestPastedFilesReadsTerminalPaths(t *testing.T) {
 	for _, p := range []string{a, b} {
 		os.WriteFile(p, []byte("x"), 0o600)
 	}
-	got, ok := PastedFiles(shellEscape(a) + " '" + b + "' ")
+	got, ok := PastedFiles(Escape(a) + " '" + b + "' ")
 	if !ok || !reflect.DeepEqual(got, []string{a, b}) {
 		t.Fatalf("got %q ok=%v", got, ok)
 	}
@@ -79,5 +80,84 @@ func TestPastedFilesLeavesTextAlone(t *testing.T) {
 		if _, ok := PastedFiles(body); ok {
 			t.Errorf("rewrote %q", body)
 		}
+	}
+}
+
+// TestPastedFilesKeepsMacNarrowSpace reads a dragged screen recording, whose
+// macOS name has a narrow no-break space before PM that terminals do not
+// escape, as one file.
+func TestPastedFilesKeepsMacNarrowSpace(t *testing.T) {
+	dir := t.TempDir()
+	name := "Screen Recording 2026-10-24 at 12.00.12 PM.mov"
+	os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600)
+	paste := strings.ReplaceAll(filepath.Join(dir, name), " ", `\ `)
+	got, ok := PastedFiles(paste)
+	if !ok || len(got) != 1 || filepath.Base(got[0]) != name {
+		t.Fatalf("PastedFiles(%q) = %q, %v", paste, got, ok)
+	}
+	// Pasted back to the app, the name is escaped as a terminal would: only
+	// the ordinary space gets a backslash.
+	if e := Escape(name); strings.Contains(e, "\\\u202f") || !strings.Contains(e, `Screen\ Recording`) {
+		t.Fatalf("Escape(%q) = %q", name, e)
+	}
+}
+
+// TestDroppable copies files dropped from home or a temporary directory, and
+// leaves system paths, which likely name files on the server, as text.
+func TestDroppable(t *testing.T) {
+	h, _ := os.UserHomeDir()
+	for p, want := range map[string]bool{
+		filepath.Join(h, "Desktop", "a.png"):   true,
+		filepath.Join(os.TempDir(), "rec.mov"): true,
+		"/etc/nginx/nginx.conf":                false,
+		"/usr/local/bin/tool":                  false,
+	} {
+		if got := Droppable(p); got != want {
+			t.Errorf("Droppable(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// TestStoreDropsAShortUpload keeps nothing of an upload the client cut
+// short: the file would otherwise sit truncated for a week.
+func TestStoreDropsAShortUpload(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	if _, err := Store("big.mov", 10, strings.NewReader("short")); err == nil {
+		t.Fatal("a truncated upload was kept")
+	}
+	entries, _ := os.ReadDir(filepath.Join(home.Temp(), "clipboard"))
+	if len(entries) != 0 {
+		t.Fatalf("left %d directories behind", len(entries))
+	}
+}
+
+// TestSplitWordsKeepsABackslashInQuotes treats a backslash inside double
+// quotes as the shell does: an escape only before the characters it can
+// escape there, otherwise a character of the name.
+func TestSplitWordsKeepsABackslashInQuotes(t *testing.T) {
+	words, ok := splitWords(`"/tmp/a\b.txt" "say \"hi\""`)
+	if !ok || len(words) != 2 || words[0] != `/tmp/a\b.txt` || words[1] != `say "hi"` {
+		t.Fatalf("got %q ok=%v", words, ok)
+	}
+}
+
+// TestForgetRemovesOnlyPastedFiles removes a stored paste with its directory
+// and refuses any other path.
+func TestForgetRemovesOnlyPastedFiles(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	path, err := Store("a.png", 1, strings.NewReader("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Forget(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); err == nil {
+		t.Fatal("the paste's directory is still there")
+	}
+	other := filepath.Join(t.TempDir(), "keep.txt")
+	os.WriteFile(other, []byte("x"), 0o600)
+	if err := Forget(other); err == nil {
+		t.Fatal("a file outside the clipboard directory was removed")
 	}
 }

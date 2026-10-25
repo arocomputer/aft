@@ -2,7 +2,10 @@ package terminal
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -58,9 +61,11 @@ func isPasteKey(b []byte) bool {
 	return err == nil && m > 0 && (m-1)&(4|8) != 0
 }
 
-// startUpload begins uploading the files named by a paste token and returns
-// true, or returns false when the paste is not a list of local files and
-// should be sent as is. The result arrives on c.uploads; keys typed meanwhile
+// startUpload handles a paste token that names local files and returns true;
+// it returns false when the paste should be sent as is: not a list of local
+// files, or one naming a path outside where files are dropped from. Files on
+// a mounted folder are pasted as their server paths at once. Others upload in
+// the background: the result arrives on c.uploads, and keys typed meanwhile
 // are held, so the input loop never waits on the network.
 func (c *session) startUpload(t Token) bool {
 	if c.o.Host.IsLocal() || !bytes.HasSuffix(t.Bytes, pasteEnd) {
@@ -71,35 +76,88 @@ func (c *session) startUpload(t Token) bool {
 	if !ok {
 		return false
 	}
-	c.holding = true
-	if len(paths) == 1 {
-		c.title("aft · uploading " + filepath.Base(paths[0]))
-	} else {
-		c.title(fmt.Sprintf("aft · uploading %d files", len(paths)))
+	// A file on a mounted folder is already on the server: name it there.
+	// Only files from where people drop them are copied; any other path is
+	// left as typed, since it may name a file on the server.
+	server := make([]string, len(paths))
+	var send []string
+	for i, p := range paths {
+		if c.o.ServerPath != nil {
+			if sp, ok := c.o.ServerPath(p); ok {
+				server[i] = bridge.Escape(sp)
+				continue
+			}
+		}
+		if !bridge.Droppable(p) {
+			return false
+		}
+		send = append(send, p)
 	}
+	join := func(remote []string) []byte {
+		for i, j := 0, 0; i < len(server); i++ {
+			if server[i] == "" {
+				server[i], j = remote[j], j+1
+			}
+		}
+		trimmed := strings.TrimSpace(body)
+		at := strings.Index(body, trimmed)
+		return append([]byte(body[:at]+strings.Join(server, " ")+body[at+len(trimmed):]), pasteEnd...)
+	}
+	if len(send) == 0 {
+		c.send(proto.Input, join(nil))
+		return true
+	}
+	c.holding = true
+	what := filepath.Base(send[0])
+	if len(send) > 1 {
+		what = fmt.Sprintf("%d files", len(send))
+	}
+	c.notice("aft - uploading " + what + " - Ctrl-C cancels")
+	ctx, cancel := context.WithCancel(context.Background())
+	c.uploadCtx, c.cancelUpload = ctx, cancel
 	host := c.o.Host
 	go func() {
-		remote, err := bridge.Upload(host, paths)
+		defer cancel()
+		remote, err := bridge.Upload(ctx, host, send)
 		if err != nil {
 			c.uploads <- uploadResult{paste: t.Bytes, err: err}
 			return
 		}
-		trimmed := strings.TrimSpace(body)
-		i := strings.Index(body, trimmed)
-		paste := body[:i] + strings.Join(remote, " ") + body[i+len(trimmed):]
-		c.uploads <- uploadResult{paste: append([]byte(paste), pasteEnd...)}
+		c.uploads <- uploadResult{paste: join(remote)}
 	}()
 	return true
 }
 
+// uploading reports whether an upload is still running, so a Ctrl-C can
+// still cancel it; once it has finished, Ctrl-C is an ordinary held key.
+func (c *session) uploading() bool { return c.uploadCtx != nil && c.uploadCtx.Err() == nil }
+
 // finishUpload sends the paste an upload produced and then the keys held
 // while it ran. It returns false when a held key asks the client to leave.
 func (c *session) finishUpload(u uploadResult) bool {
-	c.holding = false
+	c.holding, c.cancelled = false, false
+	c.uploadCtx, c.cancelUpload = nil, nil
+	if c.noticeUp {
+		c.pred.RestoreRow(0)
+		c.noticeUp = false
+	}
+	if errors.Is(u.err, context.Canceled) {
+		// Ctrl-C: the user took the paste back. Its start marker has gone
+		// out already, so close it with nothing in between, or the app would
+		// take every later key as pasted text.
+		c.send(proto.Input, pasteEnd)
+		c.flash("aft - upload cancelled")
+		held := c.held
+		c.held = nil
+		return c.handleKeys(held)
+	}
 	if u.err != nil {
-		c.title("aft · paste upload failed: " + u.err.Error())
-	} else {
-		c.title(c.pred.Title())
+		// The original paste goes through; say why it is a local path.
+		msg := "aft - could not send the pasted file to " + c.o.Host.Name + ": " + u.err.Error()
+		if errors.Is(u.err, fs.ErrPermission) {
+			msg = "aft - macOS would not let this terminal read the pasted file - give the terminal app Full Disk Access, or paste the saved file"
+		}
+		c.flash(msg)
 	}
 	c.pastedAt = time.Now() // the agent may read the pasted file's clipboard now
 	c.send(proto.Input, u.paste)

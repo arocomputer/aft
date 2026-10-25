@@ -1,6 +1,7 @@
-// server is the small binary Aft installs on a session. It starts and
-// attaches sessions, answers doctor, and, when invoked through one of the shim
-// symlinks, bridges a remote application to the user's machine.
+// aft-server is the small binary Aft installs on a host, as mosh-server is to
+// mosh. It starts and attaches sessions, answers doctor, and, when invoked
+// through one of the shim symlinks, bridges a remote application to the
+// user's machine.
 package main
 
 import (

@@ -24,12 +24,14 @@ aft tools add git gh       # commands that run on the server, once each
 ```
 
 **Agents and tools.** An agent, such as `claude`, starts in a session: it
-survives disconnects and you reattach to it. A tool, such as `git` or `gh`,
-runs once: in a project that is on, `git status` runs on the server in the
-matching directory over the shared connection, with your terminal or your
-pipes, and returns the command's exit code. Elsewhere it runs the local
-command. Tools are opt-in, since a launcher sits in front of every call to that
-name on the machine.
+survives disconnects and you reattach to it. Launch it again in the same
+folder while it runs and aft asks whether to attach to that session or start a
+new one; `existing` in the config makes that choice once for good. A tool,
+such as `git` or `gh`, runs once: in a project that is on, `git status` runs on
+the server in the matching directory over the shared connection, with your
+terminal or your pipes, and returns the command's exit code. Elsewhere it runs
+the local command. Tools are opt-in, since a launcher sits in front of every
+call to that name on the machine.
 
 Setup creates launchers for `claude`, `codex`, `opencode`, `pi`, `gemini`,
 `amp`, `aider` and `goose`. Edit `agents` in the config to change the list.
@@ -39,6 +41,9 @@ Agent accounts and configuration live on the server, including logins,
 the agent's normal login flow; the login URL opens in your local browser and
 any callback port is mirrored to your machine.
 
-`aft doctor` checks that the launchers are first on `PATH`, that each server
-has the server and the agents you expect, and that the shell block is in
-place.
+`aft doctor` checks that the launchers are first on `PATH`, or will be in new
+shells, that each server has the server and the agents you expect, and that
+the shell block is in place.
+
+`aft completion zsh` (or `bash`, `fish`) prints a completion script that
+completes commands, hosts and session names.

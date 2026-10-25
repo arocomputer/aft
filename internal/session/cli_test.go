@@ -2,7 +2,9 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -36,6 +38,9 @@ func isolate(t *testing.T) {
 	t.Setenv("AFT_HOME", dir)
 	t.Setenv("AFT_TEST_AS_SERVER", "1")
 	t.Setenv("SHELL", "/bin/sh")
+	// Sessions run through the login shell, which reads the profile; a
+	// developer's own dotfiles must not print into a test's screen.
+	t.Setenv("HOME", dir)
 }
 
 type conn struct {
@@ -241,7 +246,7 @@ func TestNewIDSkipsNamesInUse(t *testing.T) {
 
 // TestCleanTitle drops the status glyph an agent puts before its title.
 func TestCleanTitle(t *testing.T) {
-	for in, want := range map[string]string{"✳ Fix login": "Fix login", "⠐ Fix login": "Fix login", "zsh": "zsh", "": ""} {
+	for in, want := range map[string]string{"✳ Fix login": "Fix login", "⠐ Fix login": "Fix login", "zsh": "zsh", "~/room/code": "~/room/code", "[1] build": "[1] build", "": ""} {
 		if got := cleanTitle(in); got != want {
 			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, want)
 		}
@@ -301,5 +306,319 @@ func TestEndingUnseenLeavesRemains(t *testing.T) {
 	}
 	if len(Remains()) != 0 {
 		t.Fatal("remains were not cleared after being shown")
+	}
+}
+
+// TestNewIDSkipsEndedNames keeps the name of a session that ended unseen, so
+// a new one never shares it with remains that kill would forget instead.
+func TestNewIDSkipsEndedNames(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	home.Ensure()
+	for _, n := range names[1:] {
+		writeJSON(RecordPath(n), Record{ID: n, Server: os.Getpid(), PID: os.Getpid()})
+	}
+	leaveRemains(Record{ID: names[0]}, Ending{At: time.Now().UTC().Format(time.RFC3339)})
+	if id := NewID(); id == names[0] {
+		t.Fatalf("reused %q, which an ended session still holds", id)
+	}
+}
+
+// TestGoneSessionSaysSo reaches for a session that is not running: attach
+// answers in the client's protocol and udp answers gone, so a client stops
+// instead of reconnecting, and says why.
+func TestGoneSessionSaysSo(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	leaveRemains(Record{ID: "fox"}, Ending{At: time.Now().UTC().Format(time.RFC3339), Code: 1})
+	var out bytes.Buffer
+	Main(nil, []string{"attach", "fox"}, strings.NewReader(""), &out, io.Discard)
+	f, err := proto.Read(bufio.NewReader(&out))
+	if err != nil || f.Type != proto.Error || !strings.Contains(string(f.Payload), "aft attach fox") {
+		t.Fatalf("attach answered %x %q %v", f.Type, f.Payload, err)
+	}
+	out.Reset()
+	Main(nil, []string{"udp", "fox"}, nil, &out, io.Discard)
+	var got struct{ Gone, Remains bool }
+	if json.Unmarshal(out.Bytes(), &got) != nil || !got.Gone || !got.Remains {
+		t.Fatalf("udp answered %q", out.String())
+	}
+}
+
+// TestStaleOrMissingSocketIsNotRunning treats a missing socket and one left
+// behind by a session that died (its connection is refused) as not running,
+// which the client turns into "gone"; other dial failures are not.
+func TestStaleOrMissingSocketIsNotRunning(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	var gone notRunning
+	if _, err := dial("nobody"); !errors.As(err, &gone) {
+		t.Fatalf("missing socket: %v, want not running", err)
+	}
+	// A session that died leaves its socket file behind, which refuses.
+	ln, err := net.Listen("unix", SocketPath("stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	if _, err := dial("stale"); !errors.As(err, &gone) {
+		t.Fatalf("stale socket: %v, want not running", err)
+	}
+}
+
+// TestNewIDClaimsTheName makes two names picked back to back differ, because
+// each is claimed by its record file the moment it is picked.
+func TestNewIDClaimsTheName(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	a, b := NewID(), NewID()
+	if a == b {
+		t.Fatalf("both sessions were named %q", a)
+	}
+	for _, id := range []string{a, b} {
+		if fi, err := os.Stat(RecordPath(id)); err != nil || fi.Size() != 0 {
+			t.Fatalf("%s is not claimed by an empty record: %v", id, err)
+		}
+	}
+}
+
+// TestRenameFollowsTheSession renames a running session: the new name lists
+// and answers, the old one is gone, the attached terminal is told, and a name
+// in use is refused.
+func TestRenameFollowsTheSession(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := Options{ID: "t-old", Command: []string{"sh", "-c", "printf 'r> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-old", proto.End) // harmless once renamed
+	other := Options{ID: "t-taken", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, other); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-taken", proto.End)
+	a := attach(t, "t-old", 40, 10)
+	a.read(t)
+	a.collect(t, "r>")
+	if err := Rename("t-old", "t-taken"); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("a name in use was given away: %v", err)
+	}
+	if err := Rename("t-old", "t-new"); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-new", proto.End)
+	if f := a.read(t); f.Type != proto.Renamed || string(f.Payload) != "t-new" {
+		t.Fatalf("attached client got %x %q, want Renamed t-new", f.Type, f.Payload)
+	}
+	if r, err := Load("t-new"); err != nil || r.ID != "t-new" {
+		t.Fatalf("new record: %+v %v", r, err)
+	}
+	if _, err := Load("t-old"); err == nil {
+		t.Fatal("old record still there")
+	}
+	if _, err := OfferUDP("t-new"); err != nil {
+		t.Fatalf("new name does not answer: %v", err)
+	}
+	if err := Control("t-old", proto.Ping); err == nil {
+		t.Fatal("old name still answers")
+	}
+}
+
+// TestReuseComesBackToTheSameProgram makes udp --reuse answer with the session
+// already running the same program in the same directory, and start a new one
+// for another program or directory.
+func TestReuseComesBackToTheSameProgram(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	dir := t.TempDir()
+	o := Options{ID: "t-first", Command: []string{"sleep", "30"}, Dir: dir, Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-first", proto.End)
+	ask := func(args ...string) (id string, reused bool) {
+		var out strings.Builder
+		if code := Main([]string{self}, append([]string{"udp", "--reuse", "--cols", "40", "--rows", "10"}, args...), nil, &out, io.Discard); code != 0 {
+			t.Fatalf("udp exited %d", code)
+		}
+		var got struct {
+			ID     string `json:"id"`
+			Reused bool   `json:"reused"`
+		}
+		json.Unmarshal([]byte(out.String()), &got)
+		return got.ID, got.Reused
+	}
+	if id, reused := ask("--dir", dir, "sleep", "30"); id != "t-first" || !reused {
+		t.Fatalf("same program here: got %s reused=%v", id, reused)
+	}
+	id, reused := ask("--dir", dir, "sh", "-c", "sleep 30")
+	if id == "t-first" || id == "" || reused {
+		t.Fatalf("another program here: got %s reused=%v", id, reused)
+	}
+	Control(id, proto.End)
+	id, reused = ask("--dir", t.TempDir(), "sleep", "30")
+	if id == "t-first" || id == "" || reused {
+		t.Fatalf("same program elsewhere: got %s reused=%v", id, reused)
+	}
+	Control(id, proto.End)
+}
+
+// TestTakeoverNamesTheMachine tells a replaced client which machine took the
+// session, when the new client said where it is.
+func TestTakeoverNamesTheMachine(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	o := Options{ID: "t-from", Command: []string{"sh", "-c", "printf 'f> '; sleep 30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}
+	if err := Start([]string{self}, o); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-from", proto.End)
+	a := attach(t, "t-from", 40, 10)
+	a.read(t)
+	a.collect(t, "f>")
+	b := attach(t, "t-from", 40, 10)
+	proto.Write(b.c, proto.From, []byte("laptop"))
+	b.read(t)
+	for {
+		f := a.read(t)
+		if f.Type == proto.Detached {
+			if string(f.Payload) != "laptop" {
+				t.Fatalf("told %q, want laptop", f.Payload)
+			}
+			break
+		}
+	}
+}
+
+// TestMuteSessionIsExplained turns a request a session never answers, as one
+// from an older server does with a frame it does not know, into a sentence
+// rather than an I/O timeout.
+func TestMuteSessionIsExplained(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	ln, err := net.Listen("unix", SocketPath("t-mute"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // hold it open, say nothing
+		}
+	}()
+	err = Rename("t-mute", "t-loud")
+	if err == nil || !strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// TestRenamedSessionLeavesTheOldNameAlone renames a session, gives its old
+// name to a new session, and ends the renamed one: the new session's socket
+// must survive, since the listener was told not to unlink the name it had.
+func TestRenamedSessionLeavesTheOldNameAlone(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	if err := Start([]string{self}, Options{ID: "t-name", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rename("t-name", "t-moved"); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-moved", proto.End)
+	if err := Start([]string{self}, Options{ID: "t-name", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-name", proto.End)
+	Control("t-moved", proto.End)
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if _, err := Load("t-moved"); err != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := Control("t-name", proto.Ping); err != nil {
+		t.Fatalf("the new session under the old name is unreachable: %v", err)
+	}
+}
+
+// TestServeRefusesANameInUseWithoutHarm starts a session under a name that
+// is running: it is refused, and the running session's record is untouched.
+func TestServeRefusesANameInUseWithoutHarm(t *testing.T) {
+	isolate(t)
+	self, _ := os.Executable()
+	if err := Start([]string{self}, Options{ID: "t-busy", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-busy", proto.End)
+	before, _ := Load("t-busy")
+	if err := Serve(Options{ID: "t-busy", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("second serve: %v", err)
+	}
+	after, err := Load("t-busy")
+	if err != nil || after.Server != before.Server {
+		t.Fatalf("the running session's record changed: %+v -> %+v (%v)", before, after, err)
+	}
+}
+
+// TestStartClearsAStaleSocket starts a session under a name whose previous
+// session died leaving its socket: the new one listens and answers.
+func TestStartClearsAStaleSocket(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	ln, err := net.Listen("unix", SocketPath("t-stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	self, _ := os.Executable()
+	if err := Start([]string{self}, Options{ID: "t-stale", Command: []string{"sleep", "30"}, Dir: t.TempDir(), Cols: 40, Rows: 10}); err != nil {
+		t.Fatal(err)
+	}
+	defer Control("t-stale", proto.End)
+	if err := Control("t-stale", proto.Ping); err != nil {
+		t.Fatalf("not reachable: %v", err)
+	}
+}
+
+// TestNewIDGivesUpOnAnUnwritableDirectory returns a name instead of
+// spinning when no claim can be written; Serve then reports the error.
+func TestNewIDGivesUpOnAnUnwritableDirectory(t *testing.T) {
+	isolate(t)
+	home.Ensure()
+	if err := os.Chmod(home.Sessions(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(home.Sessions(), 0o700)
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	done := make(chan string, 1)
+	go func() { done <- NewID() }()
+	select {
+	case id := <-done:
+		if id == "" {
+			t.Fatal("no name")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("NewID did not return")
+	}
+}
+
+// TestFishLoginShell runs the application through fish with fish syntax.
+func TestFishLoginShell(t *testing.T) {
+	t.Setenv("SHELL", "/usr/local/bin/fish")
+	cmd := buildCommand(nil, []string{"claude", "--resume"})
+	if cmd.Args[0] != "/usr/local/bin/fish" || !strings.Contains(cmd.Args[3], "exec $argv") || cmd.Args[4] != "claude" {
+		t.Fatalf("args %q", cmd.Args)
+	}
+	t.Setenv("SHELL", "/bin/zsh")
+	cmd = buildCommand(nil, []string{"claude"})
+	if !strings.Contains(cmd.Args[3], `exec "$0" "$@"`) {
+		t.Fatalf("args %q", cmd.Args)
 	}
 }

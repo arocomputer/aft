@@ -23,6 +23,7 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -55,9 +56,13 @@ func config() *quic.Config {
 
 // Listener accepts clients that present the session's token.
 type Listener struct {
-	ln    *quic.Listener
-	token []byte
-	Offer Offer
+	ln       *quic.Listener
+	token    []byte
+	Offer    Offer
+	admitted chan net.Conn
+	done     chan struct{} // closed by Close
+	once     sync.Once
+	open     sync.WaitGroup // connections admitted and not yet closed
 }
 
 // Listen opens a listener on a free port in the mosh range, with a fresh
@@ -76,23 +81,48 @@ func Listen() (*Listener, error) {
 		if err != nil {
 			continue
 		}
-		return &Listener{ln: ln, token: token, Offer: Offer{Port: port, Cert: sum, Token: hex.EncodeToString(token)}}, nil
+		l := &Listener{ln: ln, token: token, Offer: Offer{Port: port, Cert: sum, Token: hex.EncodeToString(token)}, admitted: make(chan net.Conn), done: make(chan struct{})}
+		go l.serve()
+		return l, nil
 	}
 	return nil, errors.New("no free UDP port in 60000-61000")
 }
 
-// Accept returns the next client stream whose token matches. It drops any
-// connection that does not present the token within a few seconds.
-func (l *Listener) Accept() (net.Conn, error) {
+// serve checks each connection's token on its own, so one that never sends
+// it cannot hold up the next. It ends when the listener closes.
+func (l *Listener) serve() {
+	// However accepting ends, Accept must report it rather than wait.
+	defer l.Close()
 	for {
 		c, err := l.ln.Accept(context.Background())
 		if err != nil {
-			return nil, err
+			return
 		}
-		if s, err := l.admit(c); err == nil {
-			return s, nil
-		}
-		c.CloseWithError(1, "not admitted")
+		go func() {
+			s, err := l.admit(c)
+			if err != nil {
+				c.CloseWithError(1, "not admitted")
+				return
+			}
+			select {
+			case l.admitted <- s:
+			case <-c.Context().Done():
+				s.Close() // the client left before Accept took it; let Drain know
+			case <-l.done:
+				s.Close()
+			}
+		}()
+	}
+}
+
+// Accept returns the next client stream whose token matched. Any connection
+// that does not present the token within a few seconds is dropped.
+func (l *Listener) Accept() (net.Conn, error) {
+	select {
+	case s := <-l.admitted:
+		return s, nil
+	case <-l.done:
+		return nil, net.ErrClosed
 	}
 }
 
@@ -109,11 +139,28 @@ func (l *Listener) admit(c *quic.Conn) (net.Conn, error) {
 		return nil, errors.New("bad token")
 	}
 	s.SetReadDeadline(time.Time{})
-	return &conn{Stream: s, c: c}, nil
+	l.open.Add(1)
+	return &conn{Stream: s, c: c, closed: l.open.Done}, nil
+}
+
+// Drain waits, up to timeout, for every admitted connection to close, so
+// what was last written to them, such as the frame saying the application
+// exited, is delivered and acknowledged before the process ends. A lost
+// datagram is retransmitted only while the process lives.
+func (l *Listener) Drain(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() { l.open.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 // Close stops accepting; streams already open keep running.
-func (l *Listener) Close() error { return l.ln.Close() }
+func (l *Listener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return l.ln.Close()
+}
 
 // Dial connects to a session's listener on host and presents the token.
 func Dial(host string, o Offer) (net.Conn, error) {
@@ -156,9 +203,12 @@ func Dial(host string, o Offer) (net.Conn, error) {
 }
 
 // conn makes one QUIC stream a net.Conn; closing it closes the connection.
+// Close may be called more than once.
 type conn struct {
 	*quic.Stream
-	c *quic.Conn
+	c      *quic.Conn
+	closed func() // tells the listener the connection is gone, if it has one
+	once   sync.Once
 }
 
 func (c *conn) LocalAddr() net.Addr  { return c.c.LocalAddr() }
@@ -169,14 +219,20 @@ func (c *conn) RemoteAddr() net.Addr { return c.c.RemoteAddr() }
 // has hung up or a moment has passed. Closing the connection at once would
 // discard data still in flight.
 func (c *conn) Close() error {
-	err := c.Stream.Close()
-	go func() {
-		select {
-		case <-c.c.Context().Done():
-		case <-time.After(3 * time.Second):
-		}
-		c.c.CloseWithError(0, "")
-	}()
+	var err error
+	c.once.Do(func() {
+		err = c.Stream.Close()
+		go func() {
+			select {
+			case <-c.c.Context().Done():
+			case <-time.After(3 * time.Second):
+			}
+			c.c.CloseWithError(0, "")
+			if c.closed != nil {
+				c.closed()
+			}
+		}()
+	})
 	return err
 }
 

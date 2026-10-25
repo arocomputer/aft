@@ -13,7 +13,7 @@ started remotely opens at `localhost:3000` in your local browser, and a login
 callback to `localhost` reaches the application on the server.
 
 ```sh
-aft status             # what is mirrored right now, under Ports
+aft status             # what is mirrored right now
 ```
 
 The default range is `3000-9999`; set `ports.mirror` in the config or a

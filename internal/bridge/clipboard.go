@@ -98,14 +98,23 @@ func macImage() ([]byte, error) {
 	path := f.Name()
 	f.Close()
 	defer os.Remove(path)
+	// Browsers and Preview often put only a TIFF on the pasteboard; sips
+	// turns it into the PNG the application asked for.
 	script := fmt.Sprintf(`set f to open for access POSIX file %q with write permission
+set eof f to 0
 try
-  set eof f to 0
   write (the clipboard as «class PNGf») to f
+on error
+  write (the clipboard as «class TIFF») to f
 end try
 close access f`, path)
 	if _, err := run("osascript", "-e", script); err != nil {
 		return nil, fmt.Errorf("no image on the clipboard")
+	}
+	if head, err := os.ReadFile(path); err == nil && len(head) >= 4 && !bytes.HasPrefix(head, []byte("\x89PNG")) {
+		if _, err := run("sips", "-s", "format", "png", path, "--out", path); err != nil {
+			return nil, fmt.Errorf("no image on the clipboard")
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {

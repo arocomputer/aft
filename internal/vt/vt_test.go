@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func feed(t *testing.T, term *Terminal, s string) {
@@ -277,5 +278,213 @@ func TestSnapshot(t *testing.T) {
 	// Cursor is on the last visible row (index 3) after "fourAB".
 	if snap.CursorRow != 3 || snap.CursorCol != 6 {
 		t.Fatalf("cursor at %d,%d", snap.CursorRow, snap.CursorCol)
+	}
+}
+
+// TestRenderBlankRowAfterColoredRow repaints a row colored to its last
+// column, as a full-width bar is, followed by an empty one: the empty row must
+// come out in default colors, not erased in the color the row above left in
+// the pen.
+func TestRenderBlankRowAfterColoredRow(t *testing.T) {
+	a := New(10, 3)
+	feed(t, a, "\x1b[44m          \x1b[0m")
+	b := New(10, 3)
+	b.Write(a.Render(RenderOptions{}))
+	if got := b.Cell(1, 0).Attr; got != (Attr{}) {
+		t.Fatalf("blank row painted with %+v", got)
+	}
+	if got := b.Cell(0, 0).Attr.BG; got != (Color{Kind: ColorIndexed, Index: 4}) {
+		t.Fatalf("the colored row has background %+v, want blue", got)
+	}
+}
+
+// TestCursorMovesFreelyOutsideTheRegion keeps CUU and CUD inside the scroll
+// region when the cursor is in it, and lets a cursor placed outside it move
+// over the rest of the screen, as on a VT.
+func TestCursorMovesFreelyOutsideTheRegion(t *testing.T) {
+	v := New(20, 10)
+	feed(t, v, "\x1b[3;6r\x1b[9;1H\x1b[2B") // region rows 3-6; cursor on row 9, down 2
+	if r := v.Cursor().Row; r != 9 {
+		t.Fatalf("below the region, down moved to row %d, want 9 (the last row)", r)
+	}
+	feed(t, v, "\x1b[1A")
+	if r := v.Cursor().Row; r != 8 {
+		t.Fatalf("below the region, up moved to row %d, want 8", r)
+	}
+	feed(t, v, "\x1b[4;1H\x1b[5A")
+	if r := v.Cursor().Row; r != 2 {
+		t.Fatalf("inside the region, up stopped at row %d, want 2 (its top)", r)
+	}
+}
+
+// TestRepeatPrintsTheLastCharacter handles CSI b, which ncurses emits for
+// runs of one character; after a cursor move there is nothing to repeat.
+func TestRepeatPrintsTheLastCharacter(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "ab\x1b[3b")
+	if got := v.Line(0); got != "abbbb" {
+		t.Fatalf("got %q, want abbbb", got)
+	}
+	feed(t, v, "\x1b[1;1H\x1b[2b")
+	if got := v.Line(0); got != "abbbb" {
+		t.Fatalf("a repeat after a cursor move printed: %q", got)
+	}
+}
+
+// TestLineDrawingCharset maps the DEC special graphics set that smacs
+// selects, switches with SO and SI, and survives a repaint mid-box.
+func TestLineDrawingCharset(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "\x1b(0lqk\x1b(Bx")
+	if got := v.Line(0); got != "┌─┐x" {
+		t.Fatalf("G0 graphics: got %q", got)
+	}
+	feed(t, v, "\x1b)0\x0emq\x0fq")
+	if got := v.Line(0); got != "┌─┐x└─q" {
+		t.Fatalf("G1 via shift out: got %q", got)
+	}
+	feed(t, v, "\x0e")
+	again := New(20, 2)
+	again.Write(v.Render(RenderOptions{}))
+	again.Write([]byte("j"))
+	if got := again.Line(0); got != "┌─┐x└─q┘" {
+		t.Fatalf("after a repaint the shifted-in set was lost: %q", got)
+	}
+}
+
+// TestHyperlinksSurviveARepaint keeps OSC 8 links on their cells, unaffected
+// by SGR resets, and a repaint restores them, so a link stays clickable after
+// a reattach.
+func TestHyperlinksSurviveARepaint(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "\x1b]8;;https://a.test/x\x1b\\\x1b[1mlink\x1b[0m\x1b]8;;\x1b\\ plain")
+	if u := v.LinkURL(v.Cell(0, 3).Attr.Link); u != "https://a.test/x" {
+		t.Fatalf("link cell has %q", u)
+	}
+	if v.Cell(0, 5).Attr.Link != 0 {
+		t.Fatal("the link ran past its end")
+	}
+	again := New(20, 2)
+	again.Write(v.Render(RenderOptions{}))
+	if u := again.LinkURL(again.Cell(0, 0).Attr.Link); u != "https://a.test/x" {
+		t.Fatalf("after a repaint the link is %q", u)
+	}
+	if again.Cell(0, 6).Attr.Link != 0 || again.Line(0) != "link plain" {
+		t.Fatalf("after a repaint: %q, link on plain text %v", again.Line(0), again.Cell(0, 6).Attr.Link != 0)
+	}
+}
+
+// TestRepaintResetsWhatTheLastOneLeft sends two repaints to one terminal:
+// the first leaves it in graphics mode mid-box, and the second must still
+// paint letters as letters.
+func TestRepaintResetsWhatTheLastOneLeft(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "hi\x1b(0lq")
+	real := New(20, 2)
+	feed(t, real, string(v.Render(RenderOptions{})))
+	feed(t, real, string(v.Render(RenderOptions{})))
+	if got := real.Line(0); got != "hi┌─" {
+		t.Fatalf("second repaint: %q", got)
+	}
+}
+
+// TestRepeatIsEndedByAnySequence clears the repeatable character after a
+// private mode, an OSC and an intermediate-byte sequence, not only after CUP.
+func TestRepeatIsEndedByAnySequence(t *testing.T) {
+	for _, between := range []string{"\x1b[?25l", "\x1b]0;t\x1b\\", "\x1b[2 q", "\x1b[>1u"} {
+		v := New(20, 2)
+		feed(t, v, "ab"+between+"\x1b[3b")
+		if got := v.Line(0); got != "ab" {
+			t.Errorf("after %q: %q, want ab", between, got)
+		}
+	}
+}
+
+// TestHugeCountsAreBounded keeps a sequence with an absurd count from
+// costing more than a screenful of work.
+func TestHugeCountsAreBounded(t *testing.T) {
+	v := New(80, 24)
+	start := time.Now()
+	feed(t, v, "a\x1b[99999999b\x1b[99999999S\x1b[99999999L")
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %v", d)
+	}
+}
+
+// TestAltScreenRestoresCharsets leaves the alternate screen (1049) as DECRC
+// does: the charset the main screen had comes back with its cursor.
+func TestAltScreenRestoresCharsets(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "\x1b[?1049h\x1b(0q\x1b[?1049lq")
+	if got := v.Line(0); got != "q" {
+		t.Fatalf("after leaving the alternate screen: %q", got)
+	}
+}
+
+// TestRepaintKeepsAnOpenLink repaints while the application is inside a
+// link: what it prints next is still part of that link.
+func TestRepaintKeepsAnOpenLink(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "\x1b]8;;https://a.test/\x1b\\lin")
+	real := New(20, 2)
+	feed(t, real, string(v.Render(RenderOptions{})))
+	feed(t, real, "k")
+	if u := real.LinkURL(real.Cell(0, 3).Attr.Link); u != "https://a.test/" {
+		t.Fatalf("text printed after the repaint has link %q", u)
+	}
+}
+
+// TestLinksSurviveAResetAndCompaction keeps a scrolled-off link pointing at
+// its own URL after ESC c, and after the link table is compacted by many
+// distinct links.
+func TestLinksSurviveAResetAndCompaction(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "\x1b]8;;https://old.test/\x1b\\old\x1b]8;;\x1b\\\r\n\r\n\x1bc\x1b]8;;https://new.test/\x1b\\new")
+	if u := v.LinkURL(v.Scrollback()[0][0].Attr.Link); u != "https://old.test/" {
+		t.Fatalf("after a reset the old line links to %q", u)
+	}
+	for i := 0; i < maxLinks+10; i++ {
+		feed(t, v, fmt.Sprintf("\x1b]8;;https://x.test/%d\x1b\\", i))
+	}
+	feed(t, v, "\x1b]8;;\x1b\\")
+	if n := len(v.links); n >= maxLinks {
+		t.Fatalf("link table holds %d: it was not compacted", n)
+	}
+	if u := v.LinkURL(v.Scrollback()[0][0].Attr.Link); u != "https://old.test/" {
+		t.Fatalf("after compaction the old line links to %q", u)
+	}
+}
+
+// TestCompactionWithAllLinksLive compacts a table whose links are all still
+// on screen without recursing or losing any, and lets it grow past the mark.
+func TestCompactionWithAllLinksLive(t *testing.T) {
+	v := New(200, 40) // 8000 cells, enough to keep more than maxLinks links live
+	for i := 0; i < maxLinks+50; i++ {
+		feed(t, v, fmt.Sprintf("\x1b]8;;https://x.test/%d\x1b\\x", i))
+	}
+	feed(t, v, "\x1b]8;;\x1b\\")
+	for i := 0; i < maxLinks+50; i++ {
+		row, col := i/200, i%200
+		if u := v.LinkURL(v.Cell(row, col).Attr.Link); u != fmt.Sprintf("https://x.test/%d", i) {
+			t.Fatalf("cell %d links to %q", i, u)
+		}
+	}
+}
+
+// TestRenderRowInGraphicsMode redraws a row of letters while the application
+// has the graphics set shifted in: the letters stay letters, and the
+// application's set is back afterwards.
+func TestRenderRowInGraphicsMode(t *testing.T) {
+	v := New(20, 2)
+	feed(t, v, "hello\x1b(0")
+	real := New(20, 2)
+	feed(t, real, "\x1b(0")
+	feed(t, real, string(v.RenderRow(0)))
+	if got := real.Line(0); got != "hello" {
+		t.Fatalf("row redrawn as %q", got)
+	}
+	feed(t, real, "q")
+	if got := real.Line(0); got != "hello─" {
+		t.Fatalf("the application's charset was not restored: %q", got)
 	}
 }

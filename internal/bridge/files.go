@@ -1,15 +1,16 @@
 package bridge
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/home"
@@ -61,29 +62,72 @@ func PastedFiles(paste string) ([]string, bool) {
 	return paths, true
 }
 
+// Droppable reports whether a pasted path is a file someone would drop in to
+// share with the server: one under their home, a temporary directory or a
+// removable volume. A path elsewhere, such as /etc/nginx/nginx.conf, is more
+// likely a path on the server they are naming, so it stays text.
+func Droppable(path string) bool {
+	roots := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/Volumes", "/media", "/run/media", "/mnt"}
+	if h, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, h)
+	}
+	for _, r := range roots {
+		if rel, err := filepath.Rel(r, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
+}
+
 // Upload copies each local file to the host and returns the server paths,
-// shell-escaped the way terminals escape a dropped file.
-func Upload(h transport.Host, paths []string) ([]string, error) {
-	var out []string
+// shell-escaped the way terminals escape a dropped file. Cancelling ctx stops
+// it.
+func Upload(ctx context.Context, h transport.Host, paths []string) ([]string, error) {
+	var out, stored []string
 	for _, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
 			return nil, err
 		}
-		dest, err := transport.Output(h, f, "clipboard-put", filepath.Base(p))
+		fi, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		dest, err := transport.OutputContext(ctx, h, f, "clipboard-put", filepath.Base(p), strconv.FormatInt(fi.Size(), 10))
 		f.Close()
 		if err != nil {
+			// Files already sent are not wanted without the rest.
+			for _, s := range stored {
+				transport.Output(h, nil, "clipboard-rm", s)
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, fmt.Errorf("%s: %w", filepath.Base(p), err)
 		}
-		out = append(out, shellEscape(strings.TrimSpace(string(dest))))
+		stored = append(stored, strings.TrimSpace(string(dest)))
+		out = append(out, Escape(strings.TrimSpace(string(dest))))
 	}
 	return out, nil
 }
 
+// Forget removes a pasted file Store kept, with its directory, and nothing
+// outside the clipboard directory. It runs on the server.
+func Forget(path string) error {
+	root := filepath.Join(home.Temp(), "clipboard")
+	dir := filepath.Dir(filepath.Clean(path))
+	if filepath.Dir(dir) != root {
+		return fmt.Errorf("%s is not a pasted file", path)
+	}
+	return os.RemoveAll(dir)
+}
+
 // Store keeps one pasted file, read from r, as <clipboard dir>/<unique>/<name>
 // and returns its absolute path. It runs on the server. name must be a bare
-// file name; it is kept so the application sees what the user pasted.
-func Store(name string, r io.Reader) (string, error) {
+// file name; it is kept so the application sees what the user pasted. size
+// is the file's length: an upload the client cut short is not kept.
+func Store(name string, size int64, r io.Reader) (string, error) {
 	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
 		return "", fmt.Errorf("invalid file name %q", name)
 	}
@@ -104,7 +148,11 @@ func Store(name string, r io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(f, r); err != nil {
+	n, err := io.Copy(f, r)
+	if err == nil && n != size {
+		err = fmt.Errorf("received %d of %d bytes", n, size)
+	}
+	if err != nil {
 		f.Close()
 		os.RemoveAll(dir)
 		return "", err
@@ -128,13 +176,16 @@ func prune(root string, cutoff time.Time) {
 
 // splitWords splits s like a POSIX shell would split plain words: whitespace
 // separates, a backslash escapes the next character, and single or double
-// quotes group. ok is false for an unterminated quote.
+// quotes group; inside double quotes a backslash escapes only what the shell
+// does there. ok is false for an unterminated quote.
 func splitWords(s string) (words []string, ok bool) {
 	var cur strings.Builder
 	in := false // a word is open, possibly empty ('')
 	var quote rune
 	esc := false
-	for _, r := range s {
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		switch {
 		case esc:
 			cur.WriteRune(r)
@@ -142,7 +193,7 @@ func splitWords(s string) (words []string, ok bool) {
 		case quote != 0:
 			if r == quote {
 				quote = 0
-			} else if r == '\\' && quote == '"' {
+			} else if r == '\\' && quote == '"' && i+1 < len(runes) && strings.ContainsRune("$`\"\\\n", runes[i+1]) {
 				esc = true
 			} else {
 				cur.WriteRune(r)
@@ -151,7 +202,10 @@ func splitWords(s string) (words []string, ok bool) {
 			esc, in = true, true
 		case r == '\'' || r == '"':
 			quote, in = r, true
-		case unicode.IsSpace(r):
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			// Only the whitespace a terminal escapes in a dropped path; macOS
+			// names hold a narrow no-break space (before AM or PM) that it
+			// does not escape and that belongs to the name.
 			if in {
 				words = append(words, cur.String())
 				cur.Reset()
@@ -171,12 +225,14 @@ func splitWords(s string) (words []string, ok bool) {
 	return words, true
 }
 
-// shellEscape backslash-escapes every character a shell treats specially,
+// Escape backslash-escapes every character a shell treats specially,
 // which is how terminals paste a dropped file's path.
-func shellEscape(p string) string {
+func Escape(p string) string {
 	var b strings.Builder
 	for _, r := range p {
-		if unicode.IsSpace(r) || strings.ContainsRune(`\'"$`+"`"+`!&|;<>()[]{}*?#~`, r) {
+		// The same whitespace splitWords splits on; a narrow no-break space in
+		// a macOS name is left as terminals leave it.
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || strings.ContainsRune(`\'"$`+"`"+`!&|;<>()[]{}*?#~`, r) {
 			b.WriteByte('\\')
 		}
 		b.WriteRune(r)

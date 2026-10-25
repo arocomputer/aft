@@ -75,3 +75,18 @@ func TestPasteKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestPasteArrivingInPieces finds the end marker when a paste comes in many
+// reads, including a marker split across two of them, and keeps bytes
+// after it as ordinary keys.
+func TestPasteArrivingInPieces(t *testing.T) {
+	var z Tokenizer
+	var toks []Token
+	for _, piece := range []string{"\x1b[200~one ", "two\x1b[2", "01~x"} {
+		toks = append(toks, z.Feed([]byte(piece))...)
+	}
+	// The start marker is its own token; the content token ends with the end marker.
+	if len(toks) != 3 || toks[1].Kind != TokPaste || string(toks[1].Bytes) != "one two\x1b[201~" || toks[2].Rune != 'x' {
+		t.Fatalf("got %+v", toks)
+	}
+}

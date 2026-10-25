@@ -4,6 +4,9 @@
 // untouched, uses only the output, and only once it has restored the terminal. Each prompt falls back to a default when there is no terminal, so
 // scripted and piped runs never block.
 //
+// A prompt shows its choices and nothing else: arrows and Enter, y and n need
+// no legend.
+//
 // The prompts are driven directly in raw mode rather than with a TUI framework:
 // Bubble Tea queries the terminal (an OSC 11 background probe) merely on import,
 // which would corrupt a session client sharing the terminal. Nothing in this
@@ -15,6 +18,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
 
@@ -106,7 +110,15 @@ func (s *screen) render(lines []string) {
 	if s.prev > 0 {
 		fmt.Fprintf(os.Stderr, "\x1b[%dA", s.prev) // move to the block's first line
 	}
+	// A line wider than the terminal would wrap and throw the redraw off.
+	width := 0
+	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 1 {
+		width = w - 1
+	}
 	for _, l := range lines {
+		if width > 0 && lipgloss.Width(l) > width {
+			l = ansi.Truncate(l, width, "")
+		}
 		fmt.Fprint(os.Stderr, "\r\x1b[K"+l+"\r\n")
 	}
 	s.prev = len(lines)
@@ -125,7 +137,8 @@ func (s *screen) clear() {
 	s.prev = 0
 }
 
-// Confirm asks a yes/no question, returning def when there is no terminal.
+// Confirm asks a yes/no question, returning def when there is no terminal
+// and false when the user backs out with Escape, q or Ctrl-C.
 func Confirm(question string, def bool) bool {
 	if !Interactive() {
 		return def
@@ -137,7 +150,7 @@ func Confirm(question string, def bool) bool {
 	defer term.Restore(int(os.Stdin.Fd()), st)
 	value := def
 	var sc screen
-	accent, dim, _ := styles()
+	accent, _, _ := styles()
 	render := func() {
 		yes, no := "  Yes  ", "  No  "
 		if value {
@@ -145,7 +158,7 @@ func Confirm(question string, def bool) bool {
 		} else {
 			no = accent.Render("[ No ]")
 		}
-		sc.render([]string{accent.Render("? ") + question, "  " + yes + " " + no, dim.Render("  y / n / arrows / enter")})
+		sc.render([]string{accent.Render("? ") + question, "  " + yes + " " + no})
 	}
 	render()
 	for {
@@ -164,7 +177,7 @@ func Confirm(question string, def bool) bool {
 			return value
 		case keyCancel:
 			sc.clear()
-			return def
+			return false
 		}
 	}
 }
@@ -175,8 +188,9 @@ type Option struct {
 	Hint  string
 }
 
-// Choose presents a single-choice list and returns the selected index, or def
-// when there is no terminal.
+// Choose presents a single-choice list and returns the selected index: def
+// when there is no terminal, and -1 when the user backs out with Escape, q
+// or Ctrl-C, which callers treat as "do nothing".
 func Choose(title string, options []Option, def int) int {
 	if !Interactive() || len(options) == 0 {
 		return def
@@ -205,7 +219,7 @@ func Choose(title string, options []Option, def int) int {
 			}
 			lines = append(lines, line)
 		}
-		sc.render(append(lines, dim.Render("  arrows / enter")))
+		sc.render(lines)
 	}
 	render()
 	for {
@@ -225,7 +239,7 @@ func Choose(title string, options []Option, def int) int {
 			return index
 		case keyCancel:
 			sc.clear()
-			return def
+			return -1
 		}
 	}
 }
