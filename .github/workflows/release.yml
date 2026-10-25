@@ -127,14 +127,14 @@ jobs:
         with:
           name: release-assets
           path: assets
-      - name: Verify the organization release token before creating the draft
+      - name: Verify organization token availability and repository role
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           test -n "$GH_TOKEN" || { echo '::error::RELEASE_TOKEN is unavailable to Aft.'; exit 1; }
           test "$(gh api "repos/$GH_REPO" --jq .permissions.push)" = true || {
-            echo '::error::RELEASE_TOKEN does not report repository write access to Aft.'
+            echo '::error::RELEASE_TOKEN does not report a repository write role for Aft.'
             exit 1
           }
       - name: Verify selected source and create a draft
@@ -201,18 +201,18 @@ jobs:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           test -n "$RELEASE_TOKEN" || {
-            echo '::error::Grant arocomputer/aft access to the RELEASE_TOKEN organization secret.'
+            echo '::error::Grant Aft the RELEASE_TOKEN organization secret and token Contents/Pull requests write access.'
             exit 1
           }
-      # The repository is its own tap, as in arocomputer/ask and arocomputer/search.
+      # The repository is its own tap; protected main requires a formula PR.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Update the Homebrew formula for the latest published release
+      - name: Propose the Homebrew formula for the latest published release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
         shell: bash
@@ -229,4 +229,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "release: update Homebrew formula for $TAG"
-          git push origin HEAD:main
+          # This branch contains only the generated formula and is owned by this job.
+          branch="release/homebrew-$TAG"
+          git push --force-with-lease origin "HEAD:refs/heads/$branch"
+          number=$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if test -z "$number"; then
+            printf 'Update the Homebrew formula from the verified checksums for %s.\n\nMerge after the required CI checks pass.\n' "$TAG" > "$RUNNER_TEMP/formula-pr.md"
+            gh pr create --base main --head "$branch" \
+              --title "release: update Homebrew formula for $TAG" \
+              --body-file "$RUNNER_TEMP/formula-pr.md"
+          fi
