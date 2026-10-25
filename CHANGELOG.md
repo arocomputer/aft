@@ -39,6 +39,9 @@ configuration may change as we learn from use.
 - Setup asks before editing shell configuration and supports managed dotfiles.
   Uninstall removes Aft's files and unchanged shell blocks while preserving
   your code, SSH configuration and agent data.
+- Release archives include build provenance. Publishing a release verifies native
+  downloads on Linux and macOS before a protected job updates the Homebrew
+  formula in Aft's own repository using the shared organization release token.
 - Portable binaries for Linux and macOS on amd64 and arm64. Each client embeds
   the servers for all four targets and installs the right one over SSH.
 
