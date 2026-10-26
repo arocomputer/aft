@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arocomputer/aft/internal/config"
 	"github.com/arocomputer/aft/internal/home"
@@ -143,5 +144,42 @@ func TestSelftestPathSkipsProductionShims(t *testing.T) {
 	path := strings.Join([]string{alias, "/usr/bin", home.Launchers()}, string(os.PathListSeparator))
 	if actual := selftestPath(path, home.Launchers()); actual != "/usr/bin" {
 		t.Fatalf("production shims remain on PATH: %q", actual)
+	}
+}
+
+// TestSelftestReattachKeepsInput verifies a finished client cannot consume the
+// next client's keystrokes in the interactive harness.
+func TestSelftestReattachKeepsInput(t *testing.T) {
+	t.Setenv("AFT_HOME", shortHome(t))
+	s := start(t, "selftest", "reattach")
+	defer s.cmd.Process.Kill()
+	s.waitFor("$", 5*time.Second)
+	s.typeKeys("echo before-$((20+22))\r")
+	s.waitFor("before-42", 5*time.Second)
+	s.typeKeys("\x1dd")
+	ready := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		s.mu.Lock()
+		_, after, found := strings.Cut(string(s.raw), "Exit the shell to finish.")
+		ready = found && strings.Contains(after, "\x1b[?25h")
+		s.mu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("reattached client did not finish its initial render")
+	}
+	s.typeKeys("echo after-$((40+2))\r")
+	s.waitFor("after-42", 5*time.Second)
+	s.typeKeys("exit\r")
+	select {
+	case <-s.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reattach check did not exit")
+	}
+	if err := s.cmd.Wait(); err != nil {
+		t.Fatalf("reattach check: %v", err)
 	}
 }

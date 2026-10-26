@@ -60,8 +60,8 @@ the temporary home is removed. To configure your actual installation, run
 `./x try` opens a plain text menu. Pass a check name to run it directly:
 `setup`, `cli`, `projects`, `shell`, `latency`, `reattach`, `scrollback`,
 `clipboard`, `paste`, `url`, `listeners`, `agent`, or `hosts`.
-The checks use private Aft state and a temporary project. Test sessions end when
-the harness exits; existing Aft sessions and configuration stay intact.
+The checks use private Aft state and a temporary project. Each terminal client runs in a separate process so input returns to the menu
+cleanly. Test sessions end when the harness exits; existing Aft sessions and configuration stay intact.
 
 `cli` previews help, listings, status and diagnostics. `projects` checks on/off
 and subfolder matching. `latency` compares prediction on and off at a simulated

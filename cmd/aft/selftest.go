@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -29,6 +30,9 @@ var selftestNames = []string{"setup", "cli", "projects", "shell", "latency", "re
 // cmdSelftest runs checks with private Aft state and a temporary workspace.
 // Setup also isolates HOME and blocks SSH; agent checks use normal agent accounts.
 func cmdSelftest(args []string) int {
+	if len(args) > 0 && args[0] == "_terminal" {
+		return selftestTerminalChild(args[1:])
+	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		fmt.Println("usage: aft selftest [test]")
 		for _, name := range selftestNames {
@@ -175,7 +179,43 @@ func runShell(startup string, predict bool, latency int, prefix byte) int {
 	if err != nil {
 		return fail(err)
 	}
-	return terminal.Run(terminal.Options{Host: transport.Local, Command: command, Dir: directory, Predict: predict, LatencyMS: latency, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
+	return selftestTerminal(terminal.Options{Host: transport.Local, Command: command, Dir: directory, Predict: predict, LatencyMS: latency, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
+}
+
+// selftestTerminal gives each client its own process so blocked stdin readers
+// cannot consume input after the check returns to the menu or reattaches.
+func selftestTerminal(options terminal.Options) int {
+	self, err := os.Executable()
+	if err != nil {
+		return fail(err)
+	}
+	args := []string{"selftest", "_terminal", "--session", options.SessionID,
+		"--predict=" + strconv.FormatBool(options.Predict), "--latency=" + strconv.Itoa(options.LatencyMS), "--"}
+	command := exec.Command(self, append(args, options.Command...)...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := command.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		return fail(err)
+	}
+	return 0
+}
+
+// selftestTerminalChild is the private local-client entry used by terminal checks.
+func selftestTerminalChild(args []string) int {
+	fs := flags("selftest _terminal")
+	id := fs.String("session", "", "session ID")
+	predict := fs.Bool("predict", true, "enable prediction")
+	latency := fs.Int("latency", 0, "simulated latency")
+	if err := fs.Parse(args); err != nil {
+		return flagExit(err)
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		return fail(err)
+	}
+	return terminal.Run(terminal.Options{Host: transport.Local, Command: fs.Args(), SessionID: *id, Dir: directory, Predict: *predict, LatencyMS: *latency, Prefix: 0x1d, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
 }
 
 // selftestTyping compares prediction at a fixed simulated round-trip latency.
@@ -208,7 +248,7 @@ func selftestReattach(prefix byte) int {
 			continue
 		}
 		fmt.Printf("Attaching %s. Exit the shell to finish.\n", record.ID)
-		return terminal.Run(terminal.Options{Host: transport.Local, SessionID: record.ID, Predict: true, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
+		return selftestTerminal(terminal.Options{Host: transport.Local, SessionID: record.ID, Predict: true, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
 	}
 	fmt.Println("Session ended; nothing to reattach.")
 	return 0
@@ -299,7 +339,7 @@ func selftestAgent(prefix byte) int {
 	if err != nil {
 		return fail(err)
 	}
-	return terminal.Run(terminal.Options{Host: transport.Local, Command: []string{choice}, Dir: directory, Predict: true, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
+	return selftestTerminal(terminal.Options{Host: transport.Local, Command: []string{choice}, Dir: directory, Predict: true, Prefix: prefix, Ports: ports.Range{Min: 3000, Max: 9999}, Quiet: true})
 }
 
 // selftestHosts reads configured servers without installing or repairing them.
