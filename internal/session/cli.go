@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -431,12 +430,32 @@ func GatherInfo() Info {
 	if _, err := os.Lstat(filepath.Join(home.Shims(), "open")); err == nil {
 		info.Shims = true
 	}
-	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose", "git", "node"} {
-		if p, err := exec.LookPath(a); err == nil {
-			info.Agents[a] = p
+	for _, a := range []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose", "git", "gh", "node"} {
+		if path := installedProgram(a); path != "" {
+			info.Agents[a] = path
 		}
 	}
 	return info
+}
+
+// installedProgram finds a real executable after any Aft launcher directory,
+// so a launcher for a missing program never counts as an installation.
+func installedProgram(name string) string {
+	launchers, _ := filepath.EvalSymlinks(home.Launchers())
+	for _, directory := range filepath.SplitList(os.Getenv("PATH")) {
+		if directory == "" {
+			continue
+		}
+		resolved, _ := filepath.EvalSymlinks(directory)
+		if filepath.Clean(directory) == home.Launchers() || (resolved != "" && resolved == launchers) {
+			continue
+		}
+		path := filepath.Join(directory, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return path
+		}
+	}
+	return ""
 }
 
 // BuiltAt is this build's commit time as Unix seconds, 0 for a build that did

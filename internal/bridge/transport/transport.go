@@ -1,8 +1,6 @@
-// Package transport reaches a server's server. Over SSH it uses the user's own
-// OpenSSH client with one shared master connection per host, so keys, agents,
-// jump hosts and host trust all come from the user's SSH configuration. The
-// reserved host "local" runs the server on this machine, which is how tests
-// and single-machine trials work.
+// Package transport runs server commands through OpenSSH or the reserved local
+// host. SSH connections share a master and use the user's authentication,
+// jump-host and host-key configuration.
 package transport
 
 import (

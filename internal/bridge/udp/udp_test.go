@@ -77,9 +77,9 @@ func TestSilentClientDoesNotBlockOthers(t *testing.T) {
 	}
 }
 
-// TestDrainWaitsForTheClientToHangUp keeps the listener's side alive until an
-// admitted connection is closed by both ends, so the last frames reach the
-// client, and gives up after its timeout when the client never hangs up.
+// TestDrainWaitsForTheClientToHangUp reads the final output during close grace,
+// then checks draining waits while the client leaves its connection open. QUIC
+// shutdown need not preserve unread data after that grace expires.
 func TestDrainWaitsForTheClientToHangUp(t *testing.T) {
 	l, err := Listen()
 	if err != nil {
@@ -97,14 +97,14 @@ func TestDrainWaitsForTheClientToHangUp(t *testing.T) {
 	server.Write([]byte("bye"))
 	server.Close()
 	start := time.Now()
-	l.Drain(5 * time.Second) // the client has not hung up: this waits the full 3 s close grace
-	if d := time.Since(start); d < 2*time.Second {
-		t.Fatalf("drain returned after %v without the client hanging up", d)
-	}
 	got := make([]byte, 3)
 	client.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := io.ReadFull(client, got); err != nil || string(got) != "bye" {
 		t.Fatalf("the last frame was lost: %q %v", got, err)
+	}
+	l.Drain(5 * time.Second)
+	if d := time.Since(start); d < 2*time.Second {
+		t.Fatalf("drain returned after %v without the client hanging up", d)
 	}
 	client.Close()
 }

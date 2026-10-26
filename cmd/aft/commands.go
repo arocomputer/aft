@@ -33,6 +33,18 @@ import (
 func flags(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		positional := map[string]string{"attach": " [NAME]", "kill": " NAME", "rename": " NAME NEW"}[name]
+		fmt.Fprintf(fs.Output(), "usage: aft %s [options]%s\n\n", name, positional)
+		fs.VisitAll(func(option *flag.Flag) {
+			invocation := "--" + option.Name
+			if boolean, ok := option.Value.(interface{ IsBoolFlag() bool }); !ok || !boolean.IsBoolFlag() {
+				invocation += " <" + option.Name + ">"
+			}
+			_, description := flag.UnquoteUsage(option)
+			fmt.Fprintf(fs.Output(), "  %-18s %s\n", invocation, description)
+		})
+	}
 	return fs
 }
 
@@ -111,9 +123,9 @@ func ensureServer(h transport.Host) (session.Info, error) {
 // cmdSetup adds a server and prepares this machine.
 func cmdSetup(args []string) int {
 	fs := flags("setup")
-	hostFlag := fs.String("host", "", "SSH destination, usually an alias from ~/.ssh/config")
-	name := fs.String("name", "", "name for the host (default: the SSH destination)")
-	yes := fs.Bool("yes", false, "do not ask; also skip the server if --host is empty")
+	hostFlag := fs.String("host", "", "SSH destination")
+	name := fs.String("name", "", "host name (default: SSH destination)")
+	yes := fs.Bool("yes", false, "use defaults; skip the host unless --host is set")
 	if err := fs.Parse(args); err != nil {
 		return flagExit(err)
 	}
@@ -130,9 +142,11 @@ func cmdSetup(args []string) int {
 		return fail(err)
 	}
 
+	var discovered session.Info
+	discoveredHost := ""
 	dest := *hostFlag
 	if dest == "" && !*yes {
-		dest = ask("SSH destination for your server (alias from ~/.ssh/config; empty to skip)", "")
+		dest = ask("SSH destination (empty skips)", "")
 	}
 	if dest != "" {
 		n := *name
@@ -154,6 +168,7 @@ func cmdSetup(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		discovered, discoveredHost = info, n
 		ui.OK("Server ready on %s %s", n, info.OS+"/"+info.Arch+"; "+info.Version)
 		if found := agentsIn(info.Agents); len(found) == 0 {
 			ui.Warn("no agents on %s yet; install one there (claude, codex, opencode, pi)", n)
@@ -162,56 +177,69 @@ func cmdSetup(args []string) int {
 			ui.OK("Agents on %s: %s", n, strings.Join(found, ", "))
 		}
 	}
-	if len(cfg.Agents) == 0 {
-		cfg.Agents = config.DefaultAgents
+	fresh := st.Binary == "" && len(cfg.Agents) == 0 && len(cfg.Tools) == 0
+	agentOptions := setupProgramOptions(config.KnownAgents, cfg.Agents, cfg.Tools, discovered, discoveredHost, fresh)
+	agents, ok := selectSetupPrograms("Agents (persistent sessions)", agentOptions, *yes)
+	if !ok {
+		return 130
 	}
-	if err := launcher.InstallLaunchers(self, cfg.Launched(), &st); err != nil {
-		return fail(err)
+	toolOptions := setupProgramOptions([]string{"git", "gh"}, cfg.Tools, agents, discovered, discoveredHost, fresh)
+	tools, ok := selectSetupPrograms("Tools (run once)", toolOptions, *yes)
+	if !ok {
+		return 130
 	}
-	ui.OK("Launchers for %s in %s", strings.Join(cfg.Launched(), ", "), ui.Path(home.Launchers()))
+	cfg.Agents, cfg.Tools = agents, tools
 
-	// Decide how the PATH line reaches the shell. People who manage their
-	// dotfiles want to add it themselves, so ask rather than edit blindly.
-	if cfg.EditDotfiles == nil && !*yes {
+	// Ask before changing shell configuration; managed dotfiles default to manual edits.
+	if len(cfg.Launched()) > 0 && cfg.EditDotfiles == nil && !*yes {
 		b, ok := chooseEditDotfiles()
 		if !ok {
 			return 130
 		}
 		cfg.EditDotfiles = &b
 	}
-	if cfg.EditingDotfiles() {
-		changed, err := launcher.InstallShellBlock(&st)
-		if err != nil {
-			return fail(err)
-		}
-		for _, f := range changed {
-			ui.OK("Added the PATH line to %s (open a new terminal to apply)", ui.Path(f))
-		}
-	} else {
-		fmt.Println("Add this line wherever your shell sets PATH, then apply it with your dotfile manager:")
-		fmt.Printf("  export PATH=\"%s:$PATH\"\n", launcher.PathDir)
+	if err := launcher.SyncLaunchers(self, cfg.Launched(), &st); err != nil {
+		return fail(err)
 	}
+	if names := cfg.Launched(); len(names) > 0 {
+		ui.OK("Configured %s", strings.Join(names, ", "))
+	} else {
+		ui.OK("No agent or tool launchers selected")
+	}
+	if len(cfg.Launched()) > 0 {
+		if cfg.EditingDotfiles() {
+			changed, err := launcher.InstallShellBlock(&st)
+			if err != nil {
+				return fail(err)
+			}
+			for _, f := range changed {
+				ui.OK("Added the PATH line to %s (open a new terminal to apply)", ui.Path(f))
+			}
+		} else {
+			fmt.Println("Add to your shell configuration:")
+			fmt.Printf("  export PATH=\"%s:$PATH\"\n", launcher.PathDir)
+		}
+	}
+
 	if err := config.Save(cfg); err != nil {
 		return fail(err)
 	}
 	if err := config.SaveState(st); err != nil {
 		return fail(err)
 	}
-	fmt.Println("Run aft on in a project, then start your agent as usual.")
 	return 0
 }
 
-// chooseEditDotfiles asks whether setup may edit the shell config, offering
-// not to when the config looks managed; ok is false when the user backs out
-// of setup.
+// chooseEditDotfiles asks how to configure PATH; managed dotfiles default to
+// manual integration. Cancellation returns ok=false.
 func chooseEditDotfiles() (edit, ok bool) {
 	def := 0
 	if launcher.DotfilesManaged() {
 		def = 1
 	}
-	i := ui.Choose("How should aft put its launchers on your PATH?", []ui.Option{
-		{Label: "Edit my shell config for me", Hint: "~/.zshrc or ~/.bashrc"},
-		{Label: "Show me the line, I manage my dotfiles", Hint: "chezmoi, stow, nix, a repo"},
+	i := ui.Choose("Configure launcher PATH", []ui.Option{
+		{Label: "Edit shell configuration", Hint: "~/.zshrc or ~/.bashrc"},
+		{Label: "Print PATH directive", Hint: "manual integration"},
 	}, def)
 	return i == 0, i >= 0
 }
@@ -238,15 +266,16 @@ func cmdHost(args []string) int {
 			return 0
 		}
 		used := cfg.UsedHost()
-		var rows [][]string
-		for _, n := range cfg.HostNames() {
-			mark := ""
-			if n == used {
-				mark = "default"
+		for _, name := range cfg.HostNames() {
+			line := name
+			if cfg.Hosts[name].SSH != name {
+				line += ": " + cfg.Hosts[name].SSH
 			}
-			rows = append(rows, []string{n, cfg.Hosts[n].SSH, mark})
+			if name == used {
+				line += " (default)"
+			}
+			fmt.Println(line)
 		}
-		ui.Table([]string{"HOST", "SSH", ""}, rows)
 		return 0
 
 	case "add":
@@ -278,11 +307,6 @@ func cmdHost(args []string) int {
 			return fail(err)
 		}
 		ui.OK("Server ready on %s %s", name, info.OS+"/"+info.Arch+"; "+info.Version)
-		if cfg.UsedHost() == name {
-			fmt.Println(name + " is used by default.")
-		} else {
-			ui.Hint("aft host use %s makes it the default, or pass --host %s per command", name, name)
-		}
 		return 0
 
 	case "use":
@@ -377,7 +401,7 @@ func hostUse(cfg config.Config, args []string) int {
 
 func agentsIn(m map[string]string) []string {
 	var out []string
-	for _, a := range config.DefaultAgents {
+	for _, a := range config.KnownAgents {
 		if _, ok := m[a]; ok {
 			out = append(out, a)
 		}
@@ -388,8 +412,8 @@ func agentsIn(m map[string]string) []string {
 // cmdOn maps the current directory to a server directory.
 func cmdOn(args []string) int {
 	fs := flags("on")
-	hostName := fs.String("host", "", "host name from aft setup")
-	dir := fs.String("dir", "", "directory on the server, created if missing (default: same path relative to home)")
+	hostName := fs.String("host", "", "configured host")
+	dir := fs.String("dir", "", "remote directory; created if missing")
 	if err := fs.Parse(args); err != nil {
 		return flagExit(err)
 	}
@@ -481,7 +505,7 @@ func cmdOn(args []string) int {
 	}
 	p := config.Project{Host: h.Name, Dir: *dir}
 	ui.OK("On: %s -> %s", ui.Path(root), where(p))
-	if !launcher.OnPath() {
+	if len(cfg.Launched()) > 0 && !launcher.OnPath() {
 		ui.Warn("aft's launchers are not first on PATH in this shell")
 		ui.Hint("open a new terminal, or run aft doctor")
 	}
@@ -740,16 +764,17 @@ func describe(r session.Record) string {
 	if session.IsShell(r.Command) {
 		name = "shell" // aft HOST's login-shell wrapper
 	}
-	for _, a := range config.DefaultAgents {
-		if name == a {
-			name = strings.ToUpper(name[:1]) + name[1:]
-		}
-	}
-	// Before it has a topic, an agent's title is often just its own name.
+	r.Title = ansi.Strip(r.Title)
+	// Suppress titles that duplicate the command name.
 	if r.Title == "" || strings.EqualFold(r.Title, name) || strings.EqualFold(r.Title, name+" Code") {
 		return name
 	}
 	return name + ": " + r.Title
+}
+
+// sessionLine gives listings a compact identity, state and location without a table.
+func sessionLine(host string, record session.Record) string {
+	return fmt.Sprintf("%s (%s) %s:%s - %s", record.ID, state(record), host, ui.Path(record.Dir), ansi.Strip(describe(record)))
 }
 
 // state says whether a terminal is showing the session, or it runs on with none.
@@ -785,7 +810,7 @@ func cmdLs(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	var rows [][]string
+	var lines []string
 	var failed []hostSessions
 	allSeen := allSessions(cfg)
 	for _, hs := range allSeen {
@@ -794,13 +819,15 @@ func cmdLs(args []string) int {
 			continue
 		}
 		for _, r := range hs.list {
-			rows = append(rows, []string{r.ID + " (" + describe(r) + ")", state(r), hs.host.Name, ui.Path(r.Dir), started(r)})
+			lines = append(lines, sessionLine(hs.host.Name, r))
 		}
 	}
-	if len(rows) == 0 {
+	if len(lines) == 0 {
 		fmt.Println("No sessions.")
 	} else {
-		ui.Table([]string{"SESSION", "STATE", "HOST", "DIRECTORY", "STARTED"}, rows)
+		for _, line := range lines {
+			fmt.Println(line)
+		}
 	}
 	for _, hs := range failed {
 		var ce *transport.ConnectError
@@ -1080,9 +1107,9 @@ func cmdStatus(args []string) int {
 	// Where you are first, then every other project that is on.
 	here, _, ok := st.FindProject(cwd)
 	if ok {
-		fmt.Println("Project: " + mapping(here, st.Projects[here]))
+		fmt.Println("project " + mapping(here, st.Projects[here]))
 	} else {
-		fmt.Println("Project: " + ui.Path(cwd) + " (off)")
+		fmt.Println("project " + ui.Path(cwd) + " (off)")
 	}
 	roots := make([]string, 0, len(st.Projects))
 	for r := range st.Projects {
@@ -1092,7 +1119,7 @@ func cmdStatus(args []string) int {
 	}
 	sort.Strings(roots)
 	for _, r := range roots {
-		fmt.Println("Project: " + mapping(r, st.Projects[r]))
+		fmt.Println("project " + mapping(r, st.Projects[r]))
 	}
 	for _, hs := range all {
 		if hs.host.IsLocal() {
@@ -1103,16 +1130,16 @@ func cmdStatus(args []string) int {
 			name += " (default)"
 		}
 		if hs.err != nil {
-			fmt.Println("Host: " + name + "; unreachable: " + hs.err.Error())
+			fmt.Println("host " + name + ": " + hs.err.Error())
 		} else {
-			fmt.Println("Host: " + name + "; connected")
+			fmt.Println("host " + name + ": connected")
 		}
 	}
 	listed := map[string]bool{}
 	for _, hs := range all {
 		for _, r := range hs.list {
 			listed[r.ID] = true
-			fmt.Println("Session: " + r.ID + ", " + describe(r) + "; " + state(r) + " on " + hs.host.Name + "; " + started(r))
+			fmt.Println("session " + sessionLine(hs.host.Name, r))
 		}
 	}
 	m := mirrors()
@@ -1121,7 +1148,7 @@ func cmdStatus(args []string) int {
 		for _, p := range m[id] {
 			list = append(list, fmt.Sprintf("localhost:%d", p))
 		}
-		fmt.Println("Ports: " + strings.Join(list, ", ") + " (" + id + ")")
+		fmt.Println("ports " + id + ": " + strings.Join(list, ", "))
 	}
 	return 0
 }
@@ -1159,23 +1186,17 @@ type docFinding struct {
 	Fixed   bool   `json:"fixed,omitempty"`
 }
 
-// doctor accumulates findings under the current section and, when fixing,
-// runs each repair as its check is added. With live set it prints as it goes,
-// above a spinner that says what is being checked: this machine's checks one
-// per line, and a host on one line when all is well there, or one line per
-// finding there otherwise, each naming the host.
+// doctor records every finding for JSON, but prints only problems and repairs
+// during a normal run. A healthy report is a single "ok" line.
 type doctor struct {
 	fix      bool
 	cur      string
 	live     *ui.Live
 	findings []docFinding
-	held     []docFinding // the current host's findings, printed when it is done
 }
 
-// section starts the findings for a place; a host's are held until the next
-// section or the end, so a healthy host prints as one line.
+// section identifies the place a finding concerns, without printing a header.
 func (d *doctor) section(s string) {
-	d.flush()
 	d.cur = s
 }
 
@@ -1191,41 +1212,21 @@ func (d *doctor) add(f docFinding) {
 	if d.live == nil {
 		return
 	}
-	if strings.HasPrefix(f.Section, "Host ") {
-		d.held = append(d.held, f)
-		return
+	if f.Level == "warn" || f.Level == "fix" || f.Fixed {
+		d.print(f)
 	}
-	d.print(f, "")
 }
 
 // print shows one finding, prefixed with the host it concerns, if any.
-func (d *doctor) print(f docFinding, prefix string) {
+func (d *doctor) print(f docFinding) {
+	prefix := ""
+	if strings.HasPrefix(f.Section, "Host ") {
+		prefix = strings.TrimPrefix(f.Section, "Host ") + ": "
+	}
 	d.live.Println(ui.Prefix(f.Level) + prefix + f.Text)
 	if f.Hint != "" {
 		d.live.Println("  " + f.Hint)
 	}
-}
-
-// flush prints the held host findings: one line when every one is fine.
-func (d *doctor) flush() {
-	if d.live == nil || len(d.held) == 0 {
-		return
-	}
-	host := strings.TrimPrefix(d.cur, "Host ")
-	fine := true
-	parts := make([]string, 0, len(d.held))
-	for _, f := range d.held {
-		fine = fine && (f.Level == "ok" || f.Level == "info")
-		parts = append(parts, ansi.Strip(f.Text))
-	}
-	if fine {
-		d.live.Println(host + ": " + strings.Join(parts, "; "))
-	} else {
-		for _, f := range d.held {
-			d.print(f, host+": ")
-		}
-	}
-	d.held = nil
 }
 
 func (d *doctor) ok(text string)         { d.add(docFinding{d.cur, "ok", text, "", false}) }
@@ -1240,7 +1241,7 @@ func (d *doctor) repair(text, hint string, fn func() error, done string) {
 	if d.fix {
 		d.step("Fixing: " + text)
 		if err := fn(); err == nil {
-			f.Level, f.Text, f.Hint, f.Fixed = "ok", text+" — "+done, "", true
+			f.Level, f.Text, f.Hint, f.Fixed = "ok", text+": "+done, "", true
 		} else {
 			f.Hint = err.Error()
 		}
@@ -1248,10 +1249,8 @@ func (d *doctor) repair(text, hint string, fn func() error, done string) {
 	d.add(f)
 }
 
-// cmdDoctor inspects everything Aft depends on, one line per check and one
-// per healthy host, and prints the exact command to fix each problem. --fix applies the safe
-// repairs (reinstall a stale or missing server, re-add the PATH line); --json
-// prints machine-readable findings; --host limits host checks to one host.
+// cmdDoctor reports problems and repairs, or "ok" when healthy. --fix applies
+// safe repairs, --json includes every finding, and --host limits remote checks.
 func cmdDoctor(args []string) int {
 	fs := flags("doctor")
 	doFix := fs.Bool("fix", false, "apply the safe repairs")
@@ -1273,7 +1272,6 @@ func cmdDoctor(args []string) int {
 			hosts = append(hosts, n)
 		}
 	}
-	start := time.Now()
 	if !*asJSON {
 		d.live = ui.Start("Checking this machine")
 	}
@@ -1286,6 +1284,8 @@ func cmdDoctor(args []string) int {
 		d.bad("ssh missing", "install OpenSSH")
 	}
 	switch {
+	case len(cfg.Launched()) == 0:
+		// Shell-only setups do not need launcher PATH integration.
 	case launcher.OnPath():
 		d.ok("launchers on PATH")
 	case launcher.PathInShellConfig(st):
@@ -1315,7 +1315,7 @@ func cmdDoctor(args []string) int {
 			}
 			return config.SaveState(st)
 		}, "reinstalled launchers")
-	} else {
+	} else if len(cfg.Launched()) > 0 {
 		d.ok(fmt.Sprintf("%d launchers", len(cfg.Launched())))
 	}
 	if len(hostOnly) > 0 {
@@ -1376,14 +1376,15 @@ func cmdDoctor(args []string) int {
 				d.ok("server " + info.Version + " " + info.OS + "/" + info.Arch)
 			}
 		}
-		if found := agentsIn(info.Agents); len(found) > 0 {
-			d.ok(strings.Join(found, ", "))
-		} else {
-			d.warn("no agents on the host", "install one there (claude, codex, ...)")
+		if len(cfg.Agents) > 0 {
+			if found := agentsIn(info.Agents); len(found) > 0 {
+				d.ok(strings.Join(found, ", "))
+			} else {
+				d.warn("no agents detected on the host", "install a selected agent there")
+			}
 		}
 	}
 
-	d.flush()
 	if d.live != nil {
 		d.live.Stop()
 	}
@@ -1394,7 +1395,7 @@ func cmdDoctor(args []string) int {
 		b, _ := json.MarshalIndent(d.findings, "", "  ")
 		fmt.Println(string(b))
 	} else {
-		d.summary(time.Since(start))
+		d.summary()
 	}
 	for _, f := range d.findings {
 		if f.Level == "fix" {
@@ -1404,29 +1405,14 @@ func cmdDoctor(args []string) int {
 	return 0
 }
 
-// summary closes the report with one line: all good, or what is left to do.
-func (d *doctor) summary(took time.Duration) {
-	fixes, warns := 0, 0
-	for _, f := range d.findings {
-		switch f.Level {
-		case "fix":
-			fixes++
-		case "warn":
-			warns++
+// summary acknowledges a healthy run only; findings and repairs already speak for themselves.
+func (d *doctor) summary() {
+	for _, finding := range d.findings {
+		if finding.Level == "fix" || finding.Level == "warn" || finding.Fixed {
+			return
 		}
 	}
-	t := fmt.Sprintf("; %.1fs", took.Seconds())
-	switch {
-	case fixes > 0 && d.fix:
-		fmt.Println(ui.Prefix("fix") + fmt.Sprintf("%d still to fix; they could not be repaired automatically", fixes) + t)
-	case fixes > 0:
-		fmt.Println(ui.Prefix("fix") + fmt.Sprintf("%d to fix, %d recommended", fixes, warns) + t)
-		ui.Hint("aft doctor --fix applies the safe repairs")
-	case warns > 0:
-		fmt.Println(ui.Prefix("warn") + fmt.Sprintf("%d recommendations", warns) + t)
-	default:
-		fmt.Println("Everything looks good" + t)
-	}
+	fmt.Println("ok")
 }
 
 // mirrors reads the ports each running client mirrors, keyed by session.
@@ -1499,9 +1485,12 @@ func cmdLaunchers(kind string, args []string) int {
 		return fail(err)
 	}
 	if kind == "tools" {
-		ui.OK("%s run once on the server wherever aft is on", strings.Join(added, ", "))
+		ui.OK("Added tools: %s", strings.Join(added, ", "))
 	} else {
-		ui.OK("%s now run in sessions on the server wherever aft is on", strings.Join(added, ", "))
+		ui.OK("Added agents: %s", strings.Join(added, ", "))
+	}
+	if !launcher.OnPath() && !launcher.PathInShellConfig(st) {
+		ui.Hint("Run aft setup to put the launchers on PATH")
 	}
 	return 0
 }

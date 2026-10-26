@@ -10,14 +10,30 @@ Aft uses the SSH configuration you already have. Make sure `ssh box` works
 first, then:
 
 ```sh
-aft setup --host box
+aft setup
 ```
 
-Setup connects, installs Aft's server under `~/.local/share/aft` on the host,
-reports which agents it finds there, creates launchers for your agents under
-`~/.local/share/aft/launchers`, and asks how to put that directory first on your `PATH`. If you
-manage your dotfiles, choose the option that prints the line for you to add;
-otherwise aft adds a marked block to your shell config:
+Setup asks for an SSH destination, then connects and installs Aft's server
+under `~/.local/share/aft` on that host. Pass `--host box` to supply the destination
+up front, or skip the host to configure local launchers first.
+
+Next, choose agents (persistent sessions) and tools (commands that run once)
+from checklists. Programs found on the server are preselected for a new remote
+setup; without a host, programs found on this device are preselected. Each row
+shows where it was found. Space toggles a choice and Enter continues. Nothing
+is enabled merely because it appears in the list. Existing choices are retained
+when you rerun setup, and selecting nothing is supported for plain host shells.
+
+Known agent configuration directories are hints only: a leftover directory does
+not preselect a missing executable, and setup never reads its contents.
+`aft setup --yes` accepts the detected defaults on a new setup, keeps existing
+selections on reruns and skips the host unless `--host` is supplied.
+
+Setup creates only your selected launchers under
+`~/.local/share/aft/launchers`. If any are selected, it asks how to put that
+directory first on your `PATH`. If you manage your dotfiles, choose the option
+that prints the line for you to add; otherwise aft adds a marked block to your
+shell config:
 
 ```sh
 # >>> aft >>>

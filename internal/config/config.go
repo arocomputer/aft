@@ -20,9 +20,9 @@ import (
 	"github.com/arocomputer/aft/internal/home"
 )
 
-// DefaultAgents are the launchers setup creates when they are installed.
-// Agents run in sessions; tools, which people add themselves, run once.
-var DefaultAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
+// KnownAgents is the discovery catalog, not a list of enabled launchers.
+// Setup offers these programs; only the user's selection enters Config.Agents.
+var KnownAgents = []string{"claude", "codex", "opencode", "pi", "gemini", "amp", "aider", "goose"}
 
 // Config is ~/.aft/config.toml. Top-level keys set defaults; a [host.<name>]
 // table or a repository's aft.toml can override most of them. Keys are flat and
@@ -59,7 +59,7 @@ type HostConfig struct {
 // Mount maps a locally mounted tree to the host directory it comes from, for
 // network mounts such as SMB or NFS where the files are the host's and the
 // local machine only views them. A project under Local needs no clone and no
-// sync; aft just runs commands against the real path on the host.
+// sync; commands execute against the host path.
 type Mount struct {
 	Local string `toml:"local"` // the local mountpoint, e.g. /Volumes/Room
 	Host  string `toml:"host"`  // the host the mount comes from
@@ -141,9 +141,8 @@ func (c Config) Resolve(hostName string, repo *RepoConfig) Settings {
 	return s
 }
 
-// EditingDotfiles reports whether setup should edit shell config files itself,
-// the default. When off it prints the line instead, for people who manage
-// their dotfiles.
+// EditingDotfiles enables shell edits by default; false prints the PATH
+// directive for manual integration.
 func (c Config) EditingDotfiles() bool { return c.EditDotfiles == nil || *c.EditDotfiles }
 
 // Launched is every name with a launcher: the agents, then the tools.

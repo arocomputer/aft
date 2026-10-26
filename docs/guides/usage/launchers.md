@@ -33,8 +33,23 @@ terminal or your pipes, and returns the command's exit code. Elsewhere it runs
 the local command. Tools are opt-in, since a launcher sits in front of every
 call to that name on the machine.
 
-Setup creates launchers for `claude`, `codex`, `opencode`, `pi`, `gemini`,
-`amp`, `aider` and `goose`. Edit `agents` in the config to change the list.
+Setup offers known agents and the tools `git` and `gh` in checklists. It only
+creates the launchers you select. Installed programs are preselected on a new
+setup: on the chosen server when one is connected, or on this device for local
+setup. Existing selections, including an empty list, are preserved on reruns.
+Aft's own launchers do not count as installed programs.
+
+Use Space to check or uncheck a program and Enter to continue. Programs with
+only configuration directories are shown as hints and stay unchecked; setup
+checks their existence without reading the files. You can select a program
+before installing it, or add any other command later with `aft agents add NAME`
+or `aft tools add NAME`. If you initially selected nothing, rerun setup after
+adding a program to put its launcher on PATH. These choices route commands; they are not an
+execution allowlist or a sandbox.
+
+Rerunning `aft setup` also removes deselected Aft launchers. A launcher replaced
+by the user is left alone. Edit `agents` and `tools` in the config to change the
+saved lists, then rerun setup to apply them.
 
 Agent accounts and configuration live on the server, including logins,
 `CLAUDE.md`, skills and MCP servers. The first launch on a server goes through

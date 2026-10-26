@@ -21,7 +21,7 @@ machine, then reconciles it with the server. Everything else, the agent, its
 tools, builds, tests and git, runs where your code lives.
 
 ```sh
-aft setup          # once: add a server
+aft setup          # choose a server, agents and tools
 cd ~/code/app
 aft on             # agents started here now run on the server
 claude             # same command as always; also codex, opencode, pi, any program
@@ -56,7 +56,8 @@ run Aft inside WSL.
 ## Docs
 
 Run `aft` for a compact overview, `aft help` (or `aft --help`) for the full
-command reference, and `aft on --help` for a command's flags. The canonical guides live in
+command list. Use `aft help on` or `aft on --help` for a command's flags.
+The canonical guides live in
 [docs/guides](docs/guides/start/README.md).
 
 | | |

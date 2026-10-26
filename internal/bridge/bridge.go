@@ -28,7 +28,7 @@ import (
 // Handle performs one request from the server on this machine and returns
 // the response to send back. clipboardOK says whether the user just pasted;
 // clipboard reads are refused otherwise, so a program on the server cannot
-// read the clipboard behind the user's back.
+// read the clipboard without a paste event.
 func Handle(req proto.BridgeRequest, clipboardOK bool) proto.BridgeResponse {
 	resp := proto.BridgeResponse{ID: req.ID}
 	var args map[string]string
@@ -43,7 +43,7 @@ func Handle(req proto.BridgeRequest, clipboardOK bool) proto.BridgeResponse {
 		resp.OK = true
 	case "clipboard-get", "clipboard-types":
 		if !clipboardOK {
-			return fail(resp, "aft lets the server read your clipboard only right after you paste")
+			return fail(resp, "clipboard access requires a recent paste")
 		}
 		if req.Kind == "clipboard-types" {
 			resp.OK, resp.Data = true, []byte(strings.Join(ClipboardTypes(), "\n")+"\n")

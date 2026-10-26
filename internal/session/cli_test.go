@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -620,5 +621,33 @@ func TestFishLoginShell(t *testing.T) {
 	cmd = buildCommand(nil, []string{"claude"})
 	if !strings.Contains(cmd.Args[3], `exec "$0" "$@"`) {
 		t.Fatalf("args %q", cmd.Args)
+	}
+}
+
+// TestDiscoverySkipsLaunchers checks the server finds actual tools after Aft's
+// shims and does not claim that a missing agent is installed because of a shim.
+func TestDiscoverySkipsLaunchers(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("AFT_HOME", filepath.Join(directory, "aft"))
+	bin := filepath.Join(directory, "bin")
+	if err := os.MkdirAll(home.Launchers(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(bin, "gh")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"claude", "gh"} {
+		if err := os.Symlink(real, filepath.Join(home.Launchers(), name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", home.Launchers()+string(os.PathListSeparator)+bin)
+	info := GatherInfo()
+	if info.Agents["claude"] != "" || info.Agents["gh"] != real {
+		t.Fatalf("discovery counted a launcher: %+v", info.Agents)
 	}
 }

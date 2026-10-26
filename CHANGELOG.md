@@ -5,7 +5,19 @@ User-visible changes are recorded here. Publication status and downloads are on
 
 ## Unreleased
 
-No changes yet.
+- Add `./x setup` for an isolated setup preview and named `./x try` checks for
+  CLI output, projects, shells, reconnect, paste, URLs and host connectivity.
+
+- Simplify command output: plain text, compact listings without table headers,
+  shorter help without branding or footers, and `aft help COMMAND` for details.
+  Doctor reports problems and repairs, or `ok` when healthy; JSON retains all
+  findings. Remove the color renderer and unused styling dependencies.
+
+- Interactive setup lets you choose agent and tool launchers. New setups
+  preselect programs found on the execution machine, show local/server discovery
+  hints, and treat configuration directories as hints rather than installations.
+  Reruns keep saved choices and remove deselected, unchanged Aft launchers.
+  Setup no longer enables the entire known-agent catalog.
 
 ## 0.1.0
 

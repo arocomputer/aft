@@ -114,11 +114,14 @@ func captureCLI(t *testing.T, fn func()) string {
 func TestHelpOverview(t *testing.T) {
 	compact := captureCLI(t, func() { printUsage(false) })
 	full := captureCLI(t, func() { printUsage(true) })
-	if len(strings.Split(compact, "\n")) > 15 || !strings.Contains(compact, "aft help") {
+	if len(strings.Split(compact, "\n")) > 15 || !strings.Contains(compact, "help") {
 		t.Fatalf("overview should be compact and point to help:\n%s", compact)
 	}
-	if strings.Contains(compact, "rename") || !strings.Contains(full, "rename NAME NEW") || !strings.Contains(full, "on [--host H] [--dir D]") {
+	if strings.Contains(compact, "rename") || !strings.Contains(full, "rename") || !strings.Contains(full, "tools add") {
 		t.Fatalf("full help should expand the overview:\n%s", full)
+	}
+	if strings.Contains(full, "\nRun ") || strings.Contains(compact, "\nRun ") || strings.Contains(full, "your agents") || strings.Contains(full, "\x1b[") {
+		t.Fatalf("help contains a footer, branding or styling: %q", full)
 	}
 	for _, line := range strings.Split(full, "\n") {
 		if len(line) > 80 {
@@ -153,6 +156,21 @@ func TestHelpRequests(t *testing.T) {
 		captureCLI(t, func() {
 			if code := run(name, []string{"--help"}); code != 0 {
 				t.Errorf("%s --help returned %d", name, code)
+			}
+		})
+	}
+	for _, request := range []struct {
+		command string
+		args    []string
+	}{
+		{"help", []string{"on"}},
+		{"help", []string{"mount", "add"}},
+		{"tools", []string{"add", "--help"}},
+		{"help", []string{"kill"}},
+	} {
+		captureCLI(t, func() {
+			if code := run(request.command, request.args); code != 0 {
+				t.Errorf("help %s %v returned %d", request.command, request.args, code)
 			}
 		})
 	}
@@ -247,5 +265,35 @@ func TestHostNameLocalIsRefused(t *testing.T) {
 	}
 	if err := checkHostName("mini"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestShellOnlyDoctorIsQuiet avoids requiring launcher PATH edits for a setup
+// that deliberately has no agent/tool launchers, while keeping full JSON detail.
+func TestShellOnlyDoctorIsQuiet(t *testing.T) {
+	t.Setenv("AFT_HOME", t.TempDir())
+	fakeSSH(t, "exit 0")
+	if err := config.Save(config.Config{Agents: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveState(config.State{Projects: map[string]config.Project{"/test/project": {Host: "local"}}}); err != nil {
+		t.Fatal(err)
+	}
+	output := captureCLI(t, func() {
+		if code := cmdDoctor(nil); code != 0 {
+			t.Errorf("doctor returned %d", code)
+		}
+	})
+	if output != "ok\n" {
+		t.Fatalf("healthy doctor was noisy: %q", output)
+	}
+	output = captureCLI(t, func() {
+		if code := cmdDoctor([]string{"--json"}); code != 0 {
+			t.Errorf("JSON doctor returned %d", code)
+		}
+	})
+	var findings []docFinding
+	if err := json.Unmarshal([]byte(output), &findings); err != nil || len(findings) < 2 {
+		t.Fatalf("missing diagnostic detail: %s, %v", output, err)
 	}
 }

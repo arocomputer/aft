@@ -41,17 +41,40 @@ a build. Tests need no server and no credentials.
   socket; a pasted list of local files is recognized while ordinary text is
   left alone; and a stored pasted file stays private and is pruned after a week.
 
-## The guided self-test
+## Interactive checks
 
-`./x try` opens the interactive test command center (the `aft selftest`
-command). It runs everything on this machine as its own server, in a throwaway
-`AFT_HOME`, so it needs no SSH and never touches your real config, dotfiles or
-sessions. Run it on the computer your terminal is on, not over SSH: prediction
-runs wherever aft runs, so testing it through an SSH session measures that SSH
-link, not aft. It warns you if it detects an SSH session. A menu
-offers: typing feel over a simulated slow link with prediction on then off;
-detach and reattach; copy mode and scrollback; the OSC 52 clipboard; and running
-a real agent. Run it with `./x try`.
+```sh
+./x setup
+./x try
+./x try cli
+./x try projects
+```
+
+`./x setup` builds Aft and runs setup with a temporary home and configuration.
+Detected executables are selectable, but existing agent configuration directories
+are hidden by the temporary home. Skip the SSH destination prompt: remote
+operations are disabled in this preview. The resulting config is printed before
+the temporary home is removed. To configure your actual installation, run
+`./bin/aft setup`.
+
+`./x try` opens a plain text menu. Pass a check name to run it directly:
+`setup`, `cli`, `projects`, `shell`, `latency`, `reattach`, `scrollback`,
+`clipboard`, `paste`, `url`, `listeners`, `agent`, or `hosts`.
+The checks use private Aft state and a temporary project. Each terminal client runs in a separate process so input returns to the menu
+cleanly. Test sessions end when the harness exits; existing Aft sessions and configuration stay intact.
+
+`cli` previews help, listings, status and diagnostics. `projects` checks on/off
+and subfolder matching. `latency` compares prediction on and off at a simulated
+150 ms round trip. Run terminal checks on the computer hosting your terminal;
+an SSH connection adds its own latency.
+
+`clipboard` writes a sample to your clipboard; `url` opens a local test page
+through the session bridge. `paste` provides a file and shell for text, image
+and file paste checks. `agent` runs an installed agent with its normal account
+configuration in the temporary project. These actions run only when selected.
+`listeners` checks local listener discovery, not remote port forwarding.
+`hosts` reads server information from configured hosts without installing or
+repairing anything.
 
 ## Manual checks before a release
 
@@ -68,8 +91,8 @@ a real agent. Run it with `./x try`.
 The real OpenSSH path has been exercised against a local sshd: installing the
 embedded server, `aft on`, a full interactive session, listener discovery from
 `/proc/net/tcp`, the `ssh -O forward` primitive mirroring uses, and
-`aft uninstall` removing the server home. A test against a second physical
-machine over the network is still the remaining check.
+`aft uninstall` removing the server home. Automated checks do not replace
+hands-on testing between physical machines.
 
 Record OS and tool versions, source commit and outcomes in the review; never
 commit private hosts, logs or machine-specific paths.

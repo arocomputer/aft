@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")"
 
 usage() {
-  echo 'usage: ./x [fmt [--check]|check|audit|test|try|bench|docs|servers [VERSION]|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
+  echo 'usage: ./x [fmt [--check]|check|audit|test|setup [FLAGS]|try [TEST]|bench|docs|servers [VERSION]|build|release-check [vX.Y.Z]|dist vX.Y.Z]' >&2
   exit 2
 }
 
@@ -48,12 +48,15 @@ case "$task" in
     go test -race ./...
     python3 -m unittest discover -s scripts -p 'test_*.py'
     ;;
-  try)
-    # The interactive test command center: build aft and open the guided
-    # self-test. Everything runs on this machine in a throwaway home.
-    [ "$#" -eq 0 ] || usage
+  setup)
+    # Preview setup with private configuration and no remote access.
     ./x build >/dev/null
-    exec ./bin/aft selftest
+    exec ./bin/aft selftest setup "$@"
+    ;;
+  try)
+    # Run a local check or open the interactive test menu.
+    ./x build >/dev/null
+    exec ./bin/aft selftest "$@"
     ;;
   bench)
     # Run the benchmarks (microbenchmarks and the end-to-end typing-latency

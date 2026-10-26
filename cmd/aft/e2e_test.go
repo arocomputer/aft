@@ -15,7 +15,6 @@ import (
 
 	"github.com/arocomputer/aft/internal/bridge/transport"
 	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
 	"github.com/arocomputer/aft/internal/session"
 	"github.com/arocomputer/aft/internal/vt"
 )
@@ -23,11 +22,8 @@ import (
 // TestMain lets this test binary act as the aft executable, including as the
 // local server the client spawns, so a whole session runs in-process trees.
 func TestMain(m *testing.M) {
-	if os.Getenv("AFT_TEST_AS_AFT") == "1" && filepath.Base(os.Args[0]) == home.ServerName {
-		os.Exit(serverMain(os.Args[1:]))
-	}
-	if os.Getenv("AFT_TEST_AS_AFT") == "1" && len(os.Args) > 1 {
-		os.Exit(run(os.Args[1], os.Args[2:]))
+	if os.Getenv("AFT_TEST_AS_AFT") == "1" {
+		main()
 	}
 	os.Exit(m.Run())
 }
@@ -40,8 +36,7 @@ func shortHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		// A test that fails midway leaves its session running; its shell
-		// would live on invisibly, so end it by the record it kept.
+		// Stop processes from failed tests before removing their session records.
 		entries, _ := os.ReadDir(filepath.Join(dir, "sessions"))
 		for _, e := range entries {
 			var r session.Record

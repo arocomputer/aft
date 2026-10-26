@@ -10,6 +10,9 @@ Aft is one binary on your laptop. It carries a small server for each host
 platform and installs the right one over SSH the first time you connect, so
 there is nothing to install on the server by hand.
 
+After installation, run `aft setup`. The interactive setup chooses your host,
+agents and tools; installing Aft does not enable every known agent.
+
 ## Homebrew
 
 After the first release is published and its formula job succeeds, this

@@ -1,6 +1,5 @@
-// Package home locates the directories Aft writes on either machine. Aft
-// writes only these and the recorded shell block, which is what makes
-// uninstall exact. There are three, each with one job.
+// Package home defines Aft's configuration, data and temporary directories.
+// Aft writes only these directories and its recorded shell block.
 //
 // Dir holds what you read or edit:
 //
@@ -9,7 +8,7 @@
 //	  state.json    you:   which projects are on, and their host and directory
 //	  logs/         host:  per-session logs
 //
-// Data holds the plumbing, which nobody needs to open:
+// Data contains installed binaries and runtime state:
 //
 //	~/.local/share/aft/
 //	  launchers/    you:   the agent launcher symlinks
