@@ -58,6 +58,7 @@ func cmdSelftest(args []string) int {
 		os.RemoveAll(directory)
 		return fail(err)
 	}
+	workspace = config.RealPath(workspace)
 	restore := selftestEnv(map[string]string{"AFT_HOME": filepath.Join(directory, "state"), "PATH": path, "AFT_SESSION": "", "AFT_REMOTE_HOME": ""})
 	defer func() {
 		endAllSessions()
