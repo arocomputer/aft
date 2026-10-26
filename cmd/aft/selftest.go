@@ -88,7 +88,6 @@ func cmdSelftest(args []string) int {
 		case "projects":
 			return selftestProjects()
 		case "shell":
-			fmt.Println("Shell. Exit returns to the menu.")
 			return runShell("", true, 0, prefix)
 		case "latency":
 			return selftestTyping(prefix)
@@ -220,11 +219,11 @@ func selftestTerminalChild(args []string) int {
 
 // selftestTyping compares prediction at a fixed simulated round-trip latency.
 func selftestTyping(prefix byte) int {
-	fmt.Println("Latency: 300 ms round trip. Prediction on. Exit to compare with prediction off.")
+	fmt.Println("Latency: 150 ms round trip. Prediction on. Exit to compare with prediction off.")
 	if code := runShell("", true, 150, prefix); code != 0 {
 		return code
 	}
-	fmt.Println("Latency: 300 ms round trip. Prediction off. Exit to finish.")
+	fmt.Println("Latency: 150 ms round trip. Prediction off. Exit to finish.")
 	return runShell("", false, 150, prefix)
 }
 
@@ -334,7 +333,7 @@ func selftestAgent(prefix byte) int {
 	if _, err := launcher.RealBinary(choice); err != nil {
 		return fail(err)
 	}
-	fmt.Println("Uses the agent's normal account configuration. Exit returns to the menu.")
+	fmt.Println("Uses the agent's normal account configuration.")
 	directory, err := os.Getwd()
 	if err != nil {
 		return fail(err)

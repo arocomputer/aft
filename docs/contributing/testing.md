@@ -65,7 +65,7 @@ cleanly. Test sessions end when the harness exits; existing Aft sessions and con
 
 `cli` previews help, listings, status and diagnostics. `projects` checks on/off
 and subfolder matching. `latency` compares prediction on and off at a simulated
-300 ms round trip. Run terminal checks on the computer hosting your terminal;
+150 ms round trip. Run terminal checks on the computer hosting your terminal;
 an SSH connection adds its own latency.
 
 `clipboard` writes a sample to your clipboard; `url` opens a local test page
