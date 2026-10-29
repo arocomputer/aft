@@ -79,7 +79,8 @@ those projects are separate integrations, not release-token probe targets.
   `gh attestation verify ARCHIVE --repo fschrhunt/aft`.
 - Publishing the draft triggers checksum-verified native installation checks on
   Linux and macOS. After those pass, the protected `formula` job generates
-  `aft.rb` from the published checksums and pushes it directly to `main`.
+  `aft.rb` from the published checksums and opens a bot-owned PR against `main`.
+  Review and merge it after required checks pass; automation never merges it.
   The job refuses tags outside `main` and does not replace the latest formula
   with an older release. `RELEASE_ENABLED` gates these post-publication jobs.
 - The formula job uses `secrets.RELEASE_TOKEN`; the normal `github.token`
@@ -95,9 +96,7 @@ Read-only inspection after the transfer found:
   default workflow permissions remain read-only. Actions may create PRs.
 - The active main ruleset requires checked PRs and has **no bypass actors**.
   The existing direct formula push therefore cannot satisfy that ruleset.
-  A maintainer must decide whether to authorize a narrowly scoped release
-  bypass or change formula publication to use a checked PR. Do not weaken
-  protections merely to retry a release.
+  Formula publication now uses a checked PR without a ruleset bypass.
 - `RELEASE_ENABLED` is still `true`. No repository or `release` environment
   secrets were listed, so `RELEASE_TOKEN` is unavailable. The old organization
   secret grant does not follow a repository into a personal account; the
@@ -132,8 +131,14 @@ gh workflow run release.yml --ref main -f tag=v0.1.0 -F formula_only=true
 
 This path verifies the native published downloads on Linux and macOS before
 the protected formula job. The `release` environment must permit `main` branch
-deployments as well as `v*` tags. An unchanged formula still performs a no-op
-git push to verify the token's write authentication.
+deployments as well as `v*` tags. An unchanged formula creates no branch or PR.
+Each release uses its own branch; retries reuse only an open bot-owned PR with
+one unchanged automation commit that modifies only `aft.rb` and matches the
+generated formula. Human edits and closed PRs require manual review and are
+never overwritten.
+If branch creation succeeds but PR creation fails, retrying opens the PR only
+when that branch passes the same content and automation ownership checks.
+GitHub may require maintainer approval of bot PR workflows before checks run.
 
 ## What users receive
 
