@@ -5,6 +5,7 @@ User-visible changes are recorded here. Publication status and downloads are on
 
 ## Unreleased
 
+- Release automation proposes Homebrew formula updates through reviewed PRs.
 - Move repository links, release downloads, the Homebrew tap and the Go module
   to `fschrhunt/aft`. Existing Aft configuration and state paths are unchanged.
 
