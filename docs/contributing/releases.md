@@ -66,7 +66,7 @@ gh attestation verify ARCHIVE --repo fschrhunt/aft
 
 Publishing the draft triggers checksum-verified native installation checks on
 Linux and macOS. After those pass, the `formula` job generates `aft.rb` from the
-published checksums and opens a bot-owned PR against `main`. Review and merge it
+published checksums and opens a release PR against `main`. Review and merge it
 after required checks pass; automation never merges it. The job refuses tags
 outside `main` and leaves the formula unchanged for older releases.
 
@@ -81,14 +81,13 @@ gh workflow run release.yml --ref main -f tag=v0.1.0 -F formula_only=true
 
 This path verifies the native published downloads on Linux and macOS before
 the formula job. An unchanged formula creates no branch or PR.
-Each release uses its own branch; retries reuse only an open bot-owned PR with
-one unchanged automation commit that modifies only `aft.rb` and matches the
-generated formula. Human edits and closed PRs require manual review and are
-never overwritten.
+Each release uses its own branch; retries reuse only an open PR from the same
+author with one unchanged automation commit that modifies only `aft.rb` and
+matches the generated formula content and file mode. Human edits and closed PRs
+require manual review and are never overwritten.
 
 If branch creation succeeds but PR creation fails, retrying opens the PR only
 when that branch passes the same content and automation ownership checks.
-GitHub may require maintainer approval of bot PR workflows before checks run.
 
 ## What users receive
 
