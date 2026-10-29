@@ -8,7 +8,7 @@
   while you type on your laptop with no network lag. Your code stays remote.</p>
 
   <p>
-    <a href="https://github.com/arocomputer/aft/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/arocomputer/aft/ci.yml?branch=main&style=flat-square&color=111111&label=ci" alt="CI"></a>
+    <a href="https://github.com/fschrhunt/aft/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/fschrhunt/aft/ci.yml?branch=main&style=flat-square&color=111111&label=ci" alt="CI"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square" alt="MIT"></a>
   </p>
 </div>
@@ -36,7 +36,7 @@ removes every file and line it added.
 
 ## Start
 
-Install a published archive from [GitHub Releases](https://github.com/arocomputer/aft/releases).
+Install a published archive from [GitHub Releases](https://github.com/fschrhunt/aft/releases).
 Each archive includes the servers for all supported hosts, so using a binary
 release needs no Go installation. See [installation](docs/guides/start/install.md)
 for Homebrew installation, platform selection, checksum verification and upgrades.

@@ -20,10 +20,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/udp"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/udp"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // Info is what `server info` prints for doctor and version checks. SHA is the

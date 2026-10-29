@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // TestProjectSessionsFollowsShellDirectory checks actual cd transitions, symlink

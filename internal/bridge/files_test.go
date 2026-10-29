@@ -1,7 +1,7 @@
 package bridge
 
 import (
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/home"
 	"os"
 	"path/filepath"
 	"reflect"

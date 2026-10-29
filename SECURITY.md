@@ -10,7 +10,7 @@ configuration may change during 0.x development.
 Do not disclose vulnerabilities, credentials or private host details in public
 issues. Private vulnerability reporting is enabled for the repository. Use
 GitHub's **Security → Report a vulnerability** at
-[arocomputer/aft](https://github.com/arocomputer/aft/security).
+[fschrhunt/aft](https://github.com/fschrhunt/aft/security).
 No response-time guarantee is currently offered.
 
 ## Scope and boundaries

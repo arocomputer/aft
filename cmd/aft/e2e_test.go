@@ -13,10 +13,10 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 // TestMain lets this test binary act as the aft executable, including as the

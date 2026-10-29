@@ -2,7 +2,7 @@ package config
 
 import (
 	"errors"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/home"
 	"io/fs"
 	"os"
 	"path/filepath"

@@ -1,4 +1,4 @@
-module github.com/arocomputer/aft
+module github.com/fschrhunt/aft
 
 go 1.26.10
 

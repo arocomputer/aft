@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/arocomputer/aft/internal/launcher"
-	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/ui"
+	"github.com/fschrhunt/aft/internal/launcher"
+	"github.com/fschrhunt/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 // setupProgramOptions discovers executable candidates without running programs

@@ -18,15 +18,15 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/launcher"
-	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/session/install"
-	"github.com/arocomputer/aft/internal/terminal"
-	"github.com/arocomputer/aft/internal/ui"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/launcher"
+	"github.com/fschrhunt/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/session/install"
+	"github.com/fschrhunt/aft/internal/terminal"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 // flags creates a command's flag parser without writing until parsing begins.

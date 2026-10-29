@@ -7,7 +7,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 // copyMode is aft's scrollback viewer: a frozen pager over a snapshot of the

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
 )
 
 // Pasting, the terminal's side of the bridge clipboard. Two things happen

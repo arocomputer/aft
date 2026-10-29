@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // names are the words sessions are called by: short, common animals, easy to

@@ -2,7 +2,7 @@
 
 The first official release is **v0.1.0**. Preparing a branch, building local
 archives or merging a PR does not publish a release. Publication status and
-available downloads are on [GitHub Releases](https://github.com/arocomputer/aft/releases).
+available downloads are on [GitHub Releases](https://github.com/fschrhunt/aft/releases).
 
 ## v0.1.0 qualification
 
@@ -14,7 +14,7 @@ Evidence gathered on 2026-10-25:
 
 | Check | Evidence or remaining work |
 | --- | --- |
-| Linux and macOS source CI | Passed on merged PR #16; [main CI run](https://github.com/arocomputer/aft/actions/runs/40148257486) |
+| Linux and macOS source CI | Passed on merged PR #16; [main CI run](https://github.com/fschrhunt/aft/actions/runs/40148257486) |
 | Archive versions, embedded servers, platform metadata and checksums | Verified by `./x release-check v0.1.0`; rerun on the final release commit |
 | Native artifact sessions and isolated uninstall | Passed on Linux and macOS in preparation PR #17 and infrastructure PR #18 CI |
 | Typing on a real host | Maintainer reports checked; OS, agent and terminal versions were not recorded |
@@ -66,60 +66,62 @@ compiler does not qualify binaries built by CI.
 
 No command in `./x` publishes, creates tags or changes repository settings.
 
-## Shared arocomputer release infrastructure
+## Repository release infrastructure
 
-Like [ask](https://github.com/arocomputer/ask/blob/main/.github/workflows/release.yml)
-and [search](https://github.com/arocomputer/search/blob/main/.github/workflows/release.yml),
-Aft uses its own repository as its Homebrew tap. The `tap` repository is a
-separate application, not the destination for these formulas.
+Aft uses `fschrhunt/aft` as its own Homebrew tap. This pattern was also used by
+[ask](https://github.com/arocomputer/ask/blob/main/.github/workflows/release.yml)
+and [search](https://github.com/arocomputer/search/blob/main/.github/workflows/release.yml);
+those projects are separate integrations, not release-token probe targets.
 
 - Archive provenance is attested in a separate job before a draft is created.
   That job only handles built artifacts; repository code does not execute with
   its OIDC/attestation credentials. Verify a downloaded archive with
-  `gh attestation verify ARCHIVE --repo arocomputer/aft`.
+  `gh attestation verify ARCHIVE --repo fschrhunt/aft`.
 - Publishing the draft triggers checksum-verified native installation checks on
-  Linux and macOS. After those pass, a protected `formula` job generates
-  `aft.rb` from the published checksums and pushes only that file directly to
-  `main`. Like ask and search, the main ruleset permits repository admins to
-  bypass its PR and status-check requirements. Ordinary contributors still
-  use checked PRs; the release job requires environment approval.
+  Linux and macOS. After those pass, the protected `formula` job generates
+  `aft.rb` from the published checksums and pushes it directly to `main`.
   The job refuses tags outside `main` and does not replace the latest formula
-  with an older release. `RELEASE_ENABLED` also gates these post-publication jobs.
-- The formula job uses `secrets.RELEASE_TOKEN`, matching ask and search. The
-  normal `github.token` creates the release and reads its assets; the shared
-  token is needed to push the formula commit so CI runs on `main`.
+  with an older release. `RELEASE_ENABLED` gates these post-publication jobs.
+- The formula job uses `secrets.RELEASE_TOKEN`; the normal `github.token`
+  creates the draft release and reads its assets. Token availability and the
+  account's repository role are checked before creating the draft, but a role
+  check alone does not prove token write authorization.
 
-The existing `RELEASE_TOKEN` organization secret is now available to
-`arocomputer/aft`, as verified through the inherited-secret endpoint. A protected
-preflight checks token availability and the account's repository role before
-creating the draft. That role does not prove the token itself has write scopes:
-the first publication's formula push returned HTTP 403 despite the role check.
-The first formula was submitted through a checked PR. The maintainer then
-chose the same admin-bypass rule and direct formula pushes as ask/search;
-token write access must be verified by a real git push, not inferred from the
-repository-role response.
-For future repositories, an organization administrator must grant access to the
-existing secret instead of creating another credential.
-The underlying credential must also include Aft in its repository selection,
-with **Contents: read and write**, and its account must have repository admin
-access to use the bypass. Pull request write permission is not needed. Granting
-the organization secret to a repository does not grant those token permissions.
-Do not copy a secret value into the repository, logs, an issue or a PR. GitHub
-does not return stored Actions secret values.
+### Transfer audit (2026-10-29)
 
-Check the names of inherited organization secrets without retrieving any value:
+Read-only inspection after the transfer found:
+
+- `main` remains the default branch, all three workflows are active, and
+  default workflow permissions remain read-only. Actions may create PRs.
+- The active main ruleset requires checked PRs and has **no bypass actors**.
+  The existing direct formula push therefore cannot satisfy that ruleset.
+  A maintainer must decide whether to authorize a narrowly scoped release
+  bypass or change formula publication to use a checked PR. Do not weaken
+  protections merely to retry a release.
+- `RELEASE_ENABLED` is still `true`. No repository or `release` environment
+  secrets were listed, so `RELEASE_TOKEN` is unavailable. The old organization
+  secret grant does not follow a repository into a personal account; the
+  organization-secret endpoint is not applicable here. The maintainer must
+  supply an authorized repository or environment secret with access to
+  `fschrhunt/aft` and Contents write permission before release automation can
+  work. Do not configure or copy credentials as part of this audit.
+- The `release` environment retains its required reviewer and allows `main`
+  branches and `v*` tags. Private vulnerability reporting remains enabled.
+- The repository homepage still points to `aro.computer/aft`; the maintainer
+  should update it to the intended current project URL. No webhooks were listed.
+  Installed-app inspection was unavailable; review app installations and any
+  external integrations separately for access to `fschrhunt/aft`.
+
+The maintainer should set `RELEASE_ENABLED=false` until missing credentials
+and formula publication authorization are resolved. Settings are not changed
+by this PR.
+Never print or copy secret values into source, logs, issues or PRs. To inspect
+only secret names without retrieving values:
 
 ```sh
-gh api repos/arocomputer/aft/actions/organization-secrets --jq '.secrets[].name'
+gh api repos/fschrhunt/aft/actions/secrets --jq '.secrets[].name'
+gh api repos/fschrhunt/aft/environments/release/secrets --jq '.secrets[].name'
 ```
-
-`RELEASE_TOKEN` must appear in that list. Organization-wide secret listing and
-changes to repository grants require an appropriately authorized org-admin
-session: classic `admin:org`, or the corresponding organization Actions-secrets
-permission for a fine-grained token. A repository-level credential can inspect
-the inherited names through the endpoint above, but cannot change the grant.
-
-If `RELEASE_TOKEN` is unavailable, the formula job fails with a clear setup error.
 
 To retry the formula for an already published release without rebuilding,
 retagging or publishing anything, dispatch from `main`:

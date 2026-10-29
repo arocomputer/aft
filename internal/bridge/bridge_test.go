@@ -8,7 +8,7 @@ import (
 
 	"encoding/json"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
 )
 
 // TestOpenURLRejectsNonHTTP ensures the bridge only opens web URLs, never an

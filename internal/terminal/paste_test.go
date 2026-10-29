@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
 )
 
 // TestPastedMountFileNamesTheServerPath pastes a file that a mounted folder

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
 )
 
 // Handle performs one request from the server on this machine and returns

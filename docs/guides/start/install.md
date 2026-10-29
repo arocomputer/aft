@@ -16,12 +16,16 @@ agents and tools; installing Aft does not enable every known agent.
 ## Homebrew
 
 After the first release is published and its formula job succeeds, this
-repository also acts as its own Homebrew tap, like the other arocomputer CLIs:
+repository also acts as its own Homebrew tap:
 
 ```sh
-brew tap arocomputer/aft https://github.com/arocomputer/aft
+brew tap fschrhunt/aft https://github.com/fschrhunt/aft
 brew install aft
 ```
+
+If you previously used the old tap, run `brew untap arocomputer/aft` and add
+`fschrhunt/aft` with the command above before upgrading. This changes the package
+source; existing Aft configuration and state paths stay the same.
 
 The formula installs the checksum-verified prebuilt binary for your platform.
 It does not run setup or edit shell configuration; run `aft setup` yourself.
@@ -35,7 +39,7 @@ remove the package-managed client binary.
 ## Release archives
 
 Download an archive and `checksums.txt` from the same published
-[GitHub release](https://github.com/arocomputer/aft/releases). If there is no
+[GitHub release](https://github.com/fschrhunt/aft/releases). If there is no
 published release yet, use the source build below. You do not need Go or Python
 to use a release binary.
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 // screenOf replays everything the predictor wrote into a reference terminal,

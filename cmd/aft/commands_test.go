@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/session"
 )
 
 // fakeSSH puts a test's SSH implementation on PATH without reaching a host.

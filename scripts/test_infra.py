@@ -41,7 +41,7 @@ class FormulaTests(unittest.TestCase):
     def test_platforms_match_the_release_manifest(self):
         result = formula('v0.1.0', self.manifest())
         for i, target in enumerate(TARGETS, 1):
-            self.assertIn(f'url "https://github.com/arocomputer/aft/releases/download/v0.1.0/aft-v0.1.0-{target}.tar.gz"\n      sha256 "{str(i) * 64}"', result)
+            self.assertIn(f'url "https://github.com/fschrhunt/aft/releases/download/v0.1.0/aft-v0.1.0-{target}.tar.gz"\n      sha256 "{str(i) * 64}"', result)
         self.assertIn('assert_equal "aft v0.1.0"', result)
         self.assertIn('bin.install "aft"', result)
 

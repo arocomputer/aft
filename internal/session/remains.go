@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 // A session that ends with no terminal attached leaves remains, so nothing is

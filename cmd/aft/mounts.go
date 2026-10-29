@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/ui"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 // detected describes a network mount discovered under a path.

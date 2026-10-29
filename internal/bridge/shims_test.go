@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
 )
 
 // TestIsShim recognizes a shim by its path, so aft knows when it was

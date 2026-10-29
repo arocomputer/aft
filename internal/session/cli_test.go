@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/udp"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/udp"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // TestMain lets the test binary act as the server executable, so Start

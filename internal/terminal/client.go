@@ -26,16 +26,16 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/bridge/ports"
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/bridge/udp"
-	"github.com/arocomputer/aft/internal/home"
-	sess "github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/session/install"
-	"github.com/arocomputer/aft/internal/ui"
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/bridge/ports"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/bridge/udp"
+	"github.com/fschrhunt/aft/internal/home"
+	sess "github.com/fschrhunt/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/session/install"
+	"github.com/fschrhunt/aft/internal/ui"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 // Options describe what to run or attach to.

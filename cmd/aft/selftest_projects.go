@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/arocomputer/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/config"
 )
 
 // selftestProjects checks project activation, subfolder matching and deactivation.

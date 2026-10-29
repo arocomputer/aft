@@ -28,10 +28,10 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/udp"
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/udp"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 // Options describe the session to run.
