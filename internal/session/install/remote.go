@@ -16,8 +16,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/session"
 )
 
 // Server binaries are placed here by ./x servers as gzipped aft-server-<os>-<arch>

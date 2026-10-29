@@ -1,9 +1,12 @@
 # Changelog
 
 User-visible changes are recorded here. Publication status and downloads are on
-[GitHub Releases](https://github.com/arocomputer/aft/releases).
+[GitHub Releases](https://github.com/fschrhunt/aft/releases).
 
 ## Unreleased
+
+- Move repository links, release downloads, the Homebrew tap and the Go module
+  to `fschrhunt/aft`. Existing Aft configuration and state paths are unchanged.
 
 - Add `./x setup` for an isolated setup preview and named `./x try` checks for
   CLI output, projects, shells, reconnect, paste, URLs and host connectivity.

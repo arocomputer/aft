@@ -1,7 +1,7 @@
 package install
 
 import (
-	"github.com/arocomputer/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/session"
 	"runtime"
 	"testing"
 )

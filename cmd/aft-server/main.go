@@ -7,8 +7,8 @@ package main
 import (
 	"os"
 
-	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/session"
 )
 
 func main() {

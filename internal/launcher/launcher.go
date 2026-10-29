@@ -13,12 +13,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/arocomputer/aft/internal/bridge/ports"
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/terminal"
-	"github.com/arocomputer/aft/internal/ui"
+	"github.com/fschrhunt/aft/internal/bridge/ports"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/terminal"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 // PassEnv are variables that always cross to the server.

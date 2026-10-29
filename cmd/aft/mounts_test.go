@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/config"
 )
 
 // TestSplitUNCandNFS parse the two mount source forms.

@@ -99,8 +99,8 @@ def package(version, output, notes):
     host = tuple(subprocess.check_output(
         ["go", "env", "GOHOSTOS", "GOHOSTARCH"], cwd=ROOT, text=True).split())
     ldflags = (f"-s -w -X main.version={version} "
-               f"-X github.com/arocomputer/aft/internal/session.Version={version} "
-               f"-X github.com/arocomputer/aft/internal/session.Built={built}")
+               f"-X github.com/fschrhunt/aft/internal/session.Version={version} "
+               f"-X github.com/fschrhunt/aft/internal/session.Built={built}")
     subprocess.run(["./x", "servers", version], cwd=ROOT, check=True)
     checksums = []
     with tempfile.TemporaryDirectory(prefix="aft-build-") as temp:

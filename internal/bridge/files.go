@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // Pasted files. A terminal pastes a file dragged or copied into it as its

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // TestSetupPreviewIsolatesWritesAndSSH runs the real wizard without exposing

@@ -8,12 +8,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/launcher"
-	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/ui"
+	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/launcher"
+	"github.com/fschrhunt/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/ui"
 )
 
 // commands supplies the flat command list for help, completion and suggestions.

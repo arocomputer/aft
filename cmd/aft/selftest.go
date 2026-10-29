@@ -12,16 +12,16 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/bridge"
-	"github.com/arocomputer/aft/internal/bridge/ports"
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/bridge/transport"
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/launcher"
-	"github.com/arocomputer/aft/internal/session"
-	"github.com/arocomputer/aft/internal/session/install"
-	"github.com/arocomputer/aft/internal/terminal"
+	"github.com/fschrhunt/aft/internal/bridge"
+	"github.com/fschrhunt/aft/internal/bridge/ports"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/bridge/transport"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/launcher"
+	"github.com/fschrhunt/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/session/install"
+	"github.com/fschrhunt/aft/internal/terminal"
 )
 
 // selftestNames lists checks available from the menu and ./x try TEST.

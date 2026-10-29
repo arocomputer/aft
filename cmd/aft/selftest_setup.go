@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // selftestSetup runs the real wizard with private HOME and AFT_HOME directories.

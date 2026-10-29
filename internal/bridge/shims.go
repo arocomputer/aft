@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/arocomputer/aft/internal/bridge/proto"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/bridge/proto"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // The server half of the bridge: shims a session puts first on PATH, so a

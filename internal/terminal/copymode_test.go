@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/vt"
+	"github.com/fschrhunt/aft/internal/vt"
 )
 
 func cellsOf(s string) []vt.Cell {

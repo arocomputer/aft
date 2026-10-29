@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
-	"github.com/arocomputer/aft/internal/session"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/session"
 )
 
 // TestSetupDiscoveryUsesTheExecutionHost avoids selecting a local-only command

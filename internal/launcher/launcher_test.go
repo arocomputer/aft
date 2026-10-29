@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arocomputer/aft/internal/config"
-	"github.com/arocomputer/aft/internal/home"
+	"github.com/fschrhunt/aft/internal/config"
+	"github.com/fschrhunt/aft/internal/home"
 )
 
 // TestShellBlockRoundTrip installs the PATH block into a shell file, leaving
